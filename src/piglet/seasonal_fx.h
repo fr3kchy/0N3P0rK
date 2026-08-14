@@ -1,0 +1,37 @@
+// Seasonal decorative FX — separate from core weather (rain/snow/clouds/thunder).
+// Put snow banks, tumbleweeds, butterflies, pollen, etc. HERE so weather.cpp stays stable.
+//
+// Seasons from Weather::getActiveSeason() / Config SEASON setting.
+// Call after Weather::update() and draw after Weather::draw() (on top of precip).
+#pragma once
+
+#include <M5Unified.h>
+
+namespace SeasonalFx {
+
+// === Lifecycle ===
+void init();
+void update();
+// Foreground season decor (banks, leaves, tumbleweed, butterflies)
+void draw(M5Canvas& canvas);
+// Backdrop season decor — call after clouds, BEFORE tree/pig
+// (spring lightning bolts live here so they sit in the sky)
+void drawBackdrop(M5Canvas& canvas);
+
+// Scroll world-space FX with grass treadmill (snow banks, etc.)
+// Same sign as Trees::scroll: +1 / -1 per grass pixel step.
+void scroll(int dir);
+
+// Pig walks through snow banks → trample path (melt under feet)
+// pigFeetX = avatar feet X on screen
+void trampleSnow(int pigFeetX);
+
+// Optional: clear all FX (mode changes, tests)
+void reset();
+
+// Spring  — lightning bolts (backdrop) + thunder storms
+// Summer  — butterflies + golden pollen motes (unique heat shimmer)
+// Autumn  — dense falling leaves + rolling tumbleweed
+// Winter  — tall snow banks; pig walk tramples a path through drifts
+
+}  // namespace SeasonalFx

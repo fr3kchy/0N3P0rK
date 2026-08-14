@@ -1,0 +1,533 @@
+#include "display.h"
+#include "menu.h"
+#include "../core/app.h"
+#include "../core/config.h"
+#include "../piglet/avatar.h"
+#include "../piglet/mood.h"
+#include "../piglet/weather.h"
+#include "../piglet/seasonal_fx.h"
+#include "../piglet/wolf.h"
+#include "../piglet/trees.h"
+#include "../piglet/scene_layers.h"
+#include "../audio/sfx.h"
+#include "../cap/sniffer.h"
+#include "loot_menu.h"
+#include "settings_menu.h"
+#include "../modes/evilpig.h"
+#include "../modes/pigpass.h"
+#include "../modes/blepig.h"
+#include "../build_info.h"
+#include <M5Cardputer.h>
+#include <string.h>
+#include <stdio.h>
+
+uint16_t getColorFG() {
+    if (Weather::getActiveSeason() == Season::RETRO) return 0xE73C;
+    return UiStyle::TEXT;
+}
+
+uint16_t getColorBG() {
+    if (Weather::getActiveSeason() == Season::RETRO) return 0x1082;
+    return UiStyle::BG;
+}
+
+void uiListBackground(M5Canvas& canvas) {
+    canvas.fillSprite(UiStyle::BG);
+    canvas.fillRect(0, MAIN_H - 5, DISPLAY_W, 5, UiStyle::DIRT);
+    canvas.fillRect(0, MAIN_H - 6, DISPLAY_W, 1, 0x45A0);
+}
+
+void uiListRow(M5Canvas& canvas, int y, int lineH, bool selected, uint16_t accent) {
+    if (selected) {
+        canvas.fillRect(4, y - 1, DISPLAY_W - 8, lineH, accent);
+        canvas.fillRect(4, y - 1, 3, lineH, UiStyle::TITLE);
+    }
+}
+
+M5Canvas Display::topBar(&M5.Display);
+M5Canvas Display::mainCanvas(&M5.Display);
+M5Canvas Display::bottomBar(&M5.Display);
+
+static constexpr size_t kMainCanvasBytes = (size_t)DISPLAY_W * MAIN_H;
+alignas(16) static uint8_t s_mainCanvasBuf[kMainCanvasBytes];
+
+bool Display::screenShakeActive = false;
+uint32_t Display::screenShakeStart = 0;
+uint16_t Display::screenShakeDuration = 200;
+uint8_t Display::screenShakeIntensity = 3;
+uint32_t Display::lastActivityTime = 0;
+bool Display::dimmed = false;
+bool Display::screenForcedOff = false;
+char Display::toastMessage[160] = {0};
+uint32_t Display::toastStartTime = 0;
+uint32_t Display::toastDurationMs = 2000;
+bool Display::toastActive = false;
+char Display::topBarMessage[96] = {0};
+uint32_t Display::topBarMessageStart = 0;
+uint32_t Display::topBarMessageDuration = 0;
+char Display::bottomHint[96] = {0};
+
+uint8_t* Display::mainCanvasBuffer() { return s_mainCanvasBuf; }
+size_t Display::mainCanvasBufferSize() { return kMainCanvasBytes; }
+
+void Display::init() {
+    M5.Display.setRotation(1);
+    M5.Display.setColorDepth(8);
+    M5.Display.fillScreen(COLOR_BG);
+    M5.Display.setTextColor(COLOR_FG);
+
+    topBar.setColorDepth(8);
+    topBar.createSprite(DISPLAY_W, TOP_BAR_H);
+
+    mainCanvas.setColorDepth(8);
+    mainCanvas.setBuffer(s_mainCanvasBuf, DISPLAY_W, MAIN_H, 8);
+
+    bottomBar.setColorDepth(8);
+    bottomBar.createSprite(DISPLAY_W, BOTTOM_BAR_H);
+
+    topBar.setTextSize(1);
+    mainCanvas.setTextSize(1);
+    bottomBar.setTextSize(1);
+
+    lastActivityTime = millis();
+    dimmed = false;
+    screenForcedOff = false;
+
+    Weather::init();
+    SeasonalFx::init();
+    Wolf::init();
+    Trees::init();
+    SceneLayers::init();
+
+    Serial.println("[DISPLAY] ok");
+}
+
+void Display::showBootSplash() {
+    M5.Display.fillScreen(UiStyle::BG);
+    M5.Display.setTextColor(UiStyle::PINK);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.drawString("OneLPig", DISPLAY_W / 2, 48);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(UiStyle::TEXT);
+    M5.Display.drawString(Config::personality().name, DISPLAY_W / 2, 78);
+    M5.Display.setTextColor(UiStyle::DIM);
+    M5.Display.drawString("tamagotchi + barn", DISPLAY_W / 2, 98);
+    M5.Display.setTextDatum(TL_DATUM);
+    delay(900);
+}
+
+void Display::resetDimTimer() {
+    lastActivityTime = millis();
+    if (dimmed) {
+        dimmed = false;
+        uint8_t b = Config::personality().brightness;
+        M5.Display.setBrightness(b * 255 / 100);
+    }
+}
+
+void Display::updateDimming() {
+    uint16_t timeout = Config::personality().dimTimeout;
+    if (timeout == 0 || screenForcedOff) return;
+    if (!dimmed && (millis() - lastActivityTime) > (uint32_t)timeout * 1000UL) {
+        dimmed = true;
+        uint8_t d = Config::personality().dimLevel;
+        M5.Display.setBrightness(d * 255 / 100);
+    }
+}
+
+void Display::toggleScreenPower() {
+    screenForcedOff = !screenForcedOff;
+    if (screenForcedOff) {
+        Avatar::suspendScene();
+        SFX::setScreenOffMuted(true);
+        M5.Display.setBrightness(0);
+    } else {
+        Avatar::resumeScene();
+        SFX::setScreenOffMuted(false);
+        uint8_t b = Config::personality().brightness;
+        M5.Display.setBrightness(b * 255 / 100);
+        resetDimTimer();
+    }
+}
+
+void Display::showToast(const char* message, uint32_t durationMs) {
+    if (!message) return;
+    strncpy(toastMessage, message, sizeof(toastMessage) - 1);
+    toastMessage[sizeof(toastMessage) - 1] = '\0';
+    toastStartTime = millis();
+    toastDurationMs = durationMs;
+    toastActive = true;
+}
+
+void Display::notify(NoticeKind kind, const char* message,
+                     uint32_t durationMs, NoticeChannel channel) {
+    (void)kind;
+    uint32_t ms = durationMs ? durationMs : 2000;
+    if (channel == NoticeChannel::TOP_BAR) {
+        setTopBarMessage(message, ms);
+    } else {
+        showToast(message, ms);
+    }
+}
+
+void Display::setTopBarMessage(const char* message, uint32_t durationMs) {
+    if (!message) {
+        topBarMessage[0] = '\0';
+        return;
+    }
+    strncpy(topBarMessage, message, sizeof(topBarMessage) - 1);
+    topBarMessage[sizeof(topBarMessage) - 1] = '\0';
+    topBarMessageStart = millis();
+    topBarMessageDuration = durationMs;
+}
+
+void Display::clearTopBarMessage() { topBarMessage[0] = '\0'; }
+
+void Display::setBottomHint(const char* message) {
+    if (!message) {
+        bottomHint[0] = '\0';
+        return;
+    }
+    strncpy(bottomHint, message, sizeof(bottomHint) - 1);
+    bottomHint[sizeof(bottomHint) - 1] = '\0';
+}
+
+void Display::setBottomOverlay(const char* message) { setBottomHint(message); }
+void Display::clearBottomOverlay() { setBottomHint(""); }
+
+bool Display::showConfirmBox(const char* title, const char* message) {
+    M5Canvas& c = mainCanvas;
+    for (;;) {
+        M5Cardputer.update();
+        c.fillSprite(UiStyle::BG);
+        c.fillRoundRect(12, 18, 216, 72, 6, 0x18C3);
+        c.drawRoundRect(12, 18, 216, 72, 6, UiStyle::GOLD);
+        c.setTextDatum(top_center);
+        c.setTextColor(UiStyle::GOLD);
+        c.setTextSize(2);
+        c.drawString(title ? title : "?", 120, 24);
+        c.setTextSize(1);
+        c.setTextColor(UiStyle::TEXT);
+        c.drawString(message ? message : "", 120, 48);
+        c.setTextColor(UiStyle::DIM);
+        c.drawString("ENT=YES   ` =NO", 120, 70);
+        c.setTextDatum(top_left);
+        pushAll();
+
+        if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+            auto k = M5Cardputer.Keyboard.keysState();
+            if (k.enter) return true;
+            if (k.del || M5Cardputer.Keyboard.isKeyPressed('`') ||
+                M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE))
+                return false;
+        }
+        delay(16);
+    }
+}
+
+void Display::triggerScreenShake(uint8_t intensity, uint16_t durationMs) {
+    screenShakeActive = true;
+    screenShakeStart = millis();
+    screenShakeDuration = durationMs;
+    screenShakeIntensity = intensity;
+}
+
+bool Display::isShaking() {
+    if (!screenShakeActive) return false;
+    if ((millis() - screenShakeStart) >= screenShakeDuration) {
+        screenShakeActive = false;
+        return false;
+    }
+    return true;
+}
+
+float Display::getShakeDecay() {
+    if (!isShaking()) return 0.0f;
+    float t = (float)(millis() - screenShakeStart) / (float)screenShakeDuration;
+    if (t > 1.0f) t = 1.0f;
+    return 1.0f - t;
+}
+
+uint8_t Display::getShakeIntensity() { return screenShakeIntensity; }
+
+void Display::drawToast() {
+    if (!toastActive) return;
+    if ((millis() - toastStartTime) > toastDurationMs) {
+        toastActive = false;
+        return;
+    }
+    int w = (int)strlen(toastMessage) * 6 + 12;
+    if (w > 220) w = 220;
+    int x = (DISPLAY_W - w) / 2;
+    int y = 4;
+    mainCanvas.fillRoundRect(x, y, w, 14, 3, UiStyle::PINK);
+    mainCanvas.setTextColor(UiStyle::BG);
+    mainCanvas.setTextDatum(top_center);
+    mainCanvas.drawString(toastMessage, DISPLAY_W / 2, y + 3);
+    mainCanvas.setTextDatum(TL_DATUM);
+}
+
+void Display::drawFarm() {
+    const uint16_t fg = getColorFG();
+    const uint16_t bg = getColorBG();
+    const bool sceneLive = !Avatar::isSceneSuspended();
+    const bool wolfLive = sceneLive && SceneLayers::wolf &&
+        (App::mode() == AppMode::FARM || Config::personality().freeLife);
+
+    if (sceneLive) {
+        if (SceneLayers::weather) {
+            Weather::setMoodLevel(Mood::getEffectiveHappiness());
+            Weather::update();
+            Avatar::setThunderFlash(Weather::isThunderFlashing());
+        } else {
+            Avatar::setThunderFlash(false);
+        }
+        if (SceneLayers::seasonFx) SeasonalFx::update();
+        if (wolfLive) Wolf::update();
+        else if (Wolf::isActive()) Wolf::reset();
+    } else {
+        if (Wolf::isActive()) Wolf::reset();
+        Avatar::setThunderFlash(false);
+    }
+
+    uint16_t bgColor = sceneLive && Weather::isThunderFlashing() ? fg : bg;
+    mainCanvas.fillSprite(bgColor);
+    mainCanvas.setTextColor(fg);
+    mainCanvas.setTextDatum(TL_DATUM);
+    mainCanvas.setFont(&fonts::Font0);
+
+    if (Cap::isRunning()) {
+        static uint32_t lastWaveMs = 0;
+        static uint32_t lastEapol = 0;
+        const Cap::Counters& c = Cap::counters();
+        if (c.framesEapol > lastEapol) {
+            Avatar::waveRipple(WaveMode::OUTGOING, 5);
+            Avatar::sniff();
+            lastEapol = c.framesEapol;
+        } else if (millis() - lastWaveMs > 450) {
+            lastWaveMs = millis();
+            if (Cap::runMode() == Cap::RunMode::Aggressive)
+                Avatar::waveRipple(WaveMode::OUTGOING, 3);
+            else
+                Avatar::waveRipple(WaveMode::INCOMING, 2);
+        }
+    }
+
+    if (sceneLive) {
+        Avatar::draw(mainCanvas);
+        if (wolfLive) Wolf::draw(mainCanvas);
+        if (SceneLayers::weather) {
+            Weather::drawBirds(mainCanvas, fg);
+            Weather::draw(mainCanvas, fg, bg);
+        }
+        if (SceneLayers::seasonFx) SeasonalFx::draw(mainCanvas);
+        if (SceneLayers::mood) Mood::draw(mainCanvas);
+    }
+
+    drawToast();
+}
+
+void Display::drawTopBar() {
+    const uint16_t fg = getColorFG();
+    const uint16_t bg = getColorBG();
+    const bool farm = (App::mode() == AppMode::FARM);
+    const bool retro = (Weather::getActiveSeason() == Season::RETRO);
+
+    if (topBarMessage[0] != '\0') {
+        if (topBarMessageDuration > 0 &&
+            (millis() - topBarMessageStart) > topBarMessageDuration) {
+            topBarMessage[0] = '\0';
+        } else {
+            topBar.fillSprite(fg);
+            topBar.setTextColor(bg);
+            topBar.setTextSize(1);
+            topBar.setTextDatum(top_left);
+            topBar.drawString(topBarMessage, 2, 3);
+            return;
+        }
+    }
+
+    const uint16_t barBg = farm
+        ? (Weather::isThunderFlashing() ? (uint16_t)0xFFFF : Avatar::getSkyColor())
+        : bg;
+    const uint16_t barFg = farm
+        ? (Weather::isThunderFlashing() ? (uint16_t)0x2104
+           : (retro ? (uint16_t)0xE73C : (uint16_t)0xEF5D))
+        : fg;
+
+    topBar.fillSprite(barBg);
+    if (farm) {
+        if (SceneLayers::weather) Weather::drawClouds(topBar, barFg, (int16_t)TOP_BAR_H);
+        if (SceneLayers::trees) Avatar::drawTreeBarOverflow(topBar);
+    }
+
+    topBar.setTextColor(barFg);
+    topBar.setTextSize(1);
+    topBar.setTextDatum(top_left);
+    topBar.drawString(App::modeName(), 2, 3);
+
+    char right[16];
+    snprintf(right, sizeof(right), "%uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    topBar.setTextDatum(top_right);
+    topBar.drawString(right, DISPLAY_W - 2, 3);
+    topBar.setTextDatum(top_left);
+}
+
+void Display::drawBottomBar() {
+    Season season = Weather::getActiveSeason();
+    uint16_t DIRT_MID  = 0x8A40;
+    uint16_t fringeTop = 0x45A0;
+    uint16_t TEXT_COL  = 0xEF5D;
+    switch (season) {
+        case Season::SPRING: fringeTop = 0x8F20; break;
+        case Season::SUMMER: fringeTop = 0x45A0; break;
+        case Season::AUTUMN: fringeTop = 0x8AC0; break;
+        case Season::WINTER: fringeTop = 0xDEFB; DIRT_MID = 0x6B6D; break;
+        case Season::RETRO:  fringeTop = 0x9CF3; DIRT_MID = 0x4208; TEXT_COL = 0xE73C; break;
+    }
+
+    bottomBar.fillSprite(DIRT_MID);
+    bottomBar.fillRect(0, 0, DISPLAY_W, 2, fringeTop);
+    bottomBar.setTextColor(TEXT_COL);
+    bottomBar.setTextSize(1);
+    bottomBar.setTextDatum(top_left);
+
+    char left[48];
+    left[0] = '\0';
+    char rightName[16];
+    rightName[0] = '\0';
+
+    if (Cap::isRunning()) {
+        const Cap::Counters& c = Cap::counters();
+        snprintf(left, sizeof(left), "%s%s HS:%02u W:%03u CH:%02u",
+                 Cap::runMode() == Cap::RunMode::Aggressive ? "AGG" : "LITE",
+                 Cap::isLocked() ? "*" : "",
+                 (unsigned)c.framesEapol,
+                 (unsigned)c.framesWritten,
+                 (unsigned)c.currentChannel);
+        if (c.currentSsid[0]) {
+            size_t n = 0;
+            while (c.currentSsid[n] && n < 13) {
+                char ch = c.currentSsid[n];
+                if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                rightName[n++] = ch;
+            }
+            rightName[n] = '\0';
+        } else if (c.currentBssid[0]) {
+            strncpy(rightName, "[GHOST]", sizeof(rightName) - 1);
+        }
+    } else if (bottomHint[0]) {
+        strncpy(left, bottomHint, sizeof(left) - 1);
+    } else {
+        switch (App::mode()) {
+            case AppMode::FARM:
+                snprintf(left, sizeof(left), "HAP:%d TUM:%d",
+                         Mood::getEffectiveHappiness(), Mood::getHunger());
+                break;
+            case AppMode::LOOT:
+                strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
+                break;
+            case AppMode::ATTACK:
+                strncpy(left, "LIGHT  AGGRO  STOP", sizeof(left) - 1);
+                break;
+            case AppMode::WIFI:
+                strncpy(left, "home wifi for S-sync", sizeof(left) - 1);
+                break;
+            case AppMode::PIG:
+            case AppMode::TUNE:
+                strncpy(left, SettingsMenu::bottomHint(), sizeof(left) - 1);
+                break;
+            case AppMode::MENU:
+                strncpy(left, Menu::selectedHint(), sizeof(left) - 1);
+                break;
+            case AppMode::EVILPIG:
+                if (EvilPigMode::getPhase() == EvilPigMode::Phase::PORTAL) {
+                    snprintf(left, sizeof(left), "EP HIT:%u ON:%u K:%lu",
+                             (unsigned)EvilPigMode::getHitCount(),
+                             (unsigned)EvilPigMode::getClientCount(),
+                             (unsigned long)EvilPigMode::getDeauthCount());
+                    {
+                        const char* ss = EvilPigMode::getApSsid();
+                        size_t n = 0;
+                        while (ss && ss[n] && n < 13) {
+                            char ch = ss[n];
+                            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                            rightName[n++] = ch;
+                        }
+                        rightName[n] = '\0';
+                    }
+                } else if (EvilPigMode::getPhase() == EvilPigMode::Phase::LOOT) {
+                    strncpy(left, "EP LOOT  V/ENT back", sizeof(left) - 1);
+                } else {
+                    snprintf(left, sizeof(left), "EP %s", EvilPigMode::getStatus());
+                }
+                break;
+            case AppMode::BLE:
+                BlePigMode::getStatusLine(left, sizeof(left));
+                break;
+            case AppMode::PIGPASS:
+                PigpassMode::getStatusLine(left, sizeof(left));
+                {
+                    const char* ss = PigpassMode::getSSID();
+                    size_t n = 0;
+                    while (ss && ss[n] && n < 13) {
+                        char ch = ss[n];
+                        if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                        rightName[n++] = ch;
+                    }
+                    rightName[n] = '\0';
+                }
+                break;
+            default:
+                left[0] = '\0';
+                break;
+        }
+    }
+
+    bottomBar.drawString(left, 2, 3);
+    if (rightName[0]) {
+        bottomBar.setTextDatum(top_right);
+        bottomBar.drawString(rightName, DISPLAY_W - 2, 3);
+        bottomBar.setTextDatum(top_left);
+    }
+}
+
+void Display::pushAll() {
+    int ox = 0, oy = 0;
+    if (isShaking()) {
+        float d = getShakeDecay();
+        int mag = (int)(screenShakeIntensity * d);
+        ox = (int)random(-mag, mag + 1);
+        oy = (int)random(-mag, mag + 1);
+    }
+    topBar.pushSprite(ox, oy);
+    mainCanvas.pushSprite(ox, TOP_BAR_H + oy);
+    bottomBar.pushSprite(ox, TOP_BAR_H + MAIN_H + oy);
+}
+
+void Display::update() {
+    if (screenForcedOff) return;
+
+    SceneLayers::beginFrame();
+    updateDimming();
+
+    Mood::update();
+
+    // Always tick the farm so the pig lives while you are in menus.
+    drawFarm();
+
+    if (App::mode() != AppMode::FARM) {
+        if (App::mode() == AppMode::LOOT) LootMenu::draw(mainCanvas);
+        else if (App::mode() == AppMode::EVILPIG) EvilPigMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::PIGPASS) PigpassMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::BLE) BlePigMode::draw(mainCanvas);
+        else Menu::draw(mainCanvas);
+        drawToast();
+    }
+
+    drawTopBar();
+    drawBottomBar();
+    pushAll();
+    SceneLayers::endFrame();
+}

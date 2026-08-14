@@ -1,0 +1,27 @@
+#pragma once
+
+#include <stdint.h>
+
+enum class AppMode : uint8_t {
+    FARM = 0,
+    MENU,
+    ATTACK,
+    LOOT,
+    WIFI,
+    PIG,
+    TUNE,
+    EVILPIG,
+    PIGPASS,
+    BLE
+};
+
+namespace App {
+
+void begin();
+void loop();
+
+AppMode mode();
+void setMode(AppMode m);
+const char* modeName();
+
+}  // namespace App

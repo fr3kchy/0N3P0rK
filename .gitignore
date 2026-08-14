@@ -1,0 +1,16 @@
+.pio/
+.vscode/
+src/build_info.h
+*.pyc
+__pycache__/
+
+# firmware / objects — source only
+*.bin
+*.elf
+*.map
+*.hex
+*.o
+*.a
+*.exe
+firmware.bin
+firmware.elf
