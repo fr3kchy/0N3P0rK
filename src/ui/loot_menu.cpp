@@ -349,12 +349,7 @@ void LootMenu::startSync() {
 }
 
 void LootMenu::handleInput() {
-    if (!M5Cardputer.Keyboard.isPressed()) {
-        keyWasPressed = false;
-        return;
-    }
-    if (keyWasPressed) return;
-    keyWasPressed = true;
+    if (!keyNewPress(keyWasPressed)) return;
 
     auto keys = M5Cardputer.Keyboard.keysState();
     bool esc = keyEsc();

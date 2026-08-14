@@ -1718,7 +1718,6 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
             Mood::eatWorld();
             triggerSparkles(5);
             triggerTailWiggle();
-            SFX::play(SFX::MODE_ENTER);
             if (currentState != AvatarState::HUNTING)
                 setState(AvatarState::HAPPY);
         }

@@ -69,6 +69,7 @@ void setup() {
     Display::showBootSplash();
 
     Avatar::init();
+    Display::refreshBrightness();
     Mood::init();
     Menu::begin();
     App::begin();

@@ -12,7 +12,8 @@ enum class AppMode : uint8_t {
     TUNE,
     EVILPIG,
     PIGPASS,
-    BLE
+    BLE,
+    IR
 };
 
 namespace App {

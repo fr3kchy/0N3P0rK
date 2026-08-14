@@ -73,6 +73,7 @@ public:
     static uint8_t getShakeIntensity();
 
     static void resetDimTimer();
+    static void refreshBrightness();
     static void updateDimming();
     static bool isDimmed() { return dimmed; }
     static void toggleScreenPower();

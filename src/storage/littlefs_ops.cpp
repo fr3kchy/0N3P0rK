@@ -105,6 +105,7 @@ bool begin() {
     SD.mkdir(DIR_EVILPIG);
     SD.mkdir(DIR_PIGPASS);
     SD.mkdir(DIR_PASSWORLD);
+    SD.mkdir(DIR_IR);
     migrateLegacy();
     return true;
 }

@@ -1,5 +1,5 @@
-// Thin BLE advertise burst — uses TUNE BLE knobs.
-// Lab / own devices only.
+// BLE advertise lab — raw Apple / Windows / Android pairing frames.
+// Own devices only.
 #pragma once
 
 #include <Arduino.h>
@@ -7,6 +7,8 @@
 
 class BlePigMode {
 public:
+    enum class Family : uint8_t { APPLE = 0, WIN = 1, DROID = 2, MIX = 3 };
+
     static void start();
     static void stop();
     static void update();
@@ -14,7 +16,8 @@ public:
     static bool isRunning() { return running; }
     static uint32_t getBursts() { return bursts; }
     static void getStatusLine(char* out, size_t len);
-    static char lastName[20];
+    static char lastName[24];
+    static Family family;
 
 private:
     static bool running;

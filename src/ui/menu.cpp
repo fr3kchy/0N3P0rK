@@ -13,6 +13,7 @@
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
+#include "../modes/irport.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -75,8 +76,12 @@ static const char* const H_CONN[] = {
     "HOME WIFI FOR S-SYNC."
 };
 static const char* const H_BLE[] = {
-    "LAB BLE ADVERTISE BURST.",
-    "OWN DEVICES. TUNE BLE SPEED."
+    "APPLE / WIN / ANDROID FRAMES.",
+    "OWN DEVICES. ;/. FAMILY."
+};
+static const char* const H_IR[] = {
+    "IR PORT. POINT AT THE TV.",
+    "SPC FIRE. R NA/EU. E FILE."
 };
 
 static const char* const H_LIGHT[] = {
@@ -130,6 +135,7 @@ static const Item G_ATTACK[] = {
     {"EP", "EVILPIG", 9,  H_EVIL,  2},
     {"PP", "PIGPASS", 10, H_PASS,  2},
     {"BL", "BLE",     13, H_BLE,   2},
+    {"IR", "IR PORT", 15, H_IR,    2},
     {"xx", "STOP",    3,  H_STOP,  2}
 };
 static const Item G_SET[] = {
@@ -164,7 +170,7 @@ static const Item* groupItems(GroupId g) {
 }
 
 static uint8_t groupSize(GroupId g) {
-    if (g == GroupId::ATTACK) return 6;
+    if (g == GroupId::ATTACK) return 7;
     if (g == GroupId::SET) return 4;
     return 0;
 }
@@ -218,6 +224,10 @@ static void doAction(uint8_t id) {
         case 13:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::BLE);
+            break;
+        case 15:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::IR);
             break;
         case 9:
             if (Cap::isRunning()) Cap::stop();
@@ -327,17 +337,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 
 void update() {
     if (!s_active || App::mode() != AppMode::MENU) return;
-    // Cardputer often skips isChange on key-up. Clear latch on release
-    // or the ` that opened the menu eats every later press.
-    if (!M5Cardputer.Keyboard.isPressed()) {
-        s_keyWas = false;
-        return;
-    }
-    if (s_keyWas) {
-        // Sticky ` after opening: still allow Esc once the open tap aged.
-        if (!(keyEsc() && (millis() - s_openMs) > 350)) return;
-    }
-    s_keyWas = true;
+    if (!keyNewPress(s_keyWas)) return;
 
     auto keys = M5Cardputer.Keyboard.keysState();
     bool esc = keyEsc();

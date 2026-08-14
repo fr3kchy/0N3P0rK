@@ -322,12 +322,7 @@ static bool setValue(const Item& it, int v) {
             case 0:
                 p.brightness = (uint8_t)v;
                 Display::resetDimTimer();
-                M5.Display.setBrightness(p.brightness * 255 / 100);
-                if (p.brightness > 0) {
-                    M5.Display.setBrightness(1);
-                    delay(2);
-                    M5.Display.setBrightness(p.brightness * 255 / 100);
-                }
+                Display::refreshBrightness();
                 break;
             case 1: p.soundLevel = (uint8_t)v; break;
             case 2:
@@ -530,14 +525,7 @@ static void updateConnect() {
 
 void update() {
     if (!s_active) return;
-    if (!M5Cardputer.Keyboard.isPressed()) {
-        s_keyWas = false;
-        return;
-    }
-    if (s_keyWas) {
-        if (!(keyEsc() && (millis() - s_openMs) > 350)) return;
-    }
-    s_keyWas = true;
+    if (!keyNewPress(s_keyWas)) return;
 
     if (s_page == SettingsPage::CONNECT) {
         updateConnect();

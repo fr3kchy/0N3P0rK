@@ -37,7 +37,7 @@ private:
     static int happiness;
     static int hunger;
     static int life;
-    static char currentPhrase[40];
+    static char currentPhrase[32];
     static uint32_t lastPhraseChange;
     static uint32_t lastActivityTime;
     static uint32_t lastDecayMs;

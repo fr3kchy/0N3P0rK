@@ -16,6 +16,7 @@
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
+#include "../modes/irport.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -117,6 +118,16 @@ void Display::showBootSplash() {
     delay(900);
 }
 
+// Night: setting-20 (floor 10). Day: setting+20 (cap 100). Never 0.
+static uint8_t skyAdjusted(uint8_t base) {
+    int v = (int)base;
+    if (Avatar::isNightTime()) v -= 20;
+    else v += 20;
+    if (v < 10) v = 10;
+    if (v > 100) v = 100;
+    return (uint8_t)v;
+}
+
 static void applyLcdBrightness(uint8_t pct) {
     if (pct > 100) pct = 100;
     uint8_t raw = (uint8_t)((uint16_t)pct * 255 / 100);
@@ -128,12 +139,21 @@ static void applyLcdBrightness(uint8_t pct) {
     M5.Display.setBrightness(raw);
 }
 
+static void applyLiveBrightness() {
+    applyLcdBrightness(skyAdjusted(Config::personality().brightness));
+}
+
 void Display::resetDimTimer() {
     lastActivityTime = millis();
     if (dimmed) {
         dimmed = false;
-        applyLcdBrightness(Config::personality().brightness);
+        applyLiveBrightness();
     }
+}
+
+void Display::refreshBrightness() {
+    if (screenForcedOff || dimmed) return;
+    applyLiveBrightness();
 }
 
 void Display::updateDimming() {
@@ -154,7 +174,7 @@ void Display::toggleScreenPower() {
     } else {
         Avatar::resumeScene();
         SFX::setScreenOffMuted(false);
-        applyLcdBrightness(Config::personality().brightness);
+        applyLiveBrightness();
         resetDimTimer();
     }
 }
@@ -518,6 +538,9 @@ void Display::drawBottomBar() {
             case AppMode::BLE:
                 BlePigMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::IR:
+                IrPortMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -569,6 +592,13 @@ void Display::update() {
 
     Mood::update();
 
+    static int8_t lastSkyNight = -1;
+    bool night = Avatar::isNightTime();
+    if (lastSkyNight != (int8_t)night) {
+        lastSkyNight = (int8_t)night;
+        refreshBrightness();
+    }
+
     // Always tick the farm so the pig lives while you are in menus.
     drawFarm();
 
@@ -577,6 +607,7 @@ void Display::update() {
         else if (App::mode() == AppMode::EVILPIG) EvilPigMode::draw(mainCanvas);
         else if (App::mode() == AppMode::PIGPASS) PigpassMode::draw(mainCanvas);
         else if (App::mode() == AppMode::BLE) BlePigMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::IR) IrPortMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     }

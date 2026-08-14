@@ -7,6 +7,7 @@
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
+#include "../modes/irport.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../audio/sfx.h"
@@ -38,6 +39,7 @@ const char* modeName() {
         case AppMode::EVILPIG:  return "EVILPIG";
         case AppMode::PIGPASS:  return "PIGPASS";
         case AppMode::BLE:      return "BLE";
+        case AppMode::IR:       return "IR";
         default:                return "?";
     }
 }
@@ -50,12 +52,14 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::EVILPIG && EvilPigMode::isRunning()) EvilPigMode::stop();
     if (s_mode == AppMode::PIGPASS && PigpassMode::isRunning()) PigpassMode::stop();
     if (s_mode == AppMode::BLE && BlePigMode::isRunning()) BlePigMode::stop();
+    if (s_mode == AppMode::IR && IrPortMode::isRunning()) IrPortMode::stop();
     s_mode = m;
     Menu::onEnter(m);
     if (m == AppMode::LOOT) LootMenu::show();
     if (m == AppMode::EVILPIG) EvilPigMode::start();
     if (m == AppMode::PIGPASS) PigpassMode::start();
     if (m == AppMode::BLE) BlePigMode::start();
+    if (m == AppMode::IR) IrPortMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -63,7 +67,6 @@ void setMode(AppMode m) {
 //   , left hold    / right hold
 //   ; jump         SPACE attack-hop
 //   . sit hold
-// F feed / P pet stay as Tamagotchi extras (no farm hotkey clash).
 static void farmPoll() {
     bool left  = M5Cardputer.Keyboard.isKeyPressed(',');
     bool right = M5Cardputer.Keyboard.isKeyPressed('/');
@@ -138,22 +141,26 @@ void loop() {
     } else if (s_mode == AppMode::BLE) {
         BlePigMode::update();
         if (!BlePigMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::IR) {
+        IrPortMode::update();
+        if (!IrPortMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
         if (!SettingsMenu::isActive()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MENU) {
         Menu::update();
+        return;
     }
 
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    if (!M5Cardputer.Keyboard.isPressed()) return;
+    if (!M5Cardputer.Keyboard.isChange() || !M5Cardputer.Keyboard.isPressed())
+        return;
 
     if (s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
         s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
+        s_mode == AppMode::IR ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI) return;
-    if (s_mode == AppMode::MENU) return;  // ` / backspace handled in Menu::update
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
     bool back = keyEsc();
@@ -168,8 +175,6 @@ void loop() {
             setMode(AppMode::MENU);
             return;
         }
-        if (typed == 'f' || typed == 'F') Mood::feed();
-        else if (typed == 'p' || typed == 'P') Mood::pet();
         return;
     }
 

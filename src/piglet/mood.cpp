@@ -10,7 +10,7 @@
 int Mood::happiness = 70;
 int Mood::hunger = 70;
 int Mood::life = 5;  // discrete hearts 0–5
-char Mood::currentPhrase[40] = "oink";
+char Mood::currentPhrase[32] = "привет";
 uint32_t Mood::lastPhraseChange = 0;
 uint32_t Mood::lastActivityTime = 0;
 uint32_t Mood::lastDecayMs = 0;
@@ -20,33 +20,79 @@ static Preferences s_moodPrefs;
 static char s_status[40] = "";
 static uint32_t s_statusUntil = 0;
 
+// Readable first. One rare leet line per pile so 0n3 style stays a wink.
 static const char* PH_IDLE[] = {
-    "oink", "snuffle", "zzz...", "hm?", "warm dirt",
-    "nose twitch", "soft grunt", "apple?", "nap soon"
+    "привет",
+    "hello friend",
+    "я не трогал",
+    "это фича",
+    "dns виноват",
+    "логи молчат",
+    "prod вроде жив",
+    "оно компилится",
+    "sudo oink",
+    "wifi go brrr",
+    "nothing is real",
+    "0n3 прив3т"
 };
 static const char* PH_HAPPY[] = {
-    "wee!", "best day", "tail go", "love this", "hehe"
+    "я в системе",
+    "access granted",
+    "it works!!",
+    "бог админ",
+    "легенда",
+    "gg wp",
+    "hack the planet",
+    "this guy oinks"
 };
 static const char* PH_HUNGRY[] = {
-    "feed me", "tummy...", "truffle?", "so empty", "please"
+    "404 яблоко",
+    "диск полный :(",
+    "нужен sudo еда",
+    "нет пакетов",
+    "тумми empty",
+    "low hp tum"
 };
 static const char* PH_SAD[] = {
-    "lonely", "bored hog", "hey...", "miss you", "sit with me"
+    "deploy failed",
+    "prod лежит",
+    "это не я",
+    "blame dns",
+    "ticket #404",
+    "conn refused"
 };
 static const char* PH_SLEEPY[] = {
-    "yawn", "eyes heavy", "blanket", "five more min", "zzz"
+    "админ спит",
+    "cron at 3am",
+    "zzz ещё 5 мин",
+    "standby...",
+    "screen saver"
 };
 static const char* PH_FED[] = {
-    "nom nom", "full now", "thank u", "crunch!", "happy tum"
+    "nom nom",
+    "200 ok yum",
+    "сыр это жизнь",
+    "cache warm",
+    "crunch!"
 };
 static const char* PH_PET[] = {
-    "hehehe", "ear wiggle", "more pets", "best human", "purr-oink"
+    "hehehe",
+    "more pets",
+    "best haxor",
+    "purr-oink"
 };
 static const char* PH_PLAY[] = {
-    "zoom!", "again!", "catch me", "wee jump", "grass run"
+    "zoom!",
+    "catch me",
+    "hack the planet",
+    "again!",
+    "ping flood"
 };
 static const char* PH_BIRD[] = {
-    "gotcha!", "feather!", "nice shot", "oink boom"
+    "gotcha!",
+    "nice shot",
+    "pkt dropped",
+    "oink boom"
 };
 
 #define PICK(arr) (arr[random(0, (int)(sizeof(arr) / sizeof(arr[0])))])
@@ -80,7 +126,7 @@ void Mood::init() {
         if (life > 5) life = 5;
     }
     lastEffective = happiness;
-    say("oink oink");
+    say("привет");
     updateAvatarState();
 }
 
@@ -139,7 +185,9 @@ void Mood::eatWorld() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    if ((millis() - lastPhraseChange) > 2000) say(PICK(PH_FED));
+    say(PICK(PH_FED));
+    SFX::play(SFX::OINK_HAPPY);
+    Avatar::sniff();
     saveMood();
     updateAvatarState();
 }
@@ -153,7 +201,7 @@ void Mood::hurt(int amount) {
     happiness -= 10 * amount;
     clampStat(happiness);
     lastEffective = happiness;
-    say("ow...");
+    say("segfault");
     saveMood();
     updateAvatarState();
 }
@@ -234,7 +282,7 @@ void Mood::update() {
         clampStat(hunger);
         if (hunger == 0 && life > 0) {
             life -= 1;
-            say("so empty");
+            say("тумми empty");
         }
         if ((now - lastActivityTime) > 90000) happiness -= 2;
         clampStat(happiness);
@@ -273,7 +321,7 @@ void Mood::draw(M5Canvas& canvas) {
     int chars = (int)strlen(ph);
     int bubbleW = chars * 6 + 12;
     if (bubbleW < 44) bubbleW = 44;
-    if (bubbleW > 120) bubbleW = 120;
+    if (bubbleW > 168) bubbleW = 168;
     int bubbleH = 16;
     int pigX = Avatar::getCurrentX();
     int bubbleX = pigX + 20;

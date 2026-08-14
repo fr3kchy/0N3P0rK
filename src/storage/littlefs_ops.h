@@ -40,6 +40,7 @@ const char* const DIR_PWNCRACK   = "/0N3P0rK/pwncrack";
 const char* const DIR_EVILPIG    = "/0N3P0rK/evilpig";
 const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
 const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
+const char* const DIR_IR         = "/0N3P0rK/ir";
 const char* const DIR_HANDSHAKES = "/0N3P0rK/wpa-sec";
 const char* const DIR_RESULTS    = "/0N3P0rK/wpa-sec";
 
