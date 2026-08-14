@@ -45,6 +45,7 @@ bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX, bool pigOnRight);
 // Airborne stomp near ANY tree/bush; 3 hits collapses. Returns true if hit landed.
 bool tryStompFruitTree(int pigFeetX, bool airborne);
 int16_t getFruitTreeScreenX();  // -1 if none
+int16_t nearestFloraScreenX(int fromX);  // nearest live tree/bush, or -1
 
 // Always false — trees do not push (kept for API parity)
 bool checkFruitPush(int pigLeft, int pigRight, int16_t& treeScreenX);

@@ -10,8 +10,12 @@
 #include "../core/config.h"
 #include "../audio/sfx.h"
 #include "../modes/fruit_run.h"
+#include "mood.h"
+#include "../storage/littlefs_ops.h"
 #include <time.h>
 #include <math.h>
+#include <stdio.h>
+#include <esp_random.h>
 
 // Camera rails (~33% from each edge of roam range)
 static constexpr int kCamXMin = 4;
@@ -86,7 +90,14 @@ static const uint32_t SNIFF_DURATION_MS = 600;  // 600ms for proper sniff cycle
 static uint8_t sniffFrame = 0;  // Alternates between nose shapes (oo, oO, Oo)
 
 // Walk transition timing
-static const uint32_t TRANSITION_DURATION_MS = 1200;  // 1.2s slow relaxed walk (was 400ms - too hectic)
+static const uint32_t TRANSITION_DURATION_MS = 1200;  // fallback if walk ms not set
+static uint32_t s_walkMs = 1200;
+static bool s_sitAfterWalk = false;
+static bool s_hiding = false;
+static uint32_t s_nextHideMs = 0;
+static uint32_t s_nextFoodWalkMs = 0;
+static int s_strollDir = 0;
+static uint32_t s_strollUntil = 0;
 
 // Rest cooldown after grass stops - prevents immediate re-triggering
 static uint32_t lastGrassStopTime = 0;
@@ -341,33 +352,56 @@ static uint16_t blendDayDuskNight(uint16_t dayC, uint16_t duskC, uint16_t nightC
     return lerp565(duskC, nightC, (uint8_t)(((amt - 128) * 16) / 128));
 }
 
-// Minutes-of-day → night amount with real dusk/dawn windows
-// Dawn 05:00–07:00, day 07–18, dusk 18:00–20:00, night 20–05
-static uint16_t nightAmountFromMinutes(int mins) {
+// Minutes-of-day → night amount.
+// Spring/Autumn: day and night the same length (12/12).
+// Summer: long day. Winter: long night.
+static uint16_t nightAmountFromMinutes(int mins, Season season) {
     if (mins < 0) mins = 0;
     if (mins >= 24 * 60) mins %= (24 * 60);
-    // Dawn 5:00–7:00 → 256→0
-    if (mins >= 5 * 60 && mins < 7 * 60) {
-        return (uint16_t)(256 - ((mins - 5 * 60) * 256) / 120);
+    int dawn0, dawn1, dusk0, dusk1;
+    if (season == Season::SUMMER) {
+        dawn0 = 4 * 60;  dawn1 = 6 * 60;   // 04–06
+        dusk0 = 20 * 60; dusk1 = 22 * 60;  // 20–22
+    } else if (season == Season::WINTER) {
+        dawn0 = 8 * 60;  dawn1 = 10 * 60;  // 08–10
+        dusk0 = 15 * 60; dusk1 = 17 * 60;  // 15–17
+    } else {
+        // Spring / Autumn / Retro: equal
+        dawn0 = 5 * 60;  dawn1 = 7 * 60;   // 05–07
+        dusk0 = 17 * 60; dusk1 = 19 * 60;  // 17–19
     }
-    // Day 7:00–18:00
-    if (mins >= 7 * 60 && mins < 18 * 60) return 0;
-    // Dusk 18:00–20:00 → 0→256
-    if (mins >= 18 * 60 && mins < 20 * 60) {
-        return (uint16_t)(((mins - 18 * 60) * 256) / 120);
+    if (mins >= dawn0 && mins < dawn1) {
+        int span = dawn1 - dawn0;
+        return (uint16_t)(256 - ((mins - dawn0) * 256) / span);
     }
-    // Night 20:00–05:00
+    if (mins >= dawn1 && mins < dusk0) return 0;
+    if (mins >= dusk0 && mins < dusk1) {
+        int span = dusk1 - dusk0;
+        return (uint16_t)(((mins - dusk0) * 256) / span);
+    }
     return 256;
 }
 
-// Synthetic 6-min cycle: day → dusk → night → dawn (no clock)
-// 0–200s day, 200–240 dusk, 240–320 night, 320–360 dawn
-static uint16_t nightAmountFromSynthetic(uint32_t secInCycle) {
+// Synthetic 6-min cycle, same season rules (no clock)
+static uint16_t nightAmountFromSynthetic(uint32_t secInCycle, Season season) {
     uint32_t sec = secInCycle % 360u;
-    if (sec < 200u) return 0;
-    if (sec < 240u) return (uint16_t)(((sec - 200u) * 256u) / 40u);
-    if (sec < 320u) return 256;
-    return (uint16_t)(256u - ((sec - 320u) * 256u) / 40u);
+    uint32_t dayS, duskS, nightS, dawnS;
+    if (season == Season::SUMMER) {
+        dayS = 200; duskS = 40; nightS = 80; dawnS = 40;
+    } else if (season == Season::WINTER) {
+        dayS = 80; duskS = 40; nightS = 200; dawnS = 40;
+    } else {
+        dayS = 140; duskS = 40; nightS = 140; dawnS = 40;
+    }
+    if (sec < dayS) return 0;
+    sec -= dayS;
+    if (sec < duskS) return (uint16_t)((sec * 256u) / duskS);
+    sec -= duskS;
+    if (sec < nightS) return 256;
+    sec -= nightS;
+    if (dawnS == 0) return 0;
+    if (sec < dawnS) return (uint16_t)(256u - (sec * 256u) / dawnS);
+    return 0;
 }
 
 static uint16_t computeNightTarget(uint32_t now) {
@@ -384,7 +418,7 @@ static uint16_t computeNightTarget(uint32_t now) {
     auto dt = M5.Rtc.getDateTime();
     if (dt.date.year >= 2024) {
         int mins = (int)dt.time.hours * 60 + (int)dt.time.minutes;
-        s_cachedNightTarget = nightAmountFromMinutes(mins);
+        s_cachedNightTarget = nightAmountFromMinutes(mins, Weather::getActiveSeason());
         return s_cachedNightTarget;
     }
 
@@ -393,12 +427,12 @@ static uint16_t computeNightTarget(uint32_t now) {
         struct tm timeinfo;
         localtime_r(&unixNow, &timeinfo);
         int mins = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-        s_cachedNightTarget = nightAmountFromMinutes(mins);
+        s_cachedNightTarget = nightAmountFromMinutes(mins, Weather::getActiveSeason());
         return s_cachedNightTarget;
     }
 
     // No clock: living day/night cycle with dusk/dawn ramps
-    s_cachedNightTarget = nightAmountFromSynthetic(now / 1000u);
+    s_cachedNightTarget = nightAmountFromSynthetic(now / 1000u, Weather::getActiveSeason());
     return s_cachedNightTarget;
 }
 
@@ -1340,12 +1374,18 @@ void Avatar::draw(M5Canvas& canvas) {
     // Handle walk transition animation
     if (transitioning) {
         uint32_t elapsed = now - transitionStartTime;
-        if (elapsed >= TRANSITION_DURATION_MS) {
+        uint32_t walkMs = s_walkMs ? s_walkMs : TRANSITION_DURATION_MS;
+        if (elapsed >= walkMs) {
             // Transition complete
             transitioning = false;
             currentX = transitionToX;
             facingRight = transitionToFacingRight;
             onRightSide = (currentX > 60);  // Track which side we're on
+            if (s_sitAfterWalk) {
+                s_sitAfterWalk = false;
+                s_hiding = true;
+                setSitting(true);
+            }
 
             // Start grass now if it was pending
             if (pendingGrassStart) {
@@ -1377,7 +1417,7 @@ void Avatar::draw(M5Canvas& canvas) {
             lookInterval = random(1500, 6000);  // More variable
         } else {
             // Animate X position (ease in-out)
-            float t = (float)elapsed / TRANSITION_DURATION_MS;
+            float t = (float)elapsed / (float)walkMs;
             // Heavy quintic ease: 6t^5 - 15t^4 + 10t^3 (more inertia than smooth step)
             // Flatter acceleration/deceleration = heavier feel
             float smoothT = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
@@ -1422,8 +1462,25 @@ void Avatar::draw(M5Canvas& canvas) {
     uint32_t minLook = (uint32_t)(3000 * flipMod);
     uint32_t maxLook = (uint32_t)(9000 * flipMod);
 
+    // === STROLL: walk across the scene so the world actually scrolls ===
+    if (s_strollDir != 0 && !s_sitting && !s_playDead && !s_hiding &&
+        !attackHopActive && !isControlLocked()) {
+        if (now >= s_strollUntil) {
+            playerWalkHold(0, true);
+            s_strollDir = 0;
+            lastFlipTime = now;
+            flipInterval = random(minWalk, maxWalk);
+        } else {
+            playerWalkHold(s_strollDir, true);
+        }
+    } else if (s_strollDir != 0) {
+        playerWalkHold(0, true);
+        s_strollDir = 0;
+    }
+
     // === ORGANIC RANDOM BEHAVIORS (OnePork idle) ===
-    if (!transitioning && !grassMoving && !pendingGrassStart && !attackHopActive &&
+    if (!s_strollDir && !transitioning && !grassMoving && !pendingGrassStart &&
+        !attackHopActive &&
         !s_sitting && !s_playDead && s_sitBlend < 32 && s_deadBlend < 32 &&
         !s_manualWalk) {
 
@@ -1468,62 +1525,21 @@ void Avatar::draw(M5Canvas& canvas) {
         }
         skip_look_reset:
 
-        // --- WALK BEHAVIOR: Always stay at LEFT/RIGHT edges for bubble positioning ---
-        // Pig should ALWAYS be at edges where bubble can float beside, never in center
+        // Walk the world: hold a direction so camera rails scroll grass/trees
         if (now - lastFlipTime > flipInterval) {
             int walkRoll = random(0, 100);
-            int targetX;
-
-            // Define edge zones (bubble floats beside pig, not above)
-            const int LEFT_EDGE = 20;   // Left rest position
-            const int RIGHT_EDGE = 108; // Right rest position
-
-            if (walkRoll < 50) {
-                // 50%: Walk to opposite edge (primary behavior)
-                targetX = onRightSide ? LEFT_EDGE : RIGHT_EDGE;
-            } else if (walkRoll < 85) {
-                // 35%: Walk to random edge (left or right)
-                targetX = random(0, 2) == 0 ? LEFT_EDGE : RIGHT_EDGE;
-            } else if (walkRoll < 95) {
-                // 10%: Short shuffle within current edge zone
-                if (onRightSide) {
-                    targetX = random(85, 108);  // Stay in right zone
-                } else {
-                    targetX = random(20, 45);   // Stay in left zone
-                }
-            } else {
-                // 5%: Stay put, just turn around (fake walk)
+            if (walkRoll < 12) {
                 facingRight = !facingRight;
                 lastFlipTime = now;
                 flipInterval = random(minWalk / 2, maxWalk / 2);
-                goto skip_walk;
-            }
-
-            // Only walk if destination is different enough (avoid micro-movements)
-            if (abs(targetX - currentX) > 15) {
-                bool goingRight = targetX > currentX;
-
-                transitioning = true;
-                transitionStartTime = now;
-                transitionFromX = currentX;
-                transitionToX = targetX;
-                transitionToFacingRight = goingRight;  // Face direction of travel
-
-                lastFlipTime = now;
-                // Vary wait time more randomly
-                if (random(0, 4) == 0) {
-                    flipInterval = random(15000, 30000);  // 25% chance: shorter wait
-                } else {
-                    flipInterval = random(minWalk, maxWalk);
-                }
             } else {
-                // Destination too close, just look that way instead
-                facingRight = targetX > currentX;
+                s_strollDir = (walkRoll < 56) ? (onRightSide ? -1 : 1)
+                                              : ((random(0, 2) == 0) ? -1 : 1);
+                s_strollUntil = now + (uint32_t)random(2800, 7500);
                 lastFlipTime = now;
-                flipInterval = random(minWalk / 3, minWalk);
+                flipInterval = random(minWalk, maxWalk);
             }
         }
-        skip_walk:;
     }
 
     // === GRASS WANDER: Random roaming toward center while treadmill runs ===
@@ -1540,21 +1556,13 @@ void Avatar::draw(M5Canvas& canvas) {
                     int hi = (homeX < centerX) ? centerX : homeX - 10;
                     int target = random(lo, hi + 1);
                     if (abs(target - currentX) > 10) {
-                        transitioning = true;
-                        transitionStartTime = now;
-                        transitionFromX = currentX;
-                        transitionToX = target;
-                        transitionToFacingRight = !grassDirection;  // Keep treadmill facing
+                        walkTo(target, false);
                     }
                 }
             } else {
                 // Away from home - maybe return (or stay and chill)
                 if (random(0, 100) < 45) {
-                    transitioning = true;
-                    transitionStartTime = now;
-                    transitionFromX = currentX;
-                    transitionToX = homeX;
-                    transitionToFacingRight = !grassDirection;  // Restore treadmill facing
+                    walkTo(homeX, false);
                 }
             }
 
@@ -1707,6 +1715,7 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         int lift = getJumpLiftPx();
         int feetY = 106 - lift;
         if (Trees::updateAmbient(feet, feetY, currentX, onRightSide)) {
+            Mood::eatWorld();
             triggerSparkles(5);
             triggerTailWiggle();
             SFX::play(SFX::MODE_ENTER);
@@ -2675,9 +2684,13 @@ void Avatar::setPlayerWalkScroll(bool walking, bool faceRight) {
     }
 }
 
-void Avatar::playerWalkHold(int dir) {
+void Avatar::playerWalkHold(int dir, bool fromAi) {
     // dir: -1 left, +1 right, 0 stop
     // Classic side-scroller camera:
+    if (!fromAi) {
+        s_strollDir = 0;
+        s_strollUntil = 0;
+    }
     //   middle ~34% — pig walks freely, world still
     //   hit left/right scroll line (~33% from each edge) — pig STAYS there,
     //   world scrolls so you see further ahead (no need to hug screen edge)
@@ -2761,6 +2774,8 @@ void Avatar::setSitting(bool on) {
         s_playDead = false;
         jumpActive = false;
         notifyPlayerControl();
+    } else {
+        s_hiding = false;
     }
 }
 
@@ -2813,7 +2828,23 @@ void Avatar::onWolfBitten() {
     setManualWalk(false);
     setPlayDead(true);
     setState(AvatarState::SAD);
+    int lifeBefore = Mood::getLife();
+    Mood::hurt(18);
+    s_hiding = false;
+    s_sitAfterWalk = false;
+    s_strollDir = 0;
     SFX::play(SFX::OINK_GRUNT);
+    if (lifeBefore > 0 && Mood::getLife() <= 0 &&
+        Config::personality().wolfEatLoot && Config::isSDAvailable()) {
+        uint8_t n = 1 + (uint8_t)(esp_random() % 3);
+        uint8_t ate = Storage::eatRandomLoot(n);
+        if (ate) {
+            char msg[28];
+            snprintf(msg, sizeof(msg), "WOLF ATE %u FILE%s",
+                     (unsigned)ate, ate == 1 ? "" : "S");
+            Display::showToast(msg, 2200);
+        }
+    }
 }
 
 bool Avatar::isControlLocked() {
@@ -3177,11 +3208,78 @@ bool Avatar::checkBirdWaveCollision(int16_t bx, int16_t by) {
     return false;
 }
 
+void Avatar::walkTo(int targetX, bool sitAfter) {
+    if (targetX < 8) targetX = 8;
+    if (targetX > 150) targetX = 150;
+    int dist = targetX - currentX;
+    if (dist < 0) dist = -dist;
+    if (dist < 6) {
+        currentX = targetX;
+        if (sitAfter) {
+            s_hiding = true;
+            setSitting(true);
+        }
+        return;
+    }
+    if (s_sitting) setSitting(false);
+    bool goingRight = targetX > currentX;
+    transitioning = true;
+    transitionStartTime = millis();
+    transitionFromX = currentX;
+    transitionToX = targetX;
+    transitionToFacingRight = goingRight;
+    facingRight = goingRight;
+    s_sitAfterWalk = sitAfter;
+    s_walkMs = (uint32_t)dist * 22u + 450u;
+    if (s_walkMs < 700) s_walkMs = 700;
+    if (s_walkMs > 2800) s_walkMs = 2800;
+}
+
+void Avatar::fleeToHide() {
+    if (s_hiding || s_sitting || s_playDead || isControlLocked() || transitioning) return;
+    uint32_t now = millis();
+    if (now < s_nextHideMs) return;
+    s_nextHideMs = now + 1800;
+    int flora = Trees::nearestFloraScreenX(currentX);
+    int hideX = flora;
+    if (hideX < 0) {
+        int wx = Wolf::getX();
+        hideX = (currentX < wx) ? 18 : 140;
+    } else {
+        hideX -= 18;
+        if (hideX < 12) hideX = 12;
+        if (hideX > 148) hideX = 148;
+    }
+    walkTo(hideX, true);
+}
+
+void Avatar::walkToFood() {
+    if (transitioning || s_sitting || s_playDead || s_hiding || isControlLocked()) return;
+    uint32_t now = millis();
+    if (now < s_nextFoodWalkMs) return;
+    s_nextFoodWalkMs = now + 4000;
+    int flora = Trees::nearestFloraScreenX(currentX);
+    if (flora < 0) return;
+    int dest = flora - 16;
+    if (dest < 12) dest = 12;
+    if (dest > 148) dest = 148;
+    if (abs(dest - currentX) < 12) return;
+    walkTo(dest, false);
+}
+
+bool Avatar::isHiding() { return s_hiding || s_sitting; }
+
 // --- Phase 6: Windup slide for coast-back ---
 void Avatar::startWindupSlide(int targetX, bool faceRight) {
     // Start a smooth transition to target position
     // Uses standard TRANSITION_DURATION_MS (300ms) from draw() logic
     if (currentX != targetX) {
+        int dist = targetX - currentX;
+        if (dist < 0) dist = -dist;
+        s_walkMs = (uint32_t)dist * 18u + 400u;
+        if (s_walkMs < 600) s_walkMs = 600;
+        if (s_walkMs > 2200) s_walkMs = 2200;
+        s_sitAfterWalk = false;
         transitioning = true;
         transitionFromX = currentX;
         transitionToX = targetX;

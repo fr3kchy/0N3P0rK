@@ -32,7 +32,7 @@ static const char* const HINTS[] = {
     "ENT:DET  S:SYNC  T:TEST",
     "FEED YO HASHCAT.",
     "OK=PASS  ..=SENT  --=LOC",
-    "KEY IN /loot/wpa-sec/"
+    "KEY IN /0N3P0rK/wpa-sec/"
 };
 static const uint8_t HINT_COUNT = 4;
 static const uint8_t VISIBLE = 5;
@@ -219,9 +219,7 @@ void HashesMenu::startSync() {
 }
 
 void HashesMenu::handleInput() {
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    bool pressed = M5Cardputer.Keyboard.isPressed();
-    if (!pressed) {
+    if (!M5Cardputer.Keyboard.isPressed()) {
         keyWasPressed = false;
         return;
     }

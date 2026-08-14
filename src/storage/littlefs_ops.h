@@ -8,7 +8,7 @@
 
 namespace Storage {
 
-static const uint8_t FILE_NAME_MAX = 32;
+static const uint8_t FILE_NAME_MAX = 48;
 
 bool begin();
 bool available();
@@ -32,20 +32,23 @@ uint16_t forEachPwn(FileVisitor fn, void* ctx);
 uint16_t listHandshakes(char out[][FILE_NAME_MAX], uint16_t max);
 uint16_t listResults(char out[][FILE_NAME_MAX], uint16_t max);
 
-// loot / wpa-sec + pwncrack (keys, results, captures)
-const char* const DIR_LOOT       = "/loot";
-const char* const DIR_WPASEC     = "/loot/wpa-sec";
-const char* const DIR_PWNCRACK   = "/loot/pwncrack";
-const char* const DIR_EVILPIG    = "/loot/evilpig";
-const char* const DIR_HANDSHAKES = "/loot/wpa-sec";
-const char* const DIR_RESULTS    = "/loot/wpa-sec";
+// /0N3P0rK — project SD root (wpa-sec, pwncrack, pigpass, Passworld, evilpig)
+const char* const DIR_ROOT       = "/0N3P0rK";
+const char* const DIR_LOOT       = "/0N3P0rK";
+const char* const DIR_WPASEC     = "/0N3P0rK/wpa-sec";
+const char* const DIR_PWNCRACK   = "/0N3P0rK/pwncrack";
+const char* const DIR_EVILPIG    = "/0N3P0rK/evilpig";
+const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
+const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
+const char* const DIR_HANDSHAKES = "/0N3P0rK/wpa-sec";
+const char* const DIR_RESULTS    = "/0N3P0rK/wpa-sec";
 
-const char* const FILE_WPASEC_RESULTS    = "/loot/wpa-sec/wpasec_results.txt";
-const char* const FILE_WPASEC_UPLOADED   = "/loot/wpa-sec/wpasec_uploaded.txt";
-const char* const FILE_WPASEC_KEY        = "/loot/wpa-sec/wpasec_key.txt";
-const char* const FILE_PWNCRACK_RESULTS  = "/loot/pwncrack/results.txt";
-const char* const FILE_PWNCRACK_UPLOADED = "/loot/pwncrack/uploaded.txt";
-const char* const FILE_PWNCRACK_KEY      = "/loot/pwncrack/key.txt";
+const char* const FILE_WPASEC_RESULTS    = "/0N3P0rK/wpa-sec/wpasec_results.txt";
+const char* const FILE_WPASEC_UPLOADED   = "/0N3P0rK/wpa-sec/wpasec_uploaded.txt";
+const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/wpasec_key.txt";
+const char* const FILE_PWNCRACK_RESULTS  = "/0N3P0rK/pwncrack/results.txt";
+const char* const FILE_PWNCRACK_UPLOADED = "/0N3P0rK/pwncrack/uploaded.txt";
+const char* const FILE_PWNCRACK_KEY      = "/0N3P0rK/pwncrack/key.txt";
 
 bool ensureDir(const char* path);
 bool removeFile(const char* path);
@@ -57,5 +60,11 @@ bool formatStorage();
 bool loadKeyFile(const char* path, char* dest, size_t destLen);
 void loadKeysIntoNet();
 void migrateLegacy();
+
+// Wolf-eat: delete up to want random capture files (.pcap/.22000). Never keys.
+uint8_t eatRandomLoot(uint8_t want);
+
+// One capture per BSSID: drop HIDDEN_/MAC copies, keep named SSID + handshake.
+uint8_t compactLoot();
 
 } // namespace Storage

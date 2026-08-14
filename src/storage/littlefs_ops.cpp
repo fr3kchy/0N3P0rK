@@ -1,7 +1,10 @@
 #include "littlefs_ops.h"
 #include "../net/ap_sta.h"
+#include "../cap/capture_name.h"
 #include <SPI.h>
 #include <string.h>
+#include <strings.h>
+#include <esp_random.h>
 
 namespace Storage {
 
@@ -96,12 +99,12 @@ bool begin() {
         return false;
     }
 
-    SD.mkdir(DIR_LOOT);
+    SD.mkdir(DIR_ROOT);
     SD.mkdir(DIR_WPASEC);
     SD.mkdir(DIR_PWNCRACK);
     SD.mkdir(DIR_EVILPIG);
-    SD.mkdir("/loot/pigpass");
-    SD.mkdir("/loot/Passworld");
+    SD.mkdir(DIR_PIGPASS);
+    SD.mkdir(DIR_PASSWORLD);
     migrateLegacy();
     return true;
 }
@@ -287,11 +290,12 @@ static void migrateAll(const char* from, const char* toDir) {
 
 void migrateLegacy() {
     if (!s_mounted) return;
-    migrateDirByExt("/m5porkchop/handshakes");
-    migrateDirByExt("/handshakes");
-    migrateAll("/m5porkchop/wpa-sec", DIR_WPASEC);
-    migrateAll("/m5porkchop/pwncrack", DIR_PWNCRACK);
-    migrateAll("/m5porkchop/evilpig", DIR_EVILPIG);
+    // Our previous /loot layout → /0N3P0rK. No m5porkchop.
+    migrateAll("/loot/wpa-sec", DIR_WPASEC);
+    migrateAll("/loot/pwncrack", DIR_PWNCRACK);
+    migrateAll("/loot/evilpig", DIR_EVILPIG);
+    migrateAll("/loot/pigpass", DIR_PIGPASS);
+    migrateAll("/loot/Passworld", DIR_PASSWORLD);
 }
 
 bool formatStorage() {
@@ -313,16 +317,181 @@ bool loadKeyFile(const char* path, char* dest, size_t destLen) {
 
 void loadKeysIntoNet() {
     char buf[65];
-    if (loadKeyFile(FILE_WPASEC_KEY, buf, sizeof(buf)) ||
-        loadKeyFile("/m5porkchop/wpa-sec/wpasec_key.txt", buf, sizeof(buf))) {
+    if (loadKeyFile(FILE_WPASEC_KEY, buf, sizeof(buf))) {
         Net::setWpaSecKey(buf);
         Serial.println("[SD] wpasec key loaded");
     }
-    if (loadKeyFile(FILE_PWNCRACK_KEY, buf, sizeof(buf)) ||
-        loadKeyFile("/m5porkchop/pwncrack/key.txt", buf, sizeof(buf))) {
+    if (loadKeyFile(FILE_PWNCRACK_KEY, buf, sizeof(buf))) {
         Net::setPwncrackKey(buf);
         Serial.println("[SD] pwncrack key loaded");
     }
+}
+
+uint8_t eatRandomLoot(uint8_t want) {
+    if (!s_mounted || want == 0) return 0;
+    struct Item { char path[80]; };
+    Item list[32];
+    uint8_t n = 0;
+    auto collect = [&](const char* dir) {
+        File root = SD.open(dir);
+        if (!root || !root.isDirectory()) {
+            if (root) root.close();
+            return;
+        }
+        File f = root.openNextFile();
+        while (f && n < 32) {
+            if (!f.isDirectory()) {
+                const char* name = baseName(f.name());
+                bool loot = endsWithCI(name, ".pcap") || endsWithCI(name, ".pcapng") ||
+                            endsWithCI(name, ".cap") || endsWithCI(name, ".22000") ||
+                            endsWithCI(name, ".hc22000");
+                if (loot) {
+                    snprintf(list[n].path, sizeof(list[n].path), "%s/%s", dir, name);
+                    n++;
+                }
+            }
+            f.close();
+            f = root.openNextFile();
+        }
+        if (f) f.close();
+        root.close();
+    };
+    collect(DIR_WPASEC);
+    collect(DIR_PWNCRACK);
+    if (n == 0) return 0;
+    if (want > n) want = n;
+    uint8_t eaten = 0;
+    for (uint8_t k = 0; k < want && n > 0; k++) {
+        uint8_t pick = (uint8_t)(esp_random() % n);
+        if (SD.remove(list[pick].path)) {
+            Serial.printf("[LOOT] wolf ate %s\n", list[pick].path);
+            eaten++;
+        }
+        list[pick] = list[n - 1];
+        n--;
+    }
+    return eaten;
+}
+
+static bool isProtectedName(const char* name) {
+    if (!name || !name[0]) return true;
+    if (strncasecmp(name, "wpasec_", 7) == 0) return true;
+    if (strcasecmp(name, "key.txt") == 0) return true;
+    if (strcasecmp(name, "key.txt.imported") == 0) return true;
+    if (strcasecmp(name, "results.txt") == 0) return true;
+    if (strcasecmp(name, "uploaded.txt") == 0) return true;
+    return false;
+}
+
+static bool isLootCap(const char* name) {
+    return endsWithCI(name, ".pcap") || endsWithCI(name, ".pcapng") ||
+           endsWithCI(name, ".cap") || endsWithCI(name, ".22000") ||
+           endsWithCI(name, ".hc22000");
+}
+
+static int lootScore(const char* name, uint32_t size) {
+    int s = 0;
+    if (endsWithCI(name, "_hs.22000")) s += 300;
+    else if (endsWithCI(name, ".hc22000")) s += 80;
+    else if (endsWithCI(name, ".22000")) s += 120;
+    else if (endsWithCI(name, ".pcap") || endsWithCI(name, ".pcapng") ||
+             endsWithCI(name, ".cap"))
+        s += 200;
+    char ssid[33] = {0};
+    if (CapName::extractSsidFromName(name, ssid)) {
+        if (strcasecmp(ssid, "HIDDEN") == 0) s += 20;
+        else s += 400;
+    }
+    if (size > 24) {
+        uint32_t bonus = size / 512;
+        if (bonus > 60) bonus = 60;
+        s += (int)bonus;
+    }
+    return s;
+}
+
+static void dropCompanion(const char* dir, const char* name) {
+    const char* base = baseName(name);
+    const char* dot = strrchr(base, '.');
+    size_t n = dot ? (size_t)(dot - base) : strlen(base);
+    if (n > 3 && strncmp(base + n - 3, "_hs", 3) == 0) n -= 3;
+    if (n == 0) return;
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%.*s.txt", dir, (int)n, base);
+    if (SD.exists(path)) SD.remove(path);
+}
+
+static uint8_t compactOneDir(const char* dir) {
+    struct Cand {
+        char name[48];
+        char hex[13];
+        uint32_t size;
+        int16_t score;
+    };
+    Cand list[48];
+    uint8_t n = 0;
+    File root = SD.open(dir);
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return 0;
+    }
+    File f = root.openNextFile();
+    while (f && n < 48) {
+        if (!f.isDirectory()) {
+            const char* name = baseName(f.name());
+            if (isLootCap(name) && !isProtectedName(name)) {
+                Cand& c = list[n];
+                memset(&c, 0, sizeof(c));
+                strncpy(c.name, name, sizeof(c.name) - 1);
+                c.size = (uint32_t)f.size();
+                CapName::extractBssidHex(name, c.hex);
+                if (!c.hex[0]) {
+                    char hx[13] = {0}, ss[33] = {0};
+                    if (CapName::metaFrom22000File(dir, name, hx, ss) && hx[0])
+                        memcpy(c.hex, hx, 13);
+                }
+                c.score = (int16_t)lootScore(name, c.size);
+                if (c.hex[0]) n++;
+            }
+        }
+        f.close();
+        f = root.openNextFile();
+    }
+    if (f) f.close();
+    root.close();
+
+    bool used[48];
+    memset(used, 0, sizeof(used));
+    uint8_t killed = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        if (used[i]) continue;
+        uint8_t best = i;
+        for (uint8_t j = i + 1; j < n; j++) {
+            if (used[j]) continue;
+            if (strcmp(list[j].hex, list[i].hex) != 0) continue;
+            if (list[j].score > list[best].score) best = j;
+        }
+        for (uint8_t j = 0; j < n; j++) {
+            if (strcmp(list[j].hex, list[i].hex) != 0) continue;
+            used[j] = true;
+            if (j == best) continue;
+            char path[96];
+            snprintf(path, sizeof(path), "%s/%s", dir, list[j].name);
+            if (SD.remove(path)) {
+                dropCompanion(dir, list[j].name);
+                killed++;
+                Serial.printf("[LOOT] dedup %s\n", list[j].name);
+            }
+        }
+    }
+    return killed;
+}
+
+uint8_t compactLoot() {
+    if (!s_mounted) return 0;
+    uint8_t n = (uint8_t)(compactOneDir(DIR_WPASEC) + compactOneDir(DIR_PWNCRACK));
+    if (n) Serial.printf("[LOOT] compact removed %u dupes\n", (unsigned)n);
+    return n;
 }
 
 } // namespace Storage

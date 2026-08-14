@@ -1,16 +1,21 @@
 #include "settings_menu.h"
 #include "display.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
 #include "../audio/sfx.h"
+#include "../net/ap_sta.h"
+#include "../cap/sniffer.h"
 #include <M5Cardputer.h>
+#include <WiFi.h>
 #include <string.h>
 #include <stdio.h>
 
 namespace SettingsMenu {
 
 enum class Kind : uint8_t { TOGGLE, VALUE, TEXT };
+enum class ConnPhase : uint8_t { LIST = 0, PASS = 1 };
 
 struct Item {
     const char* label;
@@ -22,25 +27,32 @@ struct Item {
 };
 
 static const Item SCENE[] = {
-    {"NAME",     Kind::TEXT,   0,  0, 0, 0},
-    {"SKIN",     Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
-    {"SEASON",   Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
-    {"SKY",      Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
-    {"SCROLL",   Kind::VALUE,  4,  1, 10, 1},
-    {"LIFE",     Kind::TOGGLE, 5,  0, 1, 1},
-    {"ALL LAYERS", Kind::TOGGLE, 6, 0, 1, 1},
-    {"WOLF",     Kind::TOGGLE, 7,  0, 1, 1},
-    {"TREES",    Kind::TOGGLE, 8,  0, 1, 1},
-    {"WEATHER",  Kind::TOGGLE, 9,  0, 1, 1},
-    {"GRASS",    Kind::TOGGLE, 10, 0, 1, 1},
-    {"SHOW PIG", Kind::TOGGLE, 11, 0, 1, 1},
-    {"SEASON FX",Kind::TOGGLE, 12, 0, 1, 1},
-    {"MOOD",     Kind::TOGGLE, 13, 0, 1, 1},
-    {"ANIM TEST",Kind::TOGGLE, 14, 0, 1, 1},
-    {"BRIGHT",   Kind::VALUE,  15, 10, 100, 10},
-    {"SOUND",    Kind::VALUE,  16, 0, 5, 1},
+    {"NAME",      Kind::TEXT,   0,  0, 0, 0},
+    {"SKIN",      Kind::VALUE,  1,  0, PIG_SKIN_COUNT - 1, 1},
+    {"SEASON",    Kind::VALUE,  2,  0, SEASON_MODE_COUNT - 1, 1},
+    {"SKY",       Kind::VALUE,  3,  0, SKY_MODE_COUNT - 1, 1},
+    {"SCROLL",    Kind::VALUE,  4,  1, 10, 1},
+    {"LIFE",      Kind::TOGGLE, 5,  0, 1, 1},
+    {"ALL LAYERS",Kind::TOGGLE, 6,  0, 1, 1},
+    {"WOLF",      Kind::TOGGLE, 7,  0, 1, 1},
+    {"WOLF EAT",  Kind::TOGGLE, 15, 0, 1, 1},
+    {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
+    {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
+    {"GRASS",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
+    {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
+    {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
+
+static const Item SYSTEM[] = {
+    {"BRIGHT",    Kind::VALUE, 0, 10, 100, 10},
+    {"SOUND",     Kind::VALUE, 1, 0, 5, 1},
+    {"DIM AFTER", Kind::VALUE, 2, 0, 300, 10},
+    {"DIM LEVEL", Kind::VALUE, 3, 0, 50, 5},
+};
+static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
     {"HOP MS",   Kind::VALUE,  0,  50, 2000, 50},
@@ -68,15 +80,20 @@ static const char* const H_SCENE[] = {
     "SHE LIVES WHILE YOU WORK.",
     "MASTER: FULL SCENE OR BLANK.",
     "RANDOM WOLF VISITOR.",
+    "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",
     "GRASS / DIRT FLOOR.",
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE.",
-    "IDLE: CYCLE FACES.",
+    "IDLE: CYCLE FACES."
+};
+static const char* const H_SYSTEM[] = {
     "SCREEN GLOW.",
-    "0 = MUTE."
+    "0 = MUTE.",
+    "0 = NEVER DIM.",
+    "0 = SCREEN OFF WHEN DIM."
 };
 static const char* const H_RADIO[] = {
     "HOW LONG YOU SIT ON A CH.",
@@ -92,6 +109,12 @@ static const char* const H_BLE[] = {
     "MS EACH ADVERTISEMENT."
 };
 
+struct NetRow {
+    char ssid[33];
+    int8_t rssi;
+    bool open;
+};
+
 static bool s_active = false;
 static bool s_keyWas = false;
 static bool s_editing = false;
@@ -99,12 +122,23 @@ static bool s_text = false;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
-static char s_edit[32];
+static char s_edit[65];
 static const uint8_t VIS = 4;
 
+static ConnPhase s_conn = ConnPhase::LIST;
+static NetRow s_nets[16];
+static uint8_t s_netN = 0;
+static uint8_t s_netIdx = 0;
+static uint8_t s_netScroll = 0;
+static char s_pickSsid[33] = "";
+static bool s_pickOpen = false;
+static bool s_scanning = false;
+
 static const Item* items(uint8_t* n) {
+    if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
+    if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     *n = SCENE_N;
     return SCENE;
 }
@@ -166,6 +200,7 @@ static int getValue(const Item& it) {
             case 5: return p.freeLife ? 1 : 0;
             case 6: return allLayersOn() ? 1 : 0;
             case 7: return (p.wolfEnabled && SceneLayers::wolf) ? 1 : 0;
+            case 15: return p.wolfEatLoot ? 1 : 0;
             case 8: return (p.fruitTreesAmbient && SceneLayers::trees) ? 1 : 0;
             case 9: return SceneLayers::weather ? 1 : 0;
             case 10: return SceneLayers::grass ? 1 : 0;
@@ -173,8 +208,15 @@ static int getValue(const Item& it) {
             case 12: return SceneLayers::seasonFx ? 1 : 0;
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
-            case 15: return p.brightness;
-            case 16: return p.soundLevel;
+            default: return 0;
+        }
+    }
+    if (s_page == SettingsPage::SYSTEM) {
+        switch (it.id) {
+            case 0: return p.brightness;
+            case 1: return p.soundLevel;
+            case 2: return p.dimTimeout;
+            case 3: return p.dimLevel;
             default: return 0;
         }
     }
@@ -210,10 +252,12 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         else if (it.id == 2) strncpy(raw, seasonName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 3) strncpy(raw, skyName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%d", getValue(it));
+    } else if (s_page == SettingsPage::SYSTEM && it.id == 2) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dS", v);
     } else if (s_page == SettingsPage::RADIO && it.id == 6) {
         strncpy(raw, hopSetName((uint8_t)getValue(it)), sizeof(raw) - 1);
-    } else if (s_page == SettingsPage::RADIO && it.id == 5) {
-        snprintf(raw, sizeof(raw), "%d", getValue(it));
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -253,6 +297,9 @@ static bool setValue(const Item& it, int v) {
                 SceneLayers::wolf = v != 0;
                 if (v == 0) Wolf::reset();
                 break;
+            case 15:
+                p.wolfEatLoot = v != 0;
+                break;
             case 8:
                 p.fruitTreesAmbient = v != 0;
                 SceneLayers::trees = v != 0;
@@ -263,11 +310,32 @@ static bool setValue(const Item& it, int v) {
             case 12: SceneLayers::seasonFx = v != 0; break;
             case 13: SceneLayers::mood = v != 0; break;
             case 14: p.animTest = v != 0; break;
-            case 15:
+            default: return false;
+        }
+        Config::save();
+        return true;
+    }
+    if (s_page == SettingsPage::SYSTEM) {
+        switch (it.id) {
+            case 0:
                 p.brightness = (uint8_t)v;
+                Display::resetDimTimer();
                 M5.Display.setBrightness(p.brightness * 255 / 100);
+                if (p.brightness > 0) {
+                    M5.Display.setBrightness(1);
+                    delay(2);
+                    M5.Display.setBrightness(p.brightness * 255 / 100);
+                }
                 break;
-            case 16: p.soundLevel = (uint8_t)v; break;
+            case 1: p.soundLevel = (uint8_t)v; break;
+            case 2:
+                p.dimTimeout = (uint16_t)v;
+                Display::resetDimTimer();
+                break;
+            case 3:
+                p.dimLevel = (uint8_t)v;
+                Display::resetDimTimer();
+                break;
             default: return false;
         }
         Config::save();
@@ -299,6 +367,39 @@ static void keepVisible(uint8_t n) {
     if (s_scroll + VIS > n && n >= VIS) s_scroll = (uint8_t)(n - VIS);
 }
 
+static void scanWifi() {
+    s_scanning = true;
+    s_netN = 0;
+    s_netIdx = 0;
+    s_netScroll = 0;
+    s_conn = ConnPhase::LIST;
+    if (Cap::isRunning()) Cap::stop();
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(false, false);
+    delay(60);
+    int n = WiFi.scanNetworks(false, true);
+    if (n < 0) n = 0;
+    for (int i = 0; i < n && s_netN < 16; i++) {
+        String ss = WiFi.SSID(i);
+        if (ss.length() == 0) continue;
+        NetRow& r = s_nets[s_netN];
+        strncpy(r.ssid, ss.c_str(), sizeof(r.ssid) - 1);
+        r.ssid[sizeof(r.ssid) - 1] = '\0';
+        r.rssi = (int8_t)WiFi.RSSI(i);
+        wifi_auth_mode_t enc = WiFi.encryptionType(i);
+        r.open = (enc == WIFI_AUTH_OPEN);
+        s_netN++;
+    }
+    WiFi.scanDelete();
+    s_scanning = false;
+}
+
+static void saveHomeWifi(const char* pass) {
+    Net::setSta(s_pickSsid, pass ? pass : "");
+    Display::showToast("WIFI SAVED", 1000);
+}
+
 void show(SettingsPage page) {
     s_active = true;
     s_page = page;
@@ -307,6 +408,12 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_keyWas = true;
+    if (page == SettingsPage::CONNECT) {
+        s_conn = ConnPhase::LIST;
+        s_edit[0] = '\0';
+        Display::showToast("SCAN...", 600);
+        scanWifi();
+    }
 }
 
 void hide() {
@@ -319,7 +426,11 @@ bool isActive() { return s_active; }
 SettingsPage page() { return s_page; }
 
 const char* bottomHint() {
-    if (s_text) return "type  ENT save  ` cancel";
+    if (s_page == SettingsPage::CONNECT) {
+        if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
+        return ";/. pick  ENT  R rescan";
+    }
+    if (s_text) return "type  ENT save  BS erase";
     if (s_editing) return ";/. change  ENT done";
     uint8_t n = 0;
     const Item* it = items(&n);
@@ -331,23 +442,108 @@ const char* bottomHint() {
     return ";/.  ENT  ` back";
 }
 
+static void updateConnect() {
+    auto keys = M5Cardputer.Keyboard.keysState();
+    bool up = M5Cardputer.Keyboard.isKeyPressed(';');
+    bool down = M5Cardputer.Keyboard.isKeyPressed('.');
+    bool tick = M5Cardputer.Keyboard.isKeyPressed('`');
+    bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
+    bool rescan = M5Cardputer.Keyboard.isKeyPressed('r') ||
+                  M5Cardputer.Keyboard.isKeyPressed('R');
+
+    if (s_conn == ConnPhase::PASS) {
+        if (keys.enter) {
+            if (strlen(s_edit) > 0 && strlen(s_edit) < 8) {
+                Display::showToast("PASS MIN 8", 1000);
+                return;
+            }
+            saveHomeWifi(s_edit);
+            s_conn = ConnPhase::LIST;
+            s_text = false;
+            SFX::play(SFX::CONFIRM);
+            return;
+        }
+        if (erase) {
+            size_t L = strlen(s_edit);
+            if (L) s_edit[L - 1] = '\0';
+            return;
+        }
+        if (tick) {
+            s_conn = ConnPhase::LIST;
+            s_text = false;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
+        for (char c : keys.word) {
+            if (c < 32 || c >= 127 || c == '`') continue;
+            size_t L = strlen(s_edit);
+            if (L + 1 < sizeof(s_edit) && L < 63) {
+                s_edit[L] = c;
+                s_edit[L + 1] = '\0';
+            }
+        }
+        return;
+    }
+
+    bool esc = tick || erase;
+
+    if (esc) {
+        hide();
+        return;
+    }
+    if (rescan) {
+        Display::showToast("SCAN...", 500);
+        scanWifi();
+        SFX::play(SFX::CLICK);
+        return;
+    }
+    if (up && s_netIdx > 0) {
+        s_netIdx--;
+        if (s_netIdx < s_netScroll) s_netScroll = s_netIdx;
+        SFX::play(SFX::MENU_CLICK);
+        return;
+    }
+    if (down && s_netIdx + 1 < s_netN) {
+        s_netIdx++;
+        if (s_netIdx >= s_netScroll + VIS) s_netScroll = (uint8_t)(s_netIdx - VIS + 1);
+        SFX::play(SFX::MENU_CLICK);
+        return;
+    }
+    if (!keys.enter || s_netN == 0) return;
+    strncpy(s_pickSsid, s_nets[s_netIdx].ssid, sizeof(s_pickSsid) - 1);
+    s_pickSsid[sizeof(s_pickSsid) - 1] = '\0';
+    s_pickOpen = s_nets[s_netIdx].open;
+    if (s_pickOpen) {
+        saveHomeWifi("");
+        SFX::play(SFX::CONFIRM);
+        return;
+    }
+    s_edit[0] = '\0';
+    s_conn = ConnPhase::PASS;
+    s_text = true;
+    SFX::play(SFX::MENU_CLICK);
+}
+
 void update() {
     if (!s_active) return;
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    bool pressed = M5Cardputer.Keyboard.isPressed();
-    if (!pressed) {
+    if (!M5Cardputer.Keyboard.isPressed()) {
         s_keyWas = false;
         return;
     }
     if (s_keyWas) return;
     s_keyWas = true;
 
+    if (s_page == SettingsPage::CONNECT) {
+        updateConnect();
+        return;
+    }
+
     auto keys = M5Cardputer.Keyboard.keysState();
     bool up = M5Cardputer.Keyboard.isKeyPressed(';');
     bool down = M5Cardputer.Keyboard.isKeyPressed('.');
-    bool esc = M5Cardputer.Keyboard.isKeyPressed('`') ||
-               M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) ||
-               keys.del;
+    bool tick = M5Cardputer.Keyboard.isKeyPressed('`');
+    bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
+    bool esc = tick || erase;
 
     uint8_t n = 0;
     const Item* list = items(&n);
@@ -359,25 +555,25 @@ void update() {
             PersonalityConfig& p = Config::personality();
             strncpy(p.name, s_edit, sizeof(p.name) - 1);
             p.name[sizeof(p.name) - 1] = '\0';
-            if (!p.name[0]) strncpy(p.name, "Lexi", sizeof(p.name) - 1);
+            if (!p.name[0]) strncpy(p.name, "Pig", sizeof(p.name) - 1);
             Config::save();
             s_text = false;
             SFX::play(SFX::CONFIRM);
             Display::showToast("NAME SAVED", 900);
             return;
         }
-        if (esc) {
-            s_text = false;
-            SFX::play(SFX::BACK_NAV);
-            return;
-        }
-        if (keys.del) {
+        if (erase) {
             size_t L = strlen(s_edit);
             if (L) s_edit[L - 1] = '\0';
             return;
         }
+        if (tick) {
+            s_text = false;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
         for (char c : keys.word) {
-            if (c < 32 || c >= 127) continue;
+            if (c < 32 || c >= 127 || c == '`') continue;
             size_t L = strlen(s_edit);
             if (L + 1 < sizeof(s_edit) && L < 16) {
                 s_edit[L] = c;
@@ -432,13 +628,93 @@ void update() {
     SFX::play(SFX::MENU_CLICK);
 }
 
+static void drawConnect(M5Canvas& canvas) {
+    const uint16_t UI_BG = 0x2145, UI_PANEL = 0x3A8A, UI_TITLE = 0xFFE0;
+    const uint16_t UI_TEXT = 0xEF5D, UI_DIM = 0x9CD3, UI_SEL = 0xFDB6;
+    canvas.fillSprite(UI_BG);
+    canvas.setTextDatum(top_center);
+    canvas.setTextSize(2);
+    canvas.setTextColor(UI_TITLE);
+    canvas.drawString("CONNECT", DISPLAY_W / 2, 2);
+    canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
+    canvas.setTextDatum(top_left);
+    canvas.setTextSize(1);
+
+    if (s_conn == ConnPhase::PASS) {
+        canvas.setTextColor(UI_DIM);
+        canvas.drawString("PASS FOR", 8, 26);
+        canvas.setTextColor(UI_TITLE);
+        canvas.setTextSize(2);
+        char sn[18];
+        strncpy(sn, s_pickSsid, sizeof(sn) - 1);
+        sn[sizeof(sn) - 1] = '\0';
+        canvas.drawString(sn, 8, 40);
+        canvas.setTextSize(1);
+        canvas.fillRect(5, 64, DISPLAY_W - 10, 18, UI_SEL);
+        canvas.setTextColor(UI_BG);
+        char show[40];
+        snprintf(show, sizeof(show), ">%s", s_edit);
+        canvas.drawString(show, 10, 68);
+        canvas.setTextColor(UI_TITLE);
+        canvas.setTextDatum(top_center);
+        canvas.drawString("TYPE PASSWORD. ENT SAVE.", DISPLAY_W / 2, MAIN_H - 10);
+        return;
+    }
+
+    if (s_netN == 0) {
+        canvas.setTextColor(UI_TITLE);
+        canvas.drawString("NO NETS", 8, 40);
+        canvas.setTextColor(UI_DIM);
+        canvas.drawString("R = SCAN AGAIN", 8, 56);
+        return;
+    }
+
+    canvas.setTextSize(2);
+    const int y0 = 24;
+    const int lh = 18;
+    for (uint8_t i = 0; i < VIS && (s_netScroll + i) < s_netN; i++) {
+        uint8_t idx = s_netScroll + i;
+        int y = y0 + i * lh;
+        bool sel = (idx == s_netIdx);
+        if (sel) {
+            canvas.fillRect(5, y - 2, DISPLAY_W - 10, lh, UI_SEL);
+            canvas.setTextColor(UI_BG);
+        } else {
+            canvas.fillRect(5, y - 1, DISPLAY_W - 10, lh - 2, UI_PANEL);
+            canvas.setTextColor(UI_TEXT);
+        }
+        char name[16];
+        strncpy(name, s_nets[idx].ssid, sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+        canvas.drawString(name, 12, y);
+        canvas.setTextDatum(top_right);
+        canvas.setTextSize(1);
+        char rs[10];
+        snprintf(rs, sizeof(rs), "%s%d", s_nets[idx].open ? "OP " : "",
+                 (int)s_nets[idx].rssi);
+        canvas.drawString(rs, DISPLAY_W - 10, y + 4);
+        canvas.setTextDatum(top_left);
+        canvas.setTextSize(2);
+    }
+    canvas.setTextSize(1);
+    canvas.setTextColor(UI_TITLE);
+    canvas.setTextDatum(top_center);
+    canvas.drawString("PICK NET. ONLY TYPE PASS.", DISPLAY_W / 2, MAIN_H - 10);
+}
+
 void draw(M5Canvas& canvas) {
+    if (s_page == SettingsPage::CONNECT) {
+        drawConnect(canvas);
+        return;
+    }
+
     const uint16_t UI_BG = 0x2145, UI_PANEL = 0x3A8A, UI_TITLE = 0xFFE0;
     const uint16_t UI_TEXT = 0xEF5D, UI_DIM = 0x9CD3, UI_SEL = 0xFDB6;
     canvas.fillSprite(UI_BG);
 
-    const char* title = "SCENE";
-    if (s_page == SettingsPage::RADIO) title = "RADIO";
+    const char* title = "PIG";
+    if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
+    else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";
 
     canvas.setTextDatum(top_center);
@@ -479,7 +755,8 @@ void draw(M5Canvas& canvas) {
     if (s_scroll + VIS < n) canvas.drawString("v", DISPLAY_W - 12, y0 + (VIS - 1) * lh);
 
     const char* const* hints = H_SCENE;
-    if (s_page == SettingsPage::RADIO) hints = H_RADIO;
+    if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
+    else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     if (s_idx < n) {
         canvas.setTextColor(UI_TITLE);

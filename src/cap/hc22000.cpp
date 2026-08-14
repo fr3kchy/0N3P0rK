@@ -1,8 +1,10 @@
 // cap/hc22000.cpp
 #include "hc22000.h"
+#include "capture_name.h"
 #include "../storage/littlefs_ops.h"
 #include <SD.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
 
@@ -42,12 +44,20 @@ static void hexEnc(const uint8_t* in, size_t n, char* out) {
 
 static uint32_t s_lastM1Ms = 0;
 
-static void makePath(const uint8_t* bssid, const char* suffix, char* path, size_t pathLen) {
-    snprintf(path, pathLen,
-             "%s/%02X-%02X-%02X-%02X-%02X-%02X%s",
-             Storage::DIR_PWNCRACK,
-             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
-             suffix);
+static void essidOf(const Hs* h, char ssid[33]) {
+    ssid[0] = '\0';
+    if (!h || !h->haveEssid || h->essidLen == 0) return;
+    size_t n = h->essidLen < 32 ? h->essidLen : 32;
+    memcpy(ssid, h->essid, n);
+    ssid[n] = '\0';
+}
+
+static void makePath(const Hs* h, const char* suffix, char* path, size_t pathLen) {
+    char ssid[33];
+    essidOf(h, ssid);
+    char stem[40];
+    CapName::buildStem(ssid, h->bssid, stem, sizeof(stem));
+    snprintf(path, pathLen, "%s/%s%s", Storage::DIR_PWNCRACK, stem, suffix);
 }
 
 static Hs* slotFor(const uint8_t* bssid) {
@@ -68,16 +78,45 @@ static Hs* slotFor(const uint8_t* bssid) {
     return &s_hs[0];
 }
 
-static bool writeLine(const uint8_t* bssid, const char* suffix, const char* line) {
+static void maybeWrite(Hs* h);
+
+static bool writeLine(Hs* h, const char* suffix, const char* line) {
+    if (!h) return false;
     Storage::ensureDir(Storage::DIR_PWNCRACK);
-    char path[56];
-    makePath(bssid, suffix, path, sizeof(path));
+    char path[80];
+    makePath(h, suffix, path, sizeof(path));
     File f = SD.open(path, "w");
     if (!f) return false;
     f.println(line);
     f.close();
+    char ssid[33];
+    essidOf(h, ssid);
+    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_PWNCRACK, Storage::baseName(path), ssid);
+    char legacy[64];
+    snprintf(legacy, sizeof(legacy),
+             "%s/%02X-%02X-%02X-%02X-%02X-%02X%s",
+             Storage::DIR_PWNCRACK,
+             h->bssid[0], h->bssid[1], h->bssid[2],
+             h->bssid[3], h->bssid[4], h->bssid[5], suffix);
+    if (strcmp(legacy, path) != 0 && SD.exists(legacy)) SD.remove(legacy);
     Serial.printf("[22000] wrote %s\n", Storage::baseName(path));
     return true;
+}
+
+static void seedEssid(const uint8_t* bssid, const char* ssid) {
+    if (!bssid || !ssid || !ssid[0]) return;
+    if (strcasecmp(ssid, "HIDDEN") == 0 || strcmp(ssid, "[UNKNOWN]") == 0) return;
+    Hs* h = slotFor(bssid);
+    if (h->haveEssid && h->essidLen > 0) {
+        maybeWrite(h);
+        return;
+    }
+    size_t n = strlen(ssid);
+    if (n > 32) n = 32;
+    memcpy(h->essid, ssid, n);
+    h->essidLen = (uint8_t)n;
+    h->haveEssid = true;
+    maybeWrite(h);
 }
 
 static void maybeWrite(Hs* h) {
@@ -87,8 +126,27 @@ static void maybeWrite(Hs* h) {
     hexEnc(h->sta, 6, sta);
     hexEnc(h->essid, h->essidLen, ess);
 
-    // hashcat 22000 PMKID: WPA*01*PMKID*AP*STA*ESSID***01
-    if (h->havePmkid && !h->wrotePmkid) {
+    // Prefer one file per BSSID: handshake first, PMKID only if no HS.
+    if (h->haveAnonce && h->haveM2 && !h->wroteEapol && h->m2Len >= 97) {
+        uint16_t eapolLen = (uint16_t)((h->m2[2] << 8) | h->m2[3]);
+        eapolLen = (uint16_t)(eapolLen + 4);
+        if (eapolLen > h->m2Len) eapolLen = h->m2Len;
+        if (eapolLen >= 97 && eapolLen <= MAX_EAPOL) {
+            uint8_t eapol[MAX_EAPOL];
+            memcpy(eapol, h->m2, eapolLen);
+            memset(eapol + 81, 0, 16);
+            char mic[33], an[65];
+            hexEnc(h->m2 + 81, 16, mic);
+            hexEnc(h->anonce, 32, an);
+            char ehex[MAX_EAPOL * 2 + 1];
+            hexEnc(eapol, eapolLen, ehex);
+            char line[768];
+            snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*00",
+                     mic, ap, sta, ess, an, ehex);
+            if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
+        }
+    }
+    if (!h->wroteEapol && h->havePmkid && !h->wrotePmkid) {
         bool z = true;
         for (int i = 0; i < 16; i++) if (h->pmkid[i]) { z = false; break; }
         if (!z) {
@@ -96,28 +154,8 @@ static void maybeWrite(Hs* h) {
             hexEnc(h->pmkid, 16, pmk);
             char line[160];
             snprintf(line, sizeof(line), "WPA*01*%s*%s*%s*%s***01", pmk, ap, sta, ess);
-            if (writeLine(h->bssid, ".22000", line)) h->wrotePmkid = true;
+            if (writeLine(h, ".22000", line)) h->wrotePmkid = true;
         }
-    }
-
-    // hashcat 22000 EAPOL: WPA*02*MIC*AP*STA*ESSID*ANONCE*EAPOL*00 (M1+M2)
-    if (h->haveAnonce && h->haveM2 && !h->wroteEapol && h->m2Len >= 97) {
-        uint16_t eapolLen = (uint16_t)((h->m2[2] << 8) | h->m2[3]);
-        eapolLen = (uint16_t)(eapolLen + 4);
-        if (eapolLen > h->m2Len) eapolLen = h->m2Len;
-        if (eapolLen < 97 || eapolLen > MAX_EAPOL) return;
-        uint8_t eapol[MAX_EAPOL];
-        memcpy(eapol, h->m2, eapolLen);
-        memset(eapol + 81, 0, 16);
-        char mic[33], an[65];
-        hexEnc(h->m2 + 81, 16, mic);
-        hexEnc(h->anonce, 32, an);
-        char ehex[MAX_EAPOL * 2 + 1];
-        hexEnc(eapol, eapolLen, ehex);
-        char line[768];
-        snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*00",
-                 mic, ap, sta, ess, an, ehex);
-        if (writeLine(h->bssid, "_hs.22000", line)) h->wroteEapol = true;
     }
 }
 
@@ -253,17 +291,20 @@ void feed(const uint8_t* frame, uint16_t len) {
 
 uint16_t convertPcap(const char* pcapPath) {
     if (!pcapPath) return 0;
+    reset();
+    char hex[13] = {0}, nameSsid[33] = {0};
+    CapName::extractBssidHex(pcapPath, hex);
+    CapName::extractSsidFromName(pcapPath, nameSsid);
+    if (!nameSsid[0]) {
+        CapName::readCompanionSsid(Storage::DIR_WPASEC, Storage::baseName(pcapPath), nameSsid);
+    }
+
     File f = SD.open(pcapPath, "r");
     if (!f) return 0;
     uint8_t fh[24];
     if (f.read(fh, 24) != 24) {
         f.close();
         return 0;
-    }
-    uint16_t n = 0;
-    uint16_t before = 0;
-    for (uint8_t i = 0; i < MAX_HS; i++) {
-        if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) before++;
     }
     while (f.available()) {
         uint8_t ph[16];
@@ -289,10 +330,17 @@ uint16_t convertPcap(const char* pcapPath) {
         yield();
     }
     f.close();
+
+    uint8_t mac[6];
+    if (hex[0] && CapName::hexToMac(hex, mac)) {
+        seedEssid(mac, nameSsid);
+    }
+
+    uint16_t n = 0;
     for (uint8_t i = 0; i < MAX_HS; i++) {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
-    return (n > before) ? (uint16_t)(n - before) : 0;
+    return n;
 }
 
 struct ConvCtx {
@@ -302,7 +350,7 @@ struct ConvCtx {
 static void convOne(const char* name, size_t, void* raw) {
     size_t L = strlen(name);
     if (L < 6 || strcasecmp(name + L - 5, ".pcap") != 0) return;
-    char path[64];
+    char path[80];
     snprintf(path, sizeof(path), "%s/%s", Storage::DIR_WPASEC, name);
     uint16_t add = convertPcap(path);
     ((ConvCtx*)raw)->n = (uint16_t)(((ConvCtx*)raw)->n + add);

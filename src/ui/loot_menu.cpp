@@ -7,6 +7,7 @@
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
+#include "../cap/capture_name.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <SD.h>
@@ -55,21 +56,31 @@ static bool endsWith(const char* name, const char* suf) {
     return true;
 }
 
-static void parseBssid(const char* name, char* hex13, char* pretty) {
-    hex13[0] = pretty[0] = '\0';
-    char hex[13];
-    size_t n = 0;
-    for (const char* p = name; *p && *p != '.' && n < 12; p++) {
-        if (*p == '-' || *p == ':') continue;
-        if (!isxdigit((unsigned char)*p)) break;
-        hex[n++] = (char)toupper((unsigned char)*p);
+static void fillIdentity(Row& r, const char* dir) {
+    r.hex[0] = r.id[0] = '\0';
+    if (!r.ssid[0]) r.ssid[0] = '\0';
+    CapName::extractBssidHex(r.filename, r.hex);
+    if (r.hex[0]) CapName::prettyMac(r.hex, r.id);
+
+    char fromName[33] = {0};
+    CapName::extractSsidFromName(r.filename, fromName);
+    if (fromName[0]) strncpy(r.ssid, fromName, sizeof(r.ssid) - 1);
+
+    char fromTxt[33] = {0};
+    if (CapName::readCompanionSsid(dir, r.filename, fromTxt) && fromTxt[0]) {
+        strncpy(r.ssid, fromTxt, sizeof(r.ssid) - 1);
     }
-    if (n != 12) return;
-    hex[12] = '\0';
-    memcpy(hex13, hex, 13);
-    snprintf(pretty, 18, "%c%c:%c%c:%c%c:%c%c:%c%c:%c%c",
-             hex[0], hex[1], hex[2], hex[3], hex[4], hex[5],
-             hex[6], hex[7], hex[8], hex[9], hex[10], hex[11]);
+
+    if (endsWith(r.filename, ".22000") || endsWith(r.filename, ".hc22000")) {
+        char hex[13] = {0}, ss[33] = {0};
+        if (CapName::metaFrom22000File(dir, r.filename, hex, ss)) {
+            if (hex[0] && !r.hex[0]) {
+                strncpy(r.hex, hex, sizeof(r.hex) - 1);
+                CapName::prettyMac(r.hex, r.id);
+            }
+            if (ss[0]) strncpy(r.ssid, ss, sizeof(r.ssid) - 1);
+        }
+    }
 }
 
 static void formatSize(char* out, size_t len, uint32_t bytes) {
@@ -102,23 +113,23 @@ void LootMenu::scan() {
     selected = 0;
     scroll = 0;
     if (!Storage::available()) return;
+    Storage::compactLoot();
 
     const bool wpa = (tab == Tab::WPASEC);
-    if (wpa) WPASec::loadCache();
-    else Pwncrack::loadCache();
+    if (wpa) {
+        WPASec::freeCacheMemory();
+        WPASec::loadCache();
+    } else {
+        Pwncrack::freeCacheMemory();
+        Pwncrack::loadCache();
+    }
 
     const char* dirs[4];
     uint8_t nd = 0;
     if (wpa) {
         dirs[nd++] = Storage::DIR_WPASEC;
-        dirs[nd++] = "/m5porkchop/handshakes";
-        dirs[nd++] = "/m5porkchop/wpa-sec";
-        dirs[nd++] = "/handshakes";
     } else {
         dirs[nd++] = Storage::DIR_PWNCRACK;
-        dirs[nd++] = "/m5porkchop/handshakes";
-        dirs[nd++] = "/m5porkchop/pwncrack";
-        dirs[nd++] = "/handshakes";
     }
 
     for (uint8_t d = 0; d < nd && count < 48; d++) {
@@ -139,37 +150,78 @@ void LootMenu::scan() {
                         if (strcmp(s_rows[i].filename, name) == 0) { dup = true; break; }
                     }
                     if (!dup) {
-                        Row& r = s_rows[count];
-                        memset(&r, 0, sizeof(r));
-                        strncpy(r.filename, name, sizeof(r.filename) - 1);
-                        r.fileSize = (uint32_t)f.size();
-                        r.isPMKID = h220 && !endsWith(name, "_hs.22000");
-                        parseBssid(name, r.hex, r.id);
+                        Row tmp;
+                        memset(&tmp, 0, sizeof(tmp));
+                        strncpy(tmp.filename, name, sizeof(tmp.filename) - 1);
+                        tmp.fileSize = (uint32_t)f.size();
+                        tmp.isPMKID = h220 && !endsWith(name, "_hs.22000");
+                        fillIdentity(tmp, dirs[d]);
+                        int same = -1;
+                        if (tmp.hex[0]) {
+                            for (uint8_t i = 0; i < count; i++) {
+                                if (s_rows[i].hex[0] && strcmp(s_rows[i].hex, tmp.hex) == 0) {
+                                    same = (int)i;
+                                    break;
+                                }
+                            }
+                        }
+                        if (same >= 0) {
+                            Row& o = s_rows[same];
+                            bool betterName = tmp.ssid[0] && strcasecmp(tmp.ssid, "HIDDEN") != 0 &&
+                                (!o.ssid[0] || strcasecmp(o.ssid, "HIDDEN") == 0);
+                            bool betterFile = (!tmp.isPMKID && o.isPMKID) ||
+                                (tmp.fileSize > o.fileSize && tmp.isPMKID == o.isPMKID);
+                            if (betterName) strncpy(o.ssid, tmp.ssid, sizeof(o.ssid) - 1);
+                            if (betterFile) {
+                                strncpy(o.filename, tmp.filename, sizeof(o.filename) - 1);
+                                o.fileSize = tmp.fileSize;
+                                o.isPMKID = tmp.isPMKID;
+                            }
+                        }
+                        Row& r = (same >= 0) ? s_rows[same] : s_rows[count];
+                        if (same < 0) r = tmp;
                         if (wpa) {
-                            const char* ss = WPASec::getSSID(r.hex[0] ? r.hex : r.id);
-                            if (ss && ss[0]) strncpy(r.ssid, ss, sizeof(r.ssid) - 1);
-                            else strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
-                            const char* pw = WPASec::getPassword(r.hex);
+                            const char* potSs = r.hex[0] ? WPASec::getSSID(r.hex) : nullptr;
+                            if (potSs && potSs[0]) strncpy(r.ssid, potSs, sizeof(r.ssid) - 1);
+                            if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
+                            const char* pw = r.hex[0] ? WPASec::getPassword(r.hex) : nullptr;
+                            if ((!pw || !pw[0]) && r.ssid[0]) pw = WPASec::getPassword(r.ssid);
+                            if ((!pw || !pw[0])) pw = WPASec::getPassword(name);
                             if (pw && pw[0]) {
                                 strncpy(r.password, pw, sizeof(r.password) - 1);
                                 r.status = St::CRACKED;
-                            } else if (WPASec::isUploaded(r.hex)) r.status = St::UPLOADED;
-                            else r.status = St::LOCAL;
+                            } else if (r.status != St::CRACKED &&
+                                       ((r.hex[0] && WPASec::isUploaded(r.hex)) ||
+                                        WPASec::isUploaded(name) ||
+                                        (r.id[0] && WPASec::isUploaded(r.id)))) {
+                                r.status = St::UPLOADED;
+                            } else if (r.status != St::CRACKED && r.status != St::UPLOADED) {
+                                r.status = St::LOCAL;
+                            }
                         } else {
-                            strncpy(r.ssid, name, sizeof(r.ssid) - 1);
-                            char stem[32];
+                            char stem[48];
                             strncpy(stem, name, sizeof(stem) - 1);
                             stem[sizeof(stem) - 1] = '\0';
                             char* dot = strchr(stem, '.');
                             if (dot) *dot = '\0';
                             const char* pw = Pwncrack::getPassword(stem);
+                            if ((!pw || !pw[0]) && r.hex[0]) pw = Pwncrack::getPassword(r.hex);
+                            if ((!pw || !pw[0]) && r.ssid[0]) pw = Pwncrack::getPassword(r.ssid);
+                            if ((!pw || !pw[0])) pw = Pwncrack::getPassword(name);
                             if (pw && pw[0]) {
                                 strncpy(r.password, pw, sizeof(r.password) - 1);
                                 r.status = St::CRACKED;
-                            } else if (Pwncrack::isUploaded(stem)) r.status = St::UPLOADED;
-                            else r.status = St::LOCAL;
+                            } else if (r.status != St::CRACKED &&
+                                       (Pwncrack::isUploaded(name) ||
+                                        Pwncrack::isUploaded(stem) ||
+                                        (r.hex[0] && Pwncrack::isUploaded(r.hex)))) {
+                                r.status = St::UPLOADED;
+                            } else if (r.status != St::CRACKED && r.status != St::UPLOADED) {
+                                r.status = St::LOCAL;
+                            }
+                            if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
                         }
-                        count++;
+                        if (same < 0) count++;
                     }
                 }
             }
@@ -207,7 +259,7 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    return ",/ WPASEC|PWN  S:SYNC  T:TEST";
+    return "ENT:PASS  S:SYNC  ,/:TAB";
 }
 
 void LootMenu::runDiag() {
@@ -221,11 +273,11 @@ void LootMenu::runDiag() {
     char buf[28];
     if (tab == Tab::WPASEC) {
         add("WPA-SEC TEST");
-        add(WPASec::hasApiKey() ? "KEY  ok" : "KEY  /loot/wpa-sec/");
+        add(WPASec::hasApiKey() ? "KEY  ok" : "KEY  /0N3P0rK/wpa-sec/");
         add(WPASec::canSync() ? "TLS  heap ok" : WPASec::getLastError());
     } else {
         add("PWNCRACK TEST");
-        add(Pwncrack::hasApiKey() ? "KEY  ok" : "KEY  /loot/pwncrack/");
+        add(Pwncrack::hasApiKey() ? "KEY  ok" : "KEY  /0N3P0rK/pwncrack/");
         add(Pwncrack::canSync() ? "NET  heap ok" : Pwncrack::getLastError());
     }
     add(Net::hasStaCreds() ? "WIFI  saved" : "WIFI  no home SSID");
@@ -266,17 +318,24 @@ void LootMenu::startSync() {
         return;
     }
 
-    strncpy(s_syncText, "UPLOADING...", sizeof(s_syncText) - 1);
+    auto onProg = [](const char* st, uint8_t p, uint8_t t) {
+        if (t)
+            snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u", st, p, t);
+        else
+            strncpy(s_syncText, st ? st : "...", sizeof(s_syncText) - 1);
+        Display::update();
+    };
+    strncpy(s_syncText, "CONVERTING...", sizeof(s_syncText) - 1);
     Display::update();
     if (tab == Tab::WPASEC) {
-        WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, nullptr);
+        WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
         if (r.success)
             snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
                      r.uploaded, r.skipped, r.cracked);
         else
             snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
     } else {
-        PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey);
+        PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey, onProg);
         if (r.success)
             snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
                      r.uploaded, r.skipped, r.cracked);
@@ -289,9 +348,7 @@ void LootMenu::startSync() {
 }
 
 void LootMenu::handleInput() {
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    bool pressed = M5Cardputer.Keyboard.isPressed();
-    if (!pressed) {
+    if (!M5Cardputer.Keyboard.isPressed()) {
         keyWasPressed = false;
         return;
     }
@@ -394,18 +451,23 @@ void LootMenu::draw(M5Canvas& canvas) {
     if (detailView && selected < count) {
         const Row& c = s_rows[selected];
         canvas.setTextColor(UiStyle::PINK);
-        canvas.setCursor(6, 20);
-        canvas.print(c.ssid);
+        canvas.setCursor(6, 18);
+        canvas.print(c.ssid[0] ? c.ssid : "[UNKNOWN]");
         canvas.setTextColor(UiStyle::TEXT);
-        canvas.setCursor(6, 36);
-        canvas.print(c.filename);
-        canvas.setCursor(6, 52);
-        if (c.status == St::CRACKED) {
+        canvas.setCursor(6, 30);
+        canvas.print(c.id[0] ? c.id : c.filename);
+        canvas.setCursor(6, 42);
+        canvas.print(c.isPMKID ? "PMKID" : "HANDSHAKE");
+        canvas.setCursor(6, 56);
+        if (c.status == St::CRACKED && c.password[0]) {
             canvas.setTextColor(UiStyle::GREEN);
+            canvas.print("PASS ");
             canvas.print(c.password);
         } else if (c.status == St::UPLOADED) {
+            canvas.setTextColor(UiStyle::GOLD);
             canvas.print("uploaded, waiting");
         } else {
+            canvas.setTextColor(UiStyle::DIM);
             canvas.print("local only");
         }
         return;
@@ -417,7 +479,7 @@ void LootMenu::draw(M5Canvas& canvas) {
         canvas.print(tab == Tab::WPASEC ? "NO PCAP IN LOOT" : "NO 22000 IN LOOT");
         canvas.setTextColor(UiStyle::TEXT);
         canvas.setCursor(4, 52);
-        canvas.print(tab == Tab::WPASEC ? "/loot/wpa-sec/" : "/loot/pwncrack/");
+        canvas.print(tab == Tab::WPASEC ? "/0N3P0rK/wpa-sec/" : "/0N3P0rK/pwncrack/");
         return;
     }
 

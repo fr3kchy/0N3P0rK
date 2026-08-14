@@ -19,7 +19,7 @@
 
 namespace Menu {
 
-enum class GroupId : int8_t { NONE = -1, ATTACK = 0, LOOT = 1, TUNE = 2 };
+enum class GroupId : int8_t { NONE = -1, ATTACK = 0, SET = 1 };
 
 enum class RootType : uint8_t { DIRECT, GROUP };
 
@@ -50,12 +50,16 @@ static const char* const H_LOOT[] = {
     ",/ SWITCH TAB. S SYNC."
 };
 static const char* const H_PIG[] = {
-    "SCENE. SKIN SEASON SKY LAYERS.",
-    "ENT EDIT. TOGGLE = YES/NO."
+    "HER FACE. HER WORLD.",
+    "SKIN SEASON SKY LAYERS LIFE."
 };
-static const char* const H_TUNE[] = {
-    "RADIO + BLE KNOBS.",
-    "SAME ATTACK. YOUR TIMING."
+static const char* const H_SET[] = {
+    "SYSTEM RADIO BLE CONNECT.",
+    "EACH PAGE ITS OWN KNOBS."
+};
+static const char* const H_SYS[] = {
+    "BRIGHT SOUND DIM.",
+    "WHEN THE SCREEN SLEEPS."
 };
 static const char* const H_RADIO[] = {
     "HOP LOCK DEAUTH RSSI MAC.",
@@ -65,14 +69,15 @@ static const char* const H_BLESET[] = {
     "BURST AND ADV TIME.",
     "ATTACK > BLE USES THESE."
 };
+static const char* const H_CONN[] = {
+    "PICK A NET. TYPE ONLY PASS.",
+    "HOME WIFI FOR S-SYNC."
+};
 static const char* const H_BLE[] = {
     "LAB BLE ADVERTISE BURST.",
     "OWN DEVICES. TUNE BLE SPEED."
 };
-static const char* const H_WIFI[] = {
-    "HOME WIFI FOR S-SYNC.",
-    "NO WEB AP. KEYS LIVE ON SD."
-};
+
 static const char* const H_LIGHT[] = {
     "SAME CHANNEL. QUIET SNIFF.",
     "INCOMING RINGS. UI STAYS CALM."
@@ -83,7 +88,7 @@ static const char* const H_AGGRO[] = {
 };
 static const char* const H_STOP[] = {
     "RADIO SLEEP. RINGS DIE.",
-    "LOOT STAYS ON /loot/."
+    "LOOT STAYS ON /0N3P0rK/."
 };
 static const char* const H_EVIL[] = {
     "LAB PORTAL. OWN NETS ONLY.",
@@ -91,7 +96,7 @@ static const char* const H_EVIL[] = {
 };
 static const char* const H_PASS[] = {
     "OFFLINE WPA LAB. WORDLIST/MASK.",
-    "HS FROM /loot/  LISTS /loot/Passworld/"
+    "HS /0N3P0rK/  LISTS /0N3P0rK/Passworld/"
 };
 static const char* const H_HASHES[] = {
     "FEED YO HASHCAT.",
@@ -99,7 +104,7 @@ static const char* const H_HASHES[] = {
 };
 static const char* const H_PWN[] = {
     "PWNCRACK.ORG — NOT WPA-SEC.",
-    "KEY IN /loot/pwncrack/key.txt"
+    "KEY IN /0N3P0rK/pwncrack/"
 };
 static const char* const H_LIFE[] = {
     "SHE WALKS, JUMPS, HIDES.",
@@ -114,10 +119,9 @@ static const RootItem ROOT[] = {
     {"/>", "ATTACK", H_ATTACK, 2, RootType::GROUP,  GroupId::ATTACK, 0},
     {"[$", "LOOT",   H_LOOT,   2, RootType::DIRECT, GroupId::NONE,   4},
     {"^.", "PIG",    H_PIG,    2, RootType::DIRECT, GroupId::NONE,   7},
-    {"::", "TUNE",   H_TUNE,   2, RootType::GROUP,  GroupId::TUNE,   0},
-    {"))", "WIFI",   H_WIFI,   2, RootType::DIRECT, GroupId::NONE,   6}
+    {"::", "SET",    H_SET,    2, RootType::GROUP,  GroupId::SET,    0}
 };
-static const uint8_t ROOT_COUNT = 5;
+static const uint8_t ROOT_COUNT = 4;
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
@@ -127,13 +131,11 @@ static const Item G_ATTACK[] = {
     {"BL", "BLE",     13, H_BLE,   2},
     {"xx", "STOP",    3,  H_STOP,  2}
 };
-static const Item G_LOOT[] = {
-    {"C#", "WPASEC",   4, H_HASHES, 2},
-    {"PC", "PWNCRACK", 5, H_PWN,    2}
-};
-static const Item G_TUNE[] = {
-    {"))", "RADIO", 11, H_RADIO,  2},
-    {"BT", "BLE",   12, H_BLESET, 2}
+static const Item G_SET[] = {
+    {"[]", "SYSTEM",  14, H_SYS,    2},
+    {"))", "RADIO",   11, H_RADIO,  2},
+    {"BT", "BLE",     12, H_BLESET, 2},
+    {"))", "CONNECT",  6, H_CONN,   2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -155,22 +157,19 @@ static uint8_t s_editMax = 32;
 
 static const Item* groupItems(GroupId g) {
     if (g == GroupId::ATTACK) return G_ATTACK;
-    if (g == GroupId::LOOT) return G_LOOT;
-    if (g == GroupId::TUNE) return G_TUNE;
+    if (g == GroupId::SET) return G_SET;
     return nullptr;
 }
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 6;
-    if (g == GroupId::LOOT) return 2;
-    if (g == GroupId::TUNE) return 2;
+    if (g == GroupId::SET) return 4;
     return 0;
 }
 
 static const char* groupName(GroupId g) {
     if (g == GroupId::ATTACK) return "ATTACK";
-    if (g == GroupId::LOOT) return "LOOT";
-    if (g == GroupId::TUNE) return "TUNE";
+    if (g == GroupId::SET) return "SET";
     return "";
 }
 
@@ -195,11 +194,16 @@ static void doAction(uint8_t id) {
             App::setMode(AppMode::LOOT);
             break;
         case 6:
+            SettingsMenu::show(SettingsPage::CONNECT);
             App::setMode(AppMode::WIFI);
             break;
         case 7:
             SettingsMenu::show(SettingsPage::SCENE);
             App::setMode(AppMode::PIG);
+            break;
+        case 14:
+            SettingsMenu::show(SettingsPage::SYSTEM);
+            App::setMode(AppMode::TUNE);
             break;
         case 11:
             SettingsMenu::show(SettingsPage::RADIO);
@@ -270,8 +274,7 @@ void onEnter(AppMode mode) {
     s_sel = 0;
     if (mode == AppMode::MENU) show();
     else hide();
-    if (mode == AppMode::WIFI) s_count = 3;
-    else s_count = 0;
+    s_count = 0;
 }
 
 const char* hint() {
@@ -279,7 +282,8 @@ const char* hint() {
     if (App::mode() == AppMode::MENU) {
         return s_group == GroupId::NONE ? ";/.  ENT open  ` farm" : ";/.  ENT  ` back";
     }
-    if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE)
+    if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
+        App::mode() == AppMode::WIFI)
         return SettingsMenu::bottomHint();
     return ";/.  ENT  ` back";
 }
@@ -312,61 +316,17 @@ static void applyWifiField() {
 }
 
 void handleKey(char c, bool enter, bool del, bool fn) {
+    (void)c;
+    (void)enter;
+    (void)del;
     (void)fn;
-    if (App::mode() != AppMode::WIFI) return;
-
-    if (s_editing) {
-        if (enter) {
-            applyWifiField();
-            s_editing = false;
-            SFX::play(SFX::CONFIRM);
-            return;
-        }
-        if (del) {
-            size_t n = strlen(s_edit);
-            if (n) s_edit[n - 1] = '\0';
-            return;
-        }
-        if (c >= 32 && c < 127) {
-            size_t n = strlen(s_edit);
-            if (n + 1 < sizeof(s_edit) && n < s_editMax) {
-                s_edit[n] = c;
-                s_edit[n + 1] = '\0';
-            }
-        }
-        return;
-    }
-
-    if (c == ';') {
-        s_sel--;
-        if (s_sel < 0) s_sel = s_count ? s_count - 1 : 0;
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
-    if (c == '.') {
-        s_sel++;
-        if (s_count && s_sel >= s_count) s_sel = 0;
-        SFX::play(SFX::MENU_CLICK);
-        return;
-    }
-    if (!enter) return;
-
-    if (App::mode() == AppMode::WIFI) {
-        const Net::Cfg& cfg = Net::cfg();
-        if (s_sel == 0) startEdit(cfg.staSsid, 32);
-        else if (s_sel == 1) startEdit(cfg.staPass, 63);
-        else {
-            Net::save();
-            Display::showToast("saved", 1000);
-        }
-    }
 }
 
 void update() {
     if (!s_active || App::mode() != AppMode::MENU) return;
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    bool pressed = M5Cardputer.Keyboard.isPressed();
-    if (!pressed) {
+    // Cardputer often skips isChange on key-up. Clear latch on release
+    // or the ` that opened the menu eats every later press.
+    if (!M5Cardputer.Keyboard.isPressed()) {
         s_keyWas = false;
         return;
     }
@@ -450,7 +410,7 @@ static void drawRoot(M5Canvas& canvas) {
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);
     canvas.setTextColor(UI_TITLE);
-    canvas.drawString("OneLPig OS", DISPLAY_W / 2, 2);
+    canvas.drawString("0N3P0rK", DISPLAY_W / 2, 2);
     canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
 
     canvas.setTextDatum(top_left);
@@ -541,28 +501,9 @@ void draw(M5Canvas& canvas) {
         if (s_group != GroupId::NONE) drawModal(canvas);
         return;
     }
-    if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE) {
+    if (App::mode() == AppMode::PIG || App::mode() == AppMode::TUNE ||
+        App::mode() == AppMode::WIFI) {
         SettingsMenu::draw(canvas);
-        return;
-    }
-
-    char buf[64];
-    uiListBackground(canvas);
-    canvas.setTextSize(1);
-    canvas.setTextDatum(TL_DATUM);
-
-    if (App::mode() == AppMode::WIFI) {
-        const Net::Cfg& c = Net::cfg();
-        canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("home wifi for S-sync", 8, 4);
-        auto field = [&](int i, int y, const char* label, const char* val) {
-            if (s_editing && s_sel == i) snprintf(buf, sizeof(buf), "%s >%s", label, s_edit);
-            else snprintf(buf, sizeof(buf), "%s %s", label, val[0] ? val : "--");
-            line(canvas, i, y, buf, s_sel == i);
-        };
-        field(0, 18, "SSID", c.staSsid);
-        field(1, 32, "PASS", c.staPass);
-        line(canvas, 2, 46, "SAVE", s_sel == 2);
         return;
     }
 }

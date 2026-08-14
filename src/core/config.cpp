@@ -20,7 +20,10 @@ bool Config::init() {
 
     PersonalityConfig& p = personalityConfig;
     s_prefs.getString("name", p.name, sizeof(p.name));
-    if (p.name[0] == '\0') strncpy(p.name, "Lexi", sizeof(p.name) - 1);
+    if (p.name[0] == '\0' || strcmp(p.name, "Lexi") == 0) {
+        strncpy(p.name, "Pig", sizeof(p.name) - 1);
+        p.name[sizeof(p.name) - 1] = '\0';
+    }
     p.soundLevel = s_prefs.getUChar("snd", p.soundLevel);
     p.brightness = s_prefs.getUChar("bri", p.brightness);
     p.dimLevel = s_prefs.getUChar("dim", p.dimLevel);
@@ -35,6 +38,7 @@ bool Config::init() {
     p.scrollSpeed = s_prefs.getUChar("scroll", p.scrollSpeed);
     p.fruitTreesAmbient = s_prefs.getBool("fruit", p.fruitTreesAmbient);
     p.freeLife = s_prefs.getBool("life", p.freeLife);
+    p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -90,6 +94,7 @@ bool Config::save() {
     s_prefs.putUChar("scroll", p.scrollSpeed);
     s_prefs.putBool("fruit", p.fruitTreesAmbient);
     s_prefs.putBool("life", p.freeLife);
+    s_prefs.putBool("weat", p.wolfEatLoot);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

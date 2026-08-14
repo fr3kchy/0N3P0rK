@@ -117,12 +117,22 @@ void Display::showBootSplash() {
     delay(900);
 }
 
+static void applyLcdBrightness(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    uint8_t raw = (uint8_t)((uint16_t)pct * 255 / 100);
+    // Cardputer: PWM can stick off after 0 — nudge then set.
+    if (raw > 0) {
+        M5.Display.setBrightness(1);
+        delay(2);
+    }
+    M5.Display.setBrightness(raw);
+}
+
 void Display::resetDimTimer() {
     lastActivityTime = millis();
     if (dimmed) {
         dimmed = false;
-        uint8_t b = Config::personality().brightness;
-        M5.Display.setBrightness(b * 255 / 100);
+        applyLcdBrightness(Config::personality().brightness);
     }
 }
 
@@ -131,8 +141,7 @@ void Display::updateDimming() {
     if (timeout == 0 || screenForcedOff) return;
     if (!dimmed && (millis() - lastActivityTime) > (uint32_t)timeout * 1000UL) {
         dimmed = true;
-        uint8_t d = Config::personality().dimLevel;
-        M5.Display.setBrightness(d * 255 / 100);
+        applyLcdBrightness(Config::personality().dimLevel);
     }
 }
 
@@ -145,8 +154,7 @@ void Display::toggleScreenPower() {
     } else {
         Avatar::resumeScene();
         SFX::setScreenOffMuted(false);
-        uint8_t b = Config::personality().brightness;
-        M5.Display.setBrightness(b * 255 / 100);
+        applyLcdBrightness(Config::personality().brightness);
         resetDimTimer();
     }
 }
@@ -273,7 +281,7 @@ void Display::drawFarm() {
     const uint16_t bg = getColorBG();
     const bool sceneLive = !Avatar::isSceneSuspended();
     const bool wolfLive = sceneLive && SceneLayers::wolf &&
-        (App::mode() == AppMode::FARM || Config::personality().freeLife);
+        App::mode() == AppMode::FARM;
 
     if (sceneLive) {
         if (SceneLayers::weather) {
@@ -300,6 +308,7 @@ void Display::drawFarm() {
     if (Cap::isRunning()) {
         static uint32_t lastWaveMs = 0;
         static uint32_t lastEapol = 0;
+        static char toastedHs[33] = {0};
         const Cap::Counters& c = Cap::counters();
         if (c.framesEapol > lastEapol) {
             Avatar::waveRipple(WaveMode::OUTGOING, 5);
@@ -312,6 +321,14 @@ void Display::drawFarm() {
             else
                 Avatar::waveRipple(WaveMode::INCOMING, 2);
         }
+        if (c.lastHsSsid[0] && strcmp(toastedHs, c.lastHsSsid) != 0) {
+            strncpy(toastedHs, c.lastHsSsid, sizeof(toastedHs) - 1);
+            toastedHs[sizeof(toastedHs) - 1] = '\0';
+            char msg[28];
+            snprintf(msg, sizeof(msg), "HS %s", c.lastHsSsid);
+            showToast(msg, 1800);
+        }
+        if (c.framesWritten == 0) toastedHs[0] = '\0';
     }
 
     if (sceneLive) {
@@ -365,12 +382,45 @@ void Display::drawTopBar() {
     topBar.setTextColor(barFg);
     topBar.setTextSize(1);
     topBar.setTextDatum(top_left);
-    topBar.drawString(App::modeName(), 2, 3);
 
-    char right[16];
-    snprintf(right, sizeof(right), "%uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    // Pig vitals: fat hearts = life, apples = food
+    const int life = Mood::getLife();
+    const int food = Mood::getHunger();
+    const uint16_t heartOn = 0xF800;
+    const uint16_t heartOff = retro ? (uint16_t)0x6B4D : (uint16_t)0x7BEF;
+    const uint16_t appleOn = retro ? (uint16_t)0xC618 : (uint16_t)0xE2C0;
+    const uint16_t appleOff = heartOff;
+    const uint16_t stemOn = retro ? (uint16_t)0x8410 : (uint16_t)0x4A00;
+    auto fat = [&](int px, int py, uint16_t c) {
+        topBar.fillRect(px, py, 2, 2, c);
+    };
+    auto drawHeart = [&](int ox, uint16_t c) {
+        fat(ox + 0, 2, c); fat(ox + 6, 2, c);
+        fat(ox + 0, 4, c); fat(ox + 2, 4, c); fat(ox + 4, 4, c); fat(ox + 6, 4, c);
+        fat(ox + 2, 6, c); fat(ox + 4, 6, c);
+        fat(ox + 3, 8, c);
+    };
+    auto drawApple = [&](int ox, uint16_t body, uint16_t stem) {
+        fat(ox + 4, 1, stem);
+        fat(ox + 0, 3, body); fat(ox + 2, 3, body); fat(ox + 4, 3, body);
+        fat(ox + 0, 5, body); fat(ox + 2, 5, body); fat(ox + 4, 5, body);
+        fat(ox + 1, 7, body); fat(ox + 3, 7, body);
+    };
+    int x = 2;
+    for (int i = 0; i < 5; i++) {
+        drawHeart(x, (life > i * 20) ? heartOn : heartOff);
+        x += 10;
+    }
+    x += 4;
+    for (int i = 0; i < 5; i++) {
+        bool on = food > i * 20;
+        drawApple(x, on ? appleOn : appleOff, on ? stemOn : appleOff);
+        x += 10;
+    }
+
+    const char* sky = Avatar::isNightTime() ? "NITE" : "DAY";
     topBar.setTextDatum(top_right);
-    topBar.drawString(right, DISPLAY_W - 2, 3);
+    topBar.drawString(sky, DISPLAY_W - 2, 3);
     topBar.setTextDatum(top_left);
 }
 
@@ -395,35 +445,36 @@ void Display::drawBottomBar() {
 
     char left[48];
     left[0] = '\0';
-    char rightName[16];
+    char rightName[24];
     rightName[0] = '\0';
+    bool capLive = Cap::isRunning();
 
     if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
-        snprintf(left, sizeof(left), "%s%s HS:%02u W:%03u CH:%02u",
+        const char* net = c.lastHsSsid[0] ? c.lastHsSsid
+                         : (c.currentSsid[0] ? c.currentSsid : nullptr);
+        if (net) {
+            size_t n = 0;
+            while (net[n] && n < 16) {
+                char ch = net[n];
+                if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                left[n++] = ch;
+            }
+            left[n] = '\0';
+        } else {
+            strncpy(left, "SCAN", sizeof(left) - 1);
+        }
+        snprintf(rightName, sizeof(rightName), "%s%s HS:%02u CH:%02u",
                  Cap::runMode() == Cap::RunMode::Aggressive ? "AGG" : "LITE",
                  Cap::isLocked() ? "*" : "",
                  (unsigned)c.framesEapol,
-                 (unsigned)c.framesWritten,
                  (unsigned)c.currentChannel);
-        if (c.currentSsid[0]) {
-            size_t n = 0;
-            while (c.currentSsid[n] && n < 13) {
-                char ch = c.currentSsid[n];
-                if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
-                rightName[n++] = ch;
-            }
-            rightName[n] = '\0';
-        } else if (c.currentBssid[0]) {
-            strncpy(rightName, "[GHOST]", sizeof(rightName) - 1);
-        }
     } else if (bottomHint[0]) {
         strncpy(left, bottomHint, sizeof(left) - 1);
     } else {
         switch (App::mode()) {
             case AppMode::FARM:
-                snprintf(left, sizeof(left), "HAP:%d TUM:%d",
-                         Mood::getEffectiveHappiness(), Mood::getHunger());
+                left[0] = '\0';
                 break;
             case AppMode::LOOT:
                 strncpy(left, LootMenu::getBottomHint(), sizeof(left) - 1);
@@ -432,8 +483,6 @@ void Display::drawBottomBar() {
                 strncpy(left, "LIGHT  AGGRO  STOP", sizeof(left) - 1);
                 break;
             case AppMode::WIFI:
-                strncpy(left, "home wifi for S-sync", sizeof(left) - 1);
-                break;
             case AppMode::PIG:
             case AppMode::TUNE:
                 strncpy(left, SettingsMenu::bottomHint(), sizeof(left) - 1);
@@ -485,7 +534,10 @@ void Display::drawBottomBar() {
         }
     }
 
+    if (capLive && left[0] && strcmp(left, "SCAN") != 0)
+        bottomBar.setTextColor(0xFE60); // gold — caught / heard SSID
     bottomBar.drawString(left, 2, 3);
+    bottomBar.setTextColor(TEXT_COL);
     if (rightName[0]) {
         bottomBar.setTextDatum(top_right);
         bottomBar.drawString(rightName, DISPLAY_W - 2, 3);

@@ -4,6 +4,7 @@
 #include "wolf.h"
 #include "avatar.h"
 #include "weather.h"
+#include "../core/app.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include "../core/config.h"
@@ -142,7 +143,9 @@ static bool beginEnter(Actor& w, uint32_t now, bool preferOpposite) {
 }
 
 void spawnNow() {
+    if (App::mode() != AppMode::FARM) return;
     if (!Config::personality().wolfEnabled) return;
+    if (!Avatar::isNightTime()) return;
     uint32_t now = millis();
     // Prefer empty slot
     for (uint8_t i = 0; i < maxActive && i < MAX_WOLVES; i++) {
@@ -155,6 +158,7 @@ void spawnNow() {
 
 bool spawnSecond() {
     if (!Config::personality().wolfEnabled) return false;
+    if (!Avatar::isNightTime()) return false;
     if (maxActive < 2) return false;
     uint32_t now = millis();
     // Need one free slot and at least one already active (or just free slot)
@@ -331,13 +335,29 @@ static void updateActor(Actor& w, uint32_t now) {
 void update() {
     uint32_t now = millis();
 
+    // Wolf only on the idle farm — never during attack / loot / menus.
+    if (App::mode() != AppMode::FARM) {
+        if (isActive()) reset();
+        nextVisitMs = 0;
+        return;
+    }
+
     if (!Config::personality().wolfEnabled) {
         if (isActive()) reset();
         return;
     }
 
-    // Ambient auto-spawn (single wolf) when slots empty
-    if (autoSpawn && getActiveCount() == 0) {
+    const bool night = Avatar::isNightTime();
+    if (!night) {
+        for (uint8_t i = 0; i < MAX_WOLVES; i++) {
+            if (wolves[i].phase != Phase::HIDDEN && wolves[i].phase != Phase::LEAVE) {
+                wolves[i].phase = Phase::LEAVE;
+                wolves[i].phaseStartMs = now;
+                wolves[i].vx = wolves[i].faceRight ? LEAVE_SPEED : -LEAVE_SPEED;
+            }
+        }
+        nextVisitMs = 0;
+    } else if (autoSpawn && getActiveCount() == 0) {
         if (nextVisitMs == 0) scheduleNext(now);
         if (now >= nextVisitMs) {
             spawnNow();

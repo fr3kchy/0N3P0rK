@@ -44,7 +44,7 @@ static const char* const HINTS[] = {
     "ENT:DET  S:SYNC  T:TEST",
     "R:KEY  C:CLR UPLOAD LOG",
     "OK=PASS  ..=SENT  --=LOC",
-    "KEY IN /loot/pwncrack/"
+    "KEY IN /0N3P0rK/pwncrack/"
 };
 static const uint8_t HINT_COUNT = 4;
 static const uint8_t VISIBLE = 5;
@@ -214,9 +214,7 @@ void PwncrackMenu::startSync() {
 }
 
 void PwncrackMenu::handleInput() {
-    if (!M5Cardputer.Keyboard.isChange()) return;
-    bool pressed = M5Cardputer.Keyboard.isPressed();
-    if (!pressed) {
+    if (!M5Cardputer.Keyboard.isPressed()) {
         keyWasPressed = false;
         return;
     }

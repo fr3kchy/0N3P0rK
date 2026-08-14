@@ -478,6 +478,26 @@ void reset() {
     globalStompArmed = true;
 }
 
+static int16_t pickSpacedX(Kind self) {
+    const int16_t lo[3] = {22, 96, 168};
+    const int16_t hi[3] = {70, 140, 216};
+    bool taken[3] = {false, false, false};
+    for (int i = 0; i < 3; i++) {
+        if (slots[i].kind == self) continue;
+        if (slots[i].phase == Phase::HIDDEN) continue;
+        int16_t x = slots[i].baseX;
+        if (x < 88) taken[0] = true;
+        else if (x < 154) taken[1] = true;
+        else taken[2] = true;
+    }
+    uint8_t freeN = 0;
+    uint8_t freeL[3];
+    for (uint8_t i = 0; i < 3; i++) if (!taken[i]) freeL[freeN++] = i;
+    uint8_t lane = (freeN > 0) ? freeL[esp_random() % freeN] : (uint8_t)(esp_random() % 3);
+    int span = hi[lane] - lo[lane] + 1;
+    return lo[lane] + (int16_t)(esp_random() % (uint32_t)span);
+}
+
 // Push baseX away from other visible flora so kinds don't stack
 static void separateBaseX(Slot& t, int minGap) {
     for (int pass = 0; pass < 6; pass++) {
@@ -529,7 +549,8 @@ void showFruit(uint8_t fruitCount) {
         return;
     }
     genClassicTree(t, fruitCount, 100);
-    separateBaseX(t, 55);
+    t.baseX = pickSpacedX(Kind::FRUIT);
+    separateBaseX(t, 80);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -541,9 +562,8 @@ void showDecor() {
     t.kind = Kind::DECOR;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 3, 100);  // full classic tree, no produce
-    if (pigHintRight) t.baseX = 50 + (int16_t)(esp_random() % 50);
-    else t.baseX = 140 + (int16_t)(esp_random() % 50);
-    separateBaseX(t, 55);
+    t.baseX = pickSpacedX(Kind::DECOR);
+    separateBaseX(t, 80);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -554,8 +574,8 @@ void showBerry() {
     t.kind = Kind::BERRY;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 6, 70);  // taller bush, denser branches, purple berries
-    t.baseX = 70 + (int16_t)(esp_random() % 100);
-    separateBaseX(t, 40);
+    t.baseX = pickSpacedX(Kind::BERRY);
+    separateBaseX(t, 70);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -706,10 +726,25 @@ bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRight)
     if (fruitAmbient) {
         if (fruit.phase == Phase::HIDDEN) {
             if (now >= nextFruitSpawnMs) {
-                uint8_t n = 4 + (uint8_t)(esp_random() % 5);  // 4–8 fruits
-                showFruit(n);
-                nextFruitSpawnMs = now + 18000 + (esp_random() % 22000);  // 18–40s after
-                nextAmbientDropMs = now + 2500;  // drops after grow
+                Season sn = Weather::getActiveSeason();
+                uint8_t n = 4;
+                uint32_t wait = 18000 + (esp_random() % 18000);
+                bool grow = true;
+                if (sn == Season::SUMMER) {
+                    n = 6 + (uint8_t)(esp_random() % 3);
+                    wait = 12000 + (esp_random() % 14000);
+                } else if (sn == Season::WINTER) {
+                    wait = 28000 + (esp_random() % 28000);
+                    if ((esp_random() % 100) < 45) grow = false;
+                    else n = 1 + (uint8_t)(esp_random() % 2);
+                } else {
+                    n = 3 + (uint8_t)(esp_random() % 2);
+                }
+                if (grow) {
+                    showFruit(n);
+                    nextAmbientDropMs = now + 2500;
+                }
+                nextFruitSpawnMs = now + wait;
             }
         } else if (fruit.phase == Phase::ALIVE) {
             // Occasional ambient fruit rain while tree is up
@@ -746,6 +781,23 @@ bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRight)
 int16_t getFruitTreeScreenX() {
     if (fruitSlot().phase == Phase::HIDDEN) return -1;
     return screenX(fruitSlot());
+}
+
+int16_t nearestFloraScreenX(int fromX) {
+    int best = -1;
+    int bestD = 9999;
+    for (int i = 0; i < 3; i++) {
+        if (slots[i].phase == Phase::HIDDEN || slots[i].phase == Phase::COLLAPSING)
+            continue;
+        int16_t x = screenX(slots[i]);
+        int d = x - fromX;
+        if (d < 0) d = -d;
+        if (d < bestD) {
+            bestD = d;
+            best = x;
+        }
+    }
+    return (int16_t)best;
 }
 
 // Stomp any flora within range (jump/attack only). 3 hits → dump produce + collapse.

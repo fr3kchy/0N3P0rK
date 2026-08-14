@@ -162,17 +162,7 @@ static bool dirHasExtFiles(const char* dirPath, const char* const* exts, size_t 
 
 static const char* resolveHandshakeDir() {
     const char* preferredDir = SDLayout::handshakesDir();
-    const char* fallbackDir = SDLayout::usingNewLayout() ? "/handshakes" : "/m5porkchop/handshakes";
-    static const char* const hsExts[] = {".pcap", ".cap", ".22000"};
-
-    if (strcmp(preferredDir, fallbackDir) != 0) {
-        const bool preferredHas = dirHasExtFiles(preferredDir, hsExts, 3);
-        const bool fallbackHas = dirHasExtFiles(fallbackDir, hsExts, 3);
-        if (!preferredHas && fallbackHas) return fallbackDir;
-    }
-
-    if (SD.exists(preferredDir)) return preferredDir;
-    if (SD.exists(fallbackDir)) return fallbackDir;
+    if (!SD.exists(preferredDir)) SD.mkdir(preferredDir);
     return preferredDir;
 }
 
@@ -892,10 +882,7 @@ static bool readNextPassword(char* password, size_t passwordSize) {
 
 static const char* resolvePassworldDir() {
     const char* preferred = SDLayout::passworldDir();
-    // Fallback: root /Passworld if preferred empty / missing lists
-    if (SD.exists(preferred)) return preferred;
-    if (SD.exists("/Passworld")) return "/Passworld";
-    if (SD.exists("/m5porkchop/Passworld")) return "/m5porkchop/Passworld";
+    if (!SD.exists(preferred)) SD.mkdir(preferred);
     return preferred;
 }
 
@@ -966,15 +953,9 @@ void PigpassMode::scanHandshakeFiles() {
     static const char* const hsExts[] = {".pcap", ".cap", ".22000"};
     const char* hsDir = resolveHandshakeDir();
     scanDirForExt(hsDir, hsExts, 3);
-    scanDirForExt("/loot/pwncrack", hsExts, 3);
-    scanDirForExt("/loot/wpa-sec", hsExts, 3);
-
-    // Also try common legacy spellings if empty
-    if (files.empty()) {
-        scanDirForExt("/Handshakes", hsExts, 3);
-        scanDirForExt("/handshakes", hsExts, 3);
-        scanDirForExt("/m5porkchop/handshakes", hsExts, 3);
-    }
+    scanDirForExt(SDLayout::pigpassDir(), hsExts, 3);
+    scanDirForExt("/0N3P0rK/pwncrack", hsExts, 3);
+    scanDirForExt("/0N3P0rK/wpa-sec", hsExts, 3);
 
     selectedIndex = 0;
     scrollOffset = 0;
@@ -1113,9 +1094,7 @@ void PigpassMode::scanWordlistFiles() {
     scanDirForExt(wlDir, wlExts, 3);
 
     // One-shot fallback if preferred dir had nothing but root copy exists
-    if (files.size() <= 1 && strcmp(wlDir, "/Passworld") != 0) {
-        scanDirForExt("/Passworld", wlExts, 3);
-    }
+
 
     // Prefer last used wordlist (from previous run / reboot)
     selectedIndex = 0;
@@ -1747,7 +1726,7 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
             canvas.drawString("NEED .PCAP IN HANDSHAKES", 4, 56);
         } else {
             canvas.drawString("PUT .TXT:", 4, 56);
-            canvas.drawString("/m5porkchop/Passworld", 4, 68);
+            canvas.drawString("/0N3P0rK/Passworld", 4, 68);
         }
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString("BKSP=EXIT", 4, MAIN_H - 10);

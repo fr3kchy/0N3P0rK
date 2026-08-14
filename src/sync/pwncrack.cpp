@@ -2,12 +2,15 @@
 #include "pwncrack.h"
 #include "../storage/littlefs_ops.h"
 #include "../cap/hc22000.h"
+#include "../cap/capture_name.h"
+#include "pot_parse.h"
 #include "../net/ap_sta.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <SD.h>
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <esp_heap_caps.h>
 
 static const char* PWN_HOST = "pwncrack.org";
@@ -38,6 +41,34 @@ static bool writeAll(WiFiClient& c, const uint8_t* p, size_t n) {
 
 static bool writeStr(WiFiClient& c, const char* s) {
     return writeAll(c, reinterpret_cast<const uint8_t*>(s), strlen(s));
+}
+
+// "AA-BB-CC-DD-EE-FF.22000" / "name.hc22000" / stem → comparable id
+static void normPwnId(const char* in, char* out, size_t outLen) {
+    if (!out || outLen < 2) return;
+    out[0] = '\0';
+    if (!in || !in[0]) return;
+    const char* slash = strrchr(in, '/');
+    const char* name = slash ? slash + 1 : in;
+    char tmp[48];
+    strncpy(tmp, name, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    char* dot = strrchr(tmp, '.');
+    if (dot) {
+        if (strcasecmp(dot, ".22000") == 0 || strcasecmp(dot, ".hc22000") == 0 ||
+            strcasecmp(dot, ".pcap") == 0 || strcasecmp(dot, ".pcapng") == 0 ||
+            strcasecmp(dot, ".cap") == 0) {
+            *dot = '\0';
+        }
+    }
+    size_t n = 0;
+    for (const char* p = tmp; *p && n + 1 < outLen; p++) {
+        if (*p == '-' || *p == ':' || *p == ' ') continue;
+        char c = *p;
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        out[n++] = c;
+    }
+    out[n] = '\0';
 }
 
 bool Pwncrack::hasApiKey(const char* key) {
@@ -86,15 +117,15 @@ bool Pwncrack::loadUploadedList() {
         while (n > 0 && (line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = '\0';
         if (n == 0) continue;
         UploadedEntry e{};
-        strncpy(e.id, line, sizeof(e.id) - 1);
-        uploadedCache.push_back(e);
+        normPwnId(line, e.id, sizeof(e.id));
+        if (e.id[0]) uploadedCache.push_back(e);
     }
     f.close();
     return true;
 }
 
 bool Pwncrack::saveUploadedList() {
-    Storage::ensureDir(Storage::DIR_RESULTS);
+    Storage::ensureDir(Storage::DIR_PWNCRACK);
     File f = SD.open(Storage::FILE_PWNCRACK_UPLOADED, "w");
     if (!f) return false;
     for (const auto& e : uploadedCache) f.println(e.id);
@@ -110,50 +141,48 @@ bool Pwncrack::loadCache() {
     if (Storage::fileExists(Storage::FILE_PWNCRACK_RESULTS)) {
         File f = SD.open(Storage::FILE_PWNCRACK_RESULTS, "r");
         if (f) {
-            char line[160];
+            static char line[1024];
             while (f.available() && crackedCache.size() < PWN_MAX_CACHE) {
                 size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
                 line[n] = '\0';
                 while (n > 0 && (line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = '\0';
                 if (n < 3) continue;
 
-                char buf[160];
-                strncpy(buf, line, sizeof(buf) - 1);
-                buf[sizeof(buf) - 1] = '\0';
-                char* parts[8];
-                int pc = 0;
-                char* p = buf;
-                while (pc < 8) {
-                    parts[pc++] = p;
-                    char* c = strchr(p, ':');
-                    if (!c) break;
-                    *c = '\0';
-                    p = c + 1;
-                }
-
                 CrackedEntry e{};
-                if (pc >= 5) {
-                    strncpy(e.label, parts[3], sizeof(e.label) - 1);
-                    strncpy(e.password, parts[4], sizeof(e.password) - 1);
-                    strncpy(e.id, parts[3], sizeof(e.id) - 1);
-                    if (strlen(parts[0]) == 12) {
-                        bool hex = true;
-                        for (int i = 0; i < 12; i++) {
-                            if (!isxdigit((unsigned char)parts[0][i])) { hex = false; break; }
-                        }
-                        if (hex) {
-                            for (int i = 0; i < 12; i++) {
-                                e.id[i] = (char)toupper((unsigned char)parts[0][i]);
-                            }
-                            e.id[12] = '\0';
-                        }
-                    }
-                } else if (pc >= 2) {
-                    strncpy(e.label, parts[0], sizeof(e.label) - 1);
-                    strncpy(e.password, parts[pc - 1], sizeof(e.password) - 1);
-                    strncpy(e.id, parts[0], sizeof(e.id) - 1);
+                if (strncmp(line, "WPA*", 4) == 0) {
+                    char bssidP[18], ssid[33], pass[64];
+                    if (!Pot::parseLine(line, bssidP, ssid, pass) || !pass[0]) continue;
+                    strncpy(e.password, pass, sizeof(e.password) - 1);
+                    if (ssid[0]) strncpy(e.label, ssid, sizeof(e.label) - 1);
+                    if (!CapName::extractBssidHex(bssidP, e.id) && ssid[0])
+                        strncpy(e.id, ssid, sizeof(e.id) - 1);
                 } else {
-                    continue;
+                    char buf[200];
+                    strncpy(buf, line, sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = '\0';
+                    char* parts[8];
+                    int pc = 0;
+                    char* p = buf;
+                    while (pc < 8) {
+                        parts[pc++] = p;
+                        char* c = strchr(p, ':');
+                        if (!c) break;
+                        *c = '\0';
+                        p = c + 1;
+                    }
+                    if (pc >= 5) {
+                        strncpy(e.label, parts[3], sizeof(e.label) - 1);
+                        strncpy(e.password, parts[4], sizeof(e.password) - 1);
+                        if (!CapName::extractBssidHex(parts[0], e.id))
+                            strncpy(e.id, parts[3], sizeof(e.id) - 1);
+                    } else if (pc >= 2) {
+                        strncpy(e.label, parts[0], sizeof(e.label) - 1);
+                        strncpy(e.password, parts[pc - 1], sizeof(e.password) - 1);
+                        if (!CapName::extractBssidHex(parts[0], e.id))
+                            strncpy(e.id, parts[0], sizeof(e.id) - 1);
+                    } else {
+                        continue;
+                    }
                 }
                 if (e.password[0]) crackedCache.push_back(e);
             }
@@ -161,13 +190,18 @@ bool Pwncrack::loadCache() {
         }
     }
     cacheLoaded = true;
+    Serial.printf("[PWNCRACK] cache cracked=%u uploaded=%u\n",
+                  (unsigned)crackedCache.size(), (unsigned)uploadedCache.size());
     return true;
 }
 
 bool Pwncrack::findUploaded(const char* id) {
-    if (!id) return false;
+    if (!id || !id[0]) return false;
+    char key[48];
+    normPwnId(id, key, sizeof(key));
+    if (!key[0]) return false;
     for (const auto& e : uploadedCache) {
-        if (strcmp(e.id, id) == 0) return true;
+        if (strcasecmp(e.id, key) == 0) return true;
     }
     return false;
 }
@@ -183,9 +217,25 @@ bool Pwncrack::isCracked(const char* key) {
 
 const char* Pwncrack::getPassword(const char* key) {
     if (!cacheLoaded) loadCache();
-    if (!key) return "";
+    if (!key || !key[0]) return "";
+    char norm[48];
+    normPwnId(key, norm, sizeof(norm));
+    char hex[13] = {0};
+    CapName::extractBssidHex(key, hex);
     for (const auto& e : crackedCache) {
         if (strcasecmp(e.id, key) == 0 || strcasecmp(e.label, key) == 0) return e.password;
+        if (norm[0] && (strcasecmp(e.id, norm) == 0 || strcasecmp(e.label, norm) == 0))
+            return e.password;
+        if (hex[0] && strcasecmp(e.id, hex) == 0) return e.password;
+        if (CapName::sameSsid(e.label, key)) return e.password;
+        char nid[48], nlab[48];
+        normPwnId(e.id, nid, sizeof(nid));
+        normPwnId(e.label, nlab, sizeof(nlab));
+        if (norm[0] && (strcasecmp(nid, norm) == 0 || strcasecmp(nlab, norm) == 0))
+            return e.password;
+        char ehex[13] = {0};
+        if (CapName::extractBssidHex(e.id, ehex) && hex[0] && strcasecmp(ehex, hex) == 0)
+            return e.password;
     }
     return "";
 }
@@ -204,7 +254,8 @@ void Pwncrack::markAsUploaded(const char* filename) {
     if (!filename || !filename[0] || findUploaded(filename)) return;
     if (uploadedCache.size() >= PWN_MAX_CACHE) return;
     UploadedEntry e{};
-    strncpy(e.id, filename, sizeof(e.id) - 1);
+    normPwnId(filename, e.id, sizeof(e.id));
+    if (!e.id[0]) return;
     uploadedCache.push_back(e);
 }
 
@@ -223,7 +274,23 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     }
 
     const char* filename = Storage::baseName(filepath);
-    Serial.printf("[PWNCRACK] upload %s (%u B)\n", filename, (unsigned)fileSize);
+    // pwncrack.org only accepts names ending in .hc22000
+    char uploadName[64];
+    size_t fn = strlen(filename);
+    if (fn > 8 && strcasecmp(filename + fn - 8, ".hc22000") == 0) {
+        strncpy(uploadName, filename, sizeof(uploadName) - 1);
+        uploadName[sizeof(uploadName) - 1] = '\0';
+    } else if (fn > 6 && strcasecmp(filename + fn - 6, ".22000") == 0) {
+        size_t stem = fn - 6;
+        if (stem + 8 >= sizeof(uploadName)) stem = sizeof(uploadName) - 9;
+        memcpy(uploadName, filename, stem);
+        memcpy(uploadName + stem, ".hc22000", 8);
+        uploadName[stem + 8] = '\0';
+    } else {
+        snprintf(uploadName, sizeof(uploadName), "%s.hc22000", filename);
+    }
+    Serial.printf("[PWNCRACK] upload %s as %s (%u B)\n",
+                  filename, uploadName, (unsigned)fileSize);
 
     char boundary[32];
     snprintf(boundary, sizeof(boundary), "----Pwn%08lX", (unsigned long)millis());
@@ -235,7 +302,7 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     snprintf(fileHead, sizeof(fileHead),
              "--%s\r\nContent-Disposition: form-data; name=\"handshake\"; filename=\"%s\"\r\n"
              "Content-Type: application/octet-stream\r\n\r\n",
-             boundary, filename);
+             boundary, uploadName);
     char fileTail[48];
     snprintf(fileTail, sizeof(fileTail), "\r\n--%s--\r\n", boundary);
     size_t contentLength = strlen(keyPart) + strlen(fileHead) + fileSize + strlen(fileTail);
@@ -346,7 +413,7 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     size_t li = 0;
     unsigned long t0 = millis();
 
-    Storage::ensureDir(Storage::DIR_RESULTS);
+    Storage::ensureDir(Storage::DIR_PWNCRACK);
     File out = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
     if (!out) {
         client.stop();
@@ -460,6 +527,7 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
 
     if (cb) cb("Converting", 0, 1);
     uint16_t conv = Hc22000::convertAllPcaps();
+    Storage::compactLoot();
     Serial.printf("[PWNCRACK] converted %u pcap->22000\n", (unsigned)conv);
 
     loadCache();

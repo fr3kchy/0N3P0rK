@@ -9,6 +9,7 @@
 
 int Mood::happiness = 70;
 int Mood::hunger = 70;
+int Mood::life = 100;
 char Mood::currentPhrase[40] = "oink";
 uint32_t Mood::lastPhraseChange = 0;
 uint32_t Mood::lastActivityTime = 0;
@@ -69,8 +70,10 @@ void Mood::init() {
     if (s_moodPrefs.begin("pigmood", false)) {
         happiness = s_moodPrefs.getInt("hap", 70);
         hunger = s_moodPrefs.getInt("hun", 70);
+        life = s_moodPrefs.getInt("life", 100);
         clampStat(happiness);
         clampStat(hunger);
+        clampStat(life);
     }
     lastEffective = happiness;
     say("oink oink");
@@ -80,6 +83,7 @@ void Mood::init() {
 void Mood::saveMood() {
     s_moodPrefs.putInt("hap", happiness);
     s_moodPrefs.putInt("hun", hunger);
+    s_moodPrefs.putInt("life", life);
 }
 
 void Mood::adjustHappiness(int delta) {
@@ -92,6 +96,7 @@ int Mood::getCurrentHappiness() { return happiness; }
 int Mood::getEffectiveHappiness() { return happiness; }
 int Mood::getLastEffectiveHappiness() { return lastEffective; }
 int Mood::getHunger() { return hunger; }
+int Mood::getLife() { return life; }
 uint32_t Mood::getLastActivityTime() { return lastActivityTime; }
 const char* Mood::getCurrentPhrase() {
     if (s_status[0] && millis() < s_statusUntil) return s_status;
@@ -111,13 +116,41 @@ void Mood::setStatusMessage(const char* msg) {
 void Mood::feed() {
     hunger += 28;
     happiness += 6;
+    life += 4;
     clampStat(hunger);
     clampStat(happiness);
+    clampStat(life);
     lastActivityTime = millis();
     lastEffective = happiness;
     say(PICK(PH_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
+    saveMood();
+    updateAvatarState();
+}
+
+void Mood::eatWorld() {
+    hunger += 10;
+    life += 2;
+    happiness += 2;
+    clampStat(hunger);
+    clampStat(life);
+    clampStat(happiness);
+    lastActivityTime = millis();
+    lastEffective = happiness;
+    if ((millis() - lastPhraseChange) > 2000) say(PICK(PH_FED));
+    saveMood();
+    updateAvatarState();
+}
+
+void Mood::hurt(int amount) {
+    if (amount < 0) amount = 0;
+    life -= amount;
+    happiness -= amount / 2;
+    clampStat(life);
+    clampStat(happiness);
+    lastEffective = happiness;
+    if (life < 25) say("ow...");
     saveMood();
     updateAvatarState();
 }
@@ -195,9 +228,12 @@ void Mood::update() {
     if (now - lastDecayMs >= 45000) {
         lastDecayMs = now;
         hunger -= 3;
+        if (hunger < 12) life -= 2;
+        else if (hunger > 70 && life < 100) life += 1;
         if ((now - lastActivityTime) > 90000) happiness -= 2;
         clampStat(hunger);
         clampStat(happiness);
+        clampStat(life);
         lastEffective = happiness;
         saveMood();
     }
@@ -211,14 +247,12 @@ void Mood::update() {
     }
 
     if (Config::personality().freeLife &&
-        (now - lastActivityTime) > 8000 &&
         !Avatar::isControlLocked() &&
-        !Avatar::isPlayDead() &&
-        Wolf::isActive()) {
-        int dx = (int)Wolf::getX() - Avatar::getCurrentX();
-        if (dx < 0) dx = -dx;
-        if (dx < 28 && !Avatar::isJumping() && random(0, 80) == 0) {
-            Avatar::cuteJump();
+        !Avatar::isPlayDead()) {
+        if (Wolf::isActive()) {
+            Avatar::fleeToHide();
+        } else if (hunger < 32 && !Avatar::isSitting() && !Avatar::isHiding()) {
+            Avatar::walkToFood();
         }
     }
 

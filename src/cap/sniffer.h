@@ -36,6 +36,7 @@ struct Counters {
     uint8_t  currentChannel;
     char     currentBssid[18];
     char     currentSsid[33];
+    char     lastHsSsid[33];
 };
 const Counters& counters();
 

@@ -44,7 +44,8 @@ const char* modeName() {
 void setMode(AppMode m) {
     if (s_mode == m) return;
     if (s_mode == AppMode::LOOT) LootMenu::hide();
-    if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE) SettingsMenu::hide();
+    if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
+        s_mode == AppMode::WIFI) SettingsMenu::hide();
     if (s_mode == AppMode::EVILPIG && EvilPigMode::isRunning()) EvilPigMode::stop();
     if (s_mode == AppMode::PIGPASS && PigpassMode::isRunning()) PigpassMode::stop();
     if (s_mode == AppMode::BLE && BlePigMode::isRunning()) BlePigMode::stop();
@@ -118,6 +119,10 @@ void loop() {
     s_g0Was = g0;
     if (Display::isScreenForcedOff()) return;
 
+    // Any key wakes the dimmed backlight (not only isChange, not only FARM).
+    if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
+        Display::resetDimTimer();
+
     if (s_mode == AppMode::FARM) farmPoll();
 
     if (s_mode == AppMode::LOOT) {
@@ -132,7 +137,8 @@ void loop() {
     } else if (s_mode == AppMode::BLE) {
         BlePigMode::update();
         if (!BlePigMode::isRunning()) setMode(AppMode::MENU);
-    } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE) {
+    } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
+               s_mode == AppMode::WIFI) {
         SettingsMenu::update();
         if (!SettingsMenu::isActive()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::MENU) {
@@ -142,11 +148,10 @@ void loop() {
     if (!M5Cardputer.Keyboard.isChange()) return;
     if (!M5Cardputer.Keyboard.isPressed()) return;
 
-    Display::resetDimTimer();
-
     if (s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
         s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
-        s_mode == AppMode::PIG || s_mode == AppMode::TUNE) return;
+        s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
+        s_mode == AppMode::WIFI) return;
     if (s_mode == AppMode::MENU) return;  // ` / backspace handled in Menu::update
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();

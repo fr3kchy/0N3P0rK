@@ -41,7 +41,7 @@ enum class Season : uint8_t {
 static const uint8_t SEASON_COUNT = 4;
 
 struct PersonalityConfig {
-    char name[32] = "Lexi";
+    char name[32] = "Pig";
     uint8_t soundLevel = 1;
     uint8_t brightness = 80;
     uint8_t dimLevel = 20;
@@ -56,6 +56,7 @@ struct PersonalityConfig {
     uint8_t scrollSpeed = 9;
     bool fruitTreesAmbient = true;
     bool freeLife = true;  // pig walks/jumps/hides even during functions
+    bool wolfEatLoot = false;  // wolf kill deletes random handshake files
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

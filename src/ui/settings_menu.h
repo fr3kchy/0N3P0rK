@@ -4,7 +4,13 @@
 
 #include <M5Unified.h>
 
-enum class SettingsPage : uint8_t { SCENE = 0, RADIO = 1, BLE = 2 };
+enum class SettingsPage : uint8_t {
+    SCENE = 0,
+    SYSTEM = 1,
+    RADIO = 2,
+    BLE = 3,
+    CONNECT = 4
+};
 
 namespace SettingsMenu {
 

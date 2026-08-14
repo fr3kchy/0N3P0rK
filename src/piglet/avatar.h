@@ -114,6 +114,11 @@ public:
 
     // Walk wind-up animation (smooth slide for coast-back)
     static void startWindupSlide(int targetX, bool faceRight = false);
+    // Real walk (legs), not a teleport. sitAfter = hide when she arrives.
+    static void walkTo(int targetX, bool sitAfter = false);
+    static void fleeToHide();   // walk behind flora / far edge, then sit
+    static void walkToFood();   // hungry: walk to nearest tree/bush
+    static bool isHiding();
 
     // Fruit tree visualization (juicy channel indicator)
     static void showTree(uint8_t fruitCount);  // Triggers growth with N fruits
@@ -131,7 +136,7 @@ public:
     static void setPlayerWalkScroll(bool walking, bool faceRight = true);
     // Hold walk: dir -1 left / +1 right / 0 stop.
     // Pig walks freely in middle; world scrolls only in outer ~33% edge zones.
-    static void playerWalkHold(int dir);
+    static void playerWalkHold(int dir, bool fromAi = false);
     static void notifyPlayerControl();
 
     // Player poses (IDLE free roam)

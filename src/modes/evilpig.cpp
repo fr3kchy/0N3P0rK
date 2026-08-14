@@ -367,7 +367,6 @@ void EvilPigMode::pushCatch(const char* ssid, const String& password, uint8_t ch
 void EvilPigMode::loadCatchesFromSd() {
     if (!Config::isSDAvailable()) return;
     const char* path = SDLayout::evilpigCredsPath();
-    if (!SD.exists(path)) path = "/m5porkchop/evilpig/creds.csv";
     if (!SD.exists(path)) return;
     File f = SD.open(path, FILE_READ);
     if (!f) return;
@@ -1054,7 +1053,7 @@ void EvilPigMode::drawLoot(M5Canvas& canvas) {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString("empty", 4, 36);
         canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("SD: /loot/evilpig", 4, 52);
+        canvas.drawString("SD: /0N3P0rK/evilpig", 4, 52);
         return;
     }
 

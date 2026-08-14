@@ -1,6 +1,7 @@
 // sync/wpasec.cpp
 #include "wpasec.h"
 #include "../storage/littlefs_ops.h"
+#include "../cap/capture_name.h"
 #include "pot_parse.h"
 #include "../net/ap_sta.h"
 #include <WiFi.h>
@@ -8,6 +9,7 @@
 #include <SD.h>
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <esp_heap_caps.h>
 
 static const char* WPASEC_HOST = "wpa-sec.stanev.org";
@@ -42,7 +44,14 @@ static bool writeStr(WiFiClient& c, const char* s) {
 }
 
 void WPASec::normalizeBSSID(const char* input, char* output, size_t outLen) {
-    if (!input || !output || outLen < 1) return;
+    if (!output || outLen < 1) return;
+    output[0] = '\0';
+    if (!input || !input[0]) return;
+    char hex[13];
+    if (CapName::extractBssidHex(input, hex) && outLen >= 13) {
+        memcpy(output, hex, 13);
+        return;
+    }
     size_t outIdx = 0;
     for (int i = 0; input[i] && outIdx < outLen - 1; i++) {
         char c = input[i];
@@ -54,17 +63,7 @@ void WPASec::normalizeBSSID(const char* input, char* output, size_t outLen) {
 }
 
 static bool bssidFromFilename(const char* name, char out[13]) {
-    char hex[13];
-    size_t n = 0;
-    for (const char* p = name; *p && *p != '.' && n < 12; p++) {
-        if (*p == '-' || *p == ':') continue;
-        if (!isxdigit((unsigned char)*p)) break;
-        hex[n++] = (char)toupper((unsigned char)*p);
-    }
-    if (n != 12) return false;
-    hex[12] = '\0';
-    memcpy(out, hex, 13);
-    return true;
+    return CapName::extractBssidHex(name, out);
 }
 
 static bool isPcapName(const char* name) {
@@ -190,11 +189,16 @@ bool WPASec::isCracked(const char* bssid) {
 
 const char* WPASec::getPassword(const char* bssid) {
     if (!cacheLoaded) loadCache();
-    if (!bssid) return "";
+    if (!bssid || !bssid[0]) return "";
     char key[13];
     normalizeBSSID(bssid, key, sizeof(key));
     const CrackedEntry* e = findCracked(key);
-    return e ? e->password : "";
+    if (e) return e->password;
+    for (const auto& c : crackedCache) {
+        if (c.ssid[0] && (strcasecmp(c.ssid, bssid) == 0 || CapName::sameSsid(c.ssid, bssid)))
+            return c.password;
+    }
+    return "";
 }
 
 const char* WPASec::getSSID(const char* bssid) {
@@ -487,6 +491,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     }
 
     loadCache();
+    Storage::compactLoot();
     WpaScanCtx scan{};
     Storage::forEachHandshake(wpaCollect, &scan);
     result.skipped = scan.skipped;

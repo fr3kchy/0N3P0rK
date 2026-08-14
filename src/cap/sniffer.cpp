@@ -4,6 +4,7 @@
 #include "sniffer.h"
 #include "pcap.h"
 #include "hc22000.h"
+#include "capture_name.h"
 #include "../storage/littlefs_ops.h"
 #include "../net/ap_sta.h"
 #include "../core/config.h"
@@ -41,10 +42,11 @@ static volatile uint8_t s_read  = 0;
 
 static File     s_file;
 static uint8_t  s_fileBssid[6];
+static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
-static const char* const PREFIX = "/loot/wpa-sec/";
+static const char* const PREFIX = "/0N3P0rK/wpa-sec/";
 
 static const uint8_t BEACON_SLOTS = 16;
 struct BeaconSlot {
@@ -52,6 +54,7 @@ struct BeaconSlot {
     uint8_t  channel;
     int8_t   rssi;
     uint16_t len;
+    char     ssid[33];
     uint8_t  frame[FRAME_MAX];
 };
 static BeaconSlot s_beacons[BEACON_SLOTS];
@@ -83,15 +86,63 @@ static const uint8_t* hopTable(uint8_t* count) {
     return HOP_ALL;
 }
 
+static const BeaconSlot* findBeacon(const uint8_t* bssid) {
+    for (uint8_t i = 0; i < s_beaconCount; i++) {
+        if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
+    }
+    return nullptr;
+}
+
+static bool hopLocked() {
+    return s_lockUntil != 0 && millis() < s_lockUntil;
+}
+
+static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
+    if (!bssid) return;
+    snprintf(s_cnt.currentBssid, sizeof(s_cnt.currentBssid),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2],
+             bssid[3], bssid[4], bssid[5]);
+    if (ssid && ssid[0]) {
+        strncpy(s_cnt.currentSsid, ssid, sizeof(s_cnt.currentSsid) - 1);
+        s_cnt.currentSsid[sizeof(s_cnt.currentSsid) - 1] = '\0';
+    } else if (force) {
+        s_cnt.currentSsid[0] = '\0';
+    }
+}
+
+static void ssidForBssid(const uint8_t* bssid, char out[33]) {
+    out[0] = '\0';
+    const BeaconSlot* bcn = findBeacon(bssid);
+    if (bcn && bcn->ssid[0]) {
+        strncpy(out, bcn->ssid, 32);
+        out[32] = '\0';
+        return;
+    }
+    if (bcn) CapName::ssidFromMgmt(bcn->frame, bcn->len, out);
+}
+
 static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, int8_t rssi) {
     if (!bssid || !f || len < 24) return;
     if (len > FRAME_MAX) len = FRAME_MAX;
+    char ssid[33];
+    CapName::ssidFromMgmt(f, len, ssid);
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) {
             memcpy(s_beacons[i].frame, f, len);
             s_beacons[i].len = len;
             s_beacons[i].channel = s_cnt.currentChannel;
             s_beacons[i].rssi = rssi;
+            bool learned = ssid[0] && !s_beacons[i].ssid[0];
+            if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
+            if (learned) Hc22000::feed(f, len);
+            if (ssid[0] && memcmp(bssid, s_lastHsBssid, 6) == 0) {
+                strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
+                s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
+                noteNetwork(bssid, ssid, true);
+            } else if (!hopLocked()) {
+                noteNetwork(bssid, s_beacons[i].ssid, false);
+            }
             return;
         }
     }
@@ -101,19 +152,15 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     } else {
         idx = s_beaconClock++ % BEACON_SLOTS;
     }
+    memset(&s_beacons[idx], 0, sizeof(s_beacons[idx]));
     memcpy(s_beacons[idx].bssid, bssid, 6);
     memcpy(s_beacons[idx].frame, f, len);
     s_beacons[idx].len = len;
     s_beacons[idx].channel = s_cnt.currentChannel;
     s_beacons[idx].rssi = rssi;
+    if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
+    if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
     Hc22000::feed(f, len);
-}
-
-static const BeaconSlot* findBeacon(const uint8_t* bssid) {
-    for (uint8_t i = 0; i < s_beaconCount; i++) {
-        if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
-    }
-    return nullptr;
 }
 
 static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -128,7 +175,8 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     const uint8_t* f = pkt->payload;
 
     if (type == WIFI_PKT_MGMT) {
-        if ((f[0] & 0xFC) == 0x80) {
+        uint8_t fc = f[0] & 0xFC;
+        if (fc == 0x80 || fc == 0x50) {
             storeBeacon(f + 16, f, len, (int8_t)pkt->rx_ctrl.rssi);
         }
         return;
@@ -190,14 +238,12 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     s_cnt.framesQueued++;
 }
 
-static void makeFilename(const uint8_t* bssid, uint8_t rot, char out[Storage::FILE_NAME_MAX]) {
-    if (rot <= 1) {
-        snprintf(out, Storage::FILE_NAME_MAX, "%02X-%02X-%02X-%02X-%02X-%02X.pcap",
-                 bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
-    } else {
-        snprintf(out, Storage::FILE_NAME_MAX, "%02X-%02X-%02X-%02X-%02X-%02X-%u.pcap",
-                 bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], (unsigned)rot);
-    }
+static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX]) {
+    char ssid[33];
+    ssidForBssid(bssid, ssid);
+    char stem[40];
+    CapName::buildStem(ssid, bssid, stem, sizeof(stem));
+    snprintf(out, Storage::FILE_NAME_MAX, "%s.pcap", stem);
 }
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts) {
@@ -228,61 +274,61 @@ static bool openFileForBssid(const uint8_t* bssid) {
     if (s_fileOpen) closeFile();
 
     Storage::Stats st = Storage::stats();
+    char name[Storage::FILE_NAME_MAX];
+    makeFilename(bssid, name);
+    char path[80];
+    snprintf(path, sizeof(path), "%s%s", PREFIX, name);
+
+    bool exists = SD.exists(path);
+    if (!exists && st.handshakes >= MAX_FILES) {
+        Serial.println("[CAP] handshake cap (200 files) reached");
+        return false;
+    }
+
+    s_file = SD.open(path, "a");
+    if (!s_file) return false;
+
+    s_fileSize = s_file.size();
     bool createdNew = false;
+    if (s_fileSize >= MAX_FILE_SIZE) {
+        s_file.close();
+        return false;
+    }
 
-    for (uint8_t rot = 1; rot <= 9; rot++) {
-        char name[Storage::FILE_NAME_MAX];
-        makeFilename(bssid, rot, name);
-        char path[80];
-        snprintf(path, sizeof(path), "%s%s", PREFIX, name);
-
-        bool exists = SD.exists(path);
-        if (!exists && st.handshakes >= MAX_FILES) {
-            Serial.println("[CAP] handshake cap (200 files) reached");
+    if (s_fileSize == 0) {
+        Pcap::FileHeader fh;
+        fh.magic        = 0xA1B2C3D4;
+        fh.versionMajor = 2;
+        fh.versionMinor = 4;
+        fh.thiszone     = 0;
+        fh.sigfigs      = 0;
+        fh.snaplen      = 65535;
+        fh.linktype     = 127;
+        if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
+            s_file.close();
             return false;
         }
-
-        s_file = SD.open(path, "a");
-        if (!s_file) return false;
-
-        s_fileSize = s_file.size();
-        if (s_fileSize >= MAX_FILE_SIZE) {
-            s_file.close();
-            continue;
-        }
-
-        if (s_fileSize == 0) {
-            Pcap::FileHeader fh;
-            fh.magic        = 0xA1B2C3D4;
-            fh.versionMajor = 2;
-            fh.versionMinor = 4;
-            fh.thiszone     = 0;
-            fh.sigfigs      = 0;
-            fh.snaplen      = 65535;
-            fh.linktype     = 127;
-            if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
-                s_file.close();
-                return false;
-            }
-            s_fileSize = sizeof(fh);
-            s_cnt.filesOpened++;
-            createdNew = true;
-        }
-
-        memcpy(s_fileBssid, bssid, 6);
-        memcpy(s_fileName, name, sizeof(s_fileName));
-        s_fileOpen = true;
-
-        if (createdNew) {
-            const BeaconSlot* bcn = findBeacon(bssid);
-            if (bcn) {
-                writePcapPacket(bcn->frame, bcn->len, millis());
-                Hc22000::feed(bcn->frame, bcn->len);
-            }
-        }
-        return true;
+        s_fileSize = sizeof(fh);
+        s_cnt.filesOpened++;
+        createdNew = true;
     }
-    return false;
+
+    memcpy(s_fileBssid, bssid, 6);
+    memcpy(s_fileName, name, sizeof(s_fileName));
+    s_fileOpen = true;
+
+    char ssid[33];
+    ssidForBssid(bssid, ssid);
+    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_WPASEC, name, ssid);
+
+    if (createdNew) {
+        const BeaconSlot* bcn = findBeacon(bssid);
+        if (bcn) {
+            writePcapPacket(bcn->frame, bcn->len, millis());
+            Hc22000::feed(bcn->frame, bcn->len);
+        }
+    }
+    return true;
 }
 
 static bool sameBssid(const uint8_t* a, const uint8_t* b) {
@@ -306,26 +352,14 @@ static void writeFrameToFile(const Slot& s) {
     }
     s_cnt.framesWritten++;
     Hc22000::feed(s.frame, s.len);
-    snprintf(s_cnt.currentBssid, sizeof(s_cnt.currentBssid),
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             s.bssid[0], s.bssid[1], s.bssid[2],
-             s.bssid[3], s.bssid[4], s.bssid[5]);
-    s_cnt.currentSsid[0] = '\0';
-    const BeaconSlot* bcn = findBeacon(s.bssid);
-    if (bcn && bcn->len >= 38) {
-        size_t i = 36;
-        while (i + 2 <= bcn->len) {
-            uint8_t tag = bcn->frame[i];
-            uint8_t tlen = bcn->frame[i + 1];
-            if (i + 2 + tlen > bcn->len) break;
-            if (tag == 0) {
-                size_t n = tlen < sizeof(s_cnt.currentSsid) - 1 ? tlen : sizeof(s_cnt.currentSsid) - 1;
-                memcpy(s_cnt.currentSsid, bcn->frame + i + 2, n);
-                s_cnt.currentSsid[n] = '\0';
-                break;
-            }
-            i += 2 + tlen;
-        }
+    char ssid[33];
+    ssidForBssid(s.bssid, ssid);
+    memcpy(s_lastHsBssid, s.bssid, 6);
+    noteNetwork(s.bssid, ssid, true);
+    if (ssid[0]) {
+        strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
+        s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
+        CapName::writeCompanionSsid(Storage::DIR_WPASEC, s_fileName, ssid);
     }
 }
 
@@ -398,6 +432,8 @@ static void startCommon(RunMode mode) {
     s_cnt = {};
     s_cnt.currentBssid[0] = 0;
     s_cnt.currentSsid[0] = 0;
+    s_cnt.lastHsSsid[0] = 0;
+    memset(s_lastHsBssid, 0, sizeof(s_lastHsBssid));
     s_lastHopMs = millis();
     s_channelIdx = 0;
     s_lockUntil = 0;
@@ -461,6 +497,7 @@ void stop() {
     esp_wifi_set_promiscuous_rx_cb(nullptr);
     drainRing();
     closeFile();
+    Storage::compactLoot();
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(false, false);

@@ -12,6 +12,8 @@ public:
     static void saveMood();
 
     static void feed();
+    static void eatWorld();      // fruit/berry she found herself
+    static void hurt(int amount);
     static void pet();
     static void play();          // walk / jump
     static void onBirdKill();    // scene toy, not radio
@@ -22,6 +24,7 @@ public:
     static int getEffectiveHappiness();
     static int getLastEffectiveHappiness();
     static int getHunger();
+    static int getLife();
     static uint32_t getLastActivityTime();
     static const char* getCurrentPhrase();
 
@@ -32,6 +35,7 @@ public:
 private:
     static int happiness;
     static int hunger;
+    static int life;
     static char currentPhrase[40];
     static uint32_t lastPhraseChange;
     static uint32_t lastActivityTime;
