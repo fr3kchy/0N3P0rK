@@ -1,5 +1,6 @@
 #include "settings_menu.h"
 #include "display.h"
+#include "keys.h"
 #include "../core/config.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
@@ -117,6 +118,7 @@ struct NetRow {
 
 static bool s_active = false;
 static bool s_keyWas = false;
+static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
 static SettingsPage s_page = SettingsPage::SCENE;
@@ -408,6 +410,7 @@ void show(SettingsPage page) {
     s_editing = false;
     s_text = false;
     s_keyWas = true;
+    s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
         s_conn = ConnPhase::LIST;
         s_edit[0] = '\0';
@@ -446,7 +449,8 @@ static void updateConnect() {
     auto keys = M5Cardputer.Keyboard.keysState();
     bool up = M5Cardputer.Keyboard.isKeyPressed(';');
     bool down = M5Cardputer.Keyboard.isKeyPressed('.');
-    bool tick = M5Cardputer.Keyboard.isKeyPressed('`');
+    bool tick = M5Cardputer.Keyboard.isKeyPressed('`') ||
+                M5Cardputer.Keyboard.isKeyPressed(27);
     bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
     bool rescan = M5Cardputer.Keyboard.isKeyPressed('r') ||
                   M5Cardputer.Keyboard.isKeyPressed('R');
@@ -530,7 +534,9 @@ void update() {
         s_keyWas = false;
         return;
     }
-    if (s_keyWas) return;
+    if (s_keyWas) {
+        if (!(keyEsc() && (millis() - s_openMs) > 350)) return;
+    }
     s_keyWas = true;
 
     if (s_page == SettingsPage::CONNECT) {
@@ -541,9 +547,9 @@ void update() {
     auto keys = M5Cardputer.Keyboard.keysState();
     bool up = M5Cardputer.Keyboard.isKeyPressed(';');
     bool down = M5Cardputer.Keyboard.isKeyPressed('.');
-    bool tick = M5Cardputer.Keyboard.isKeyPressed('`');
+    bool tick = keyEsc();
     bool erase = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) || keys.del;
-    bool esc = tick || erase;
+    bool esc = tick;
 
     uint8_t n = 0;
     const Item* list = items(&n);

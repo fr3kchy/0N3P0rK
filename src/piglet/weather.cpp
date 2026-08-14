@@ -484,6 +484,27 @@ const char* getSeasonName() {
     return "SUMMER";
 }
 
+const char* getSeasonShort() {
+    switch (activeSeason) {
+        case Season::SPRING: return "SPR";
+        case Season::SUMMER: return "SUM";
+        case Season::AUTUMN: return "AUT";
+        case Season::WINTER: return "WIN";
+        case Season::RETRO:  return "RET";
+    }
+    return "SUM";
+}
+
+uint32_t secondsUntilSeasonChange() {
+    uint8_t mode = Config::personality().seasonMode;
+    if (mode != (uint8_t)SeasonMode::AUTO) return 0;
+    if (seasonStartedMs == 0) return SEASON_CYCLE_MS / 1000u;
+    uint32_t now = millis();
+    uint32_t elapsed = now - seasonStartedMs;
+    if (elapsed >= SEASON_CYCLE_MS) return 0;
+    return (SEASON_CYCLE_MS - elapsed) / 1000u;
+}
+
 static void setActiveSeason(Season s, uint32_t now, bool toast) {
     if (activeSeason == s && seasonStartedMs != 0) return;
     activeSeason = s;

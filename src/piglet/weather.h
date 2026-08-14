@@ -48,5 +48,7 @@ Phase getPhase();
 // Active season (never AUTO) — grass palette + precip type
 Season getActiveSeason();
 const char* getSeasonName();
+const char* getSeasonShort();
+uint32_t secondsUntilSeasonChange();
 
 }  // namespace Weather

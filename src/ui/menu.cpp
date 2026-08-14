@@ -9,6 +9,7 @@
 #include "../cap/sniffer.h"
 #include "loot_menu.h"
 #include "settings_menu.h"
+#include "keys.h"
 #include "../modes/evilpig.h"
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
@@ -145,6 +146,7 @@ static uint8_t s_modalIdx = 0;
 static uint8_t s_modalScroll = 0;
 static bool s_active = false;
 static bool s_keyWas = false;
+static uint32_t s_openMs = 0;
 static const uint8_t VISIBLE = 4;
 static const uint8_t MODAL_VIS = 4;
 
@@ -252,6 +254,7 @@ void show() {
     s_modalIdx = 0;
     s_modalScroll = 0;
     s_keyWas = true;
+    s_openMs = millis();
 }
 
 void hide() {
@@ -330,13 +333,14 @@ void update() {
         s_keyWas = false;
         return;
     }
-    if (s_keyWas) return;
+    if (s_keyWas) {
+        // Sticky ` after opening: still allow Esc once the open tap aged.
+        if (!(keyEsc() && (millis() - s_openMs) > 350)) return;
+    }
     s_keyWas = true;
 
     auto keys = M5Cardputer.Keyboard.keysState();
-    bool esc = M5Cardputer.Keyboard.isKeyPressed('`') ||
-               M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) ||
-               keys.del;
+    bool esc = keyEsc();
     if (esc) {
         if (s_group != GroupId::NONE) closeModal();
         else App::setMode(AppMode::FARM);

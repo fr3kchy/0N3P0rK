@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../ui/display.h"
 #include "../ui/menu.h"
+#include "../ui/keys.h"
 #include "../ui/loot_menu.h"
 #include "../ui/settings_menu.h"
 #include "../modes/evilpig.h"
@@ -155,9 +156,7 @@ void loop() {
     if (s_mode == AppMode::MENU) return;  // ` / backspace handled in Menu::update
 
     Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
-    bool back = M5Cardputer.Keyboard.isKeyPressed('`') ||
-                M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) ||
-                st.del;
+    bool back = keyEsc();
     char typed = 0;
     for (char c : st.word) {
         if (c == '`' || c == 27) back = true;

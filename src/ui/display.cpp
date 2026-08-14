@@ -383,44 +383,47 @@ void Display::drawTopBar() {
     topBar.setTextSize(1);
     topBar.setTextDatum(top_left);
 
-    // Pig vitals: fat hearts = life, apples = food
-    const int life = Mood::getLife();
+    // Hearts left, clock/season center, food % right
+    const int hearts = Mood::getHearts();
     const int food = Mood::getHunger();
     const uint16_t heartOn = 0xF800;
     const uint16_t heartOff = retro ? (uint16_t)0x6B4D : (uint16_t)0x7BEF;
     const uint16_t appleOn = retro ? (uint16_t)0xC618 : (uint16_t)0xE2C0;
-    const uint16_t appleOff = heartOff;
     const uint16_t stemOn = retro ? (uint16_t)0x8410 : (uint16_t)0x4A00;
     auto fat = [&](int px, int py, uint16_t c) {
         topBar.fillRect(px, py, 2, 2, c);
     };
     auto drawHeart = [&](int ox, uint16_t c) {
-        fat(ox + 0, 2, c); fat(ox + 6, 2, c);
-        fat(ox + 0, 4, c); fat(ox + 2, 4, c); fat(ox + 4, 4, c); fat(ox + 6, 4, c);
-        fat(ox + 2, 6, c); fat(ox + 4, 6, c);
-        fat(ox + 3, 8, c);
+        fat(ox + 0, 2, c); fat(ox + 8, 2, c);
+        fat(ox + 0, 4, c); fat(ox + 2, 4, c); fat(ox + 6, 4, c); fat(ox + 8, 4, c);
+        fat(ox + 0, 6, c); fat(ox + 2, 6, c); fat(ox + 4, 6, c); fat(ox + 6, 6, c); fat(ox + 8, 6, c);
+        fat(ox + 2, 8, c); fat(ox + 4, 8, c); fat(ox + 6, 8, c);
+        fat(ox + 4, 10, c);
     };
     auto drawApple = [&](int ox, uint16_t body, uint16_t stem) {
-        fat(ox + 4, 1, stem);
-        fat(ox + 0, 3, body); fat(ox + 2, 3, body); fat(ox + 4, 3, body);
-        fat(ox + 0, 5, body); fat(ox + 2, 5, body); fat(ox + 4, 5, body);
-        fat(ox + 1, 7, body); fat(ox + 3, 7, body);
+        fat(ox + 5, 1, stem);
+        fat(ox + 0, 3, body); fat(ox + 2, 3, body); fat(ox + 4, 3, body); fat(ox + 6, 3, body);
+        fat(ox + 0, 5, body); fat(ox + 2, 5, body); fat(ox + 4, 5, body); fat(ox + 6, 5, body);
+        fat(ox + 0, 7, body); fat(ox + 2, 7, body); fat(ox + 4, 7, body); fat(ox + 6, 7, body);
+        fat(ox + 2, 9, body); fat(ox + 4, 9, body);
     };
     int x = 2;
     for (int i = 0; i < 5; i++) {
-        drawHeart(x, (life > i * 20) ? heartOn : heartOff);
-        x += 10;
-    }
-    x += 4;
-    for (int i = 0; i < 5; i++) {
-        bool on = food > i * 20;
-        drawApple(x, on ? appleOn : appleOff, on ? stemOn : appleOff);
-        x += 10;
+        drawHeart(x, (i < hearts) ? heartOn : heartOff);
+        x += 12;
     }
 
-    const char* sky = Avatar::isNightTime() ? "NITE" : "DAY";
+    char sky[22];
+    Avatar::getSkyHud(sky, sizeof(sky));
+    topBar.setTextDatum(top_center);
+    topBar.drawString(sky, DISPLAY_W / 2, 4);
+    topBar.setTextDatum(top_left);
+
+    drawApple(DISPLAY_W - 40, appleOn, stemOn);
+    char foodBuf[8];
+    snprintf(foodBuf, sizeof(foodBuf), "%d%%", food);
     topBar.setTextDatum(top_right);
-    topBar.drawString(sky, DISPLAY_W - 2, 3);
+    topBar.drawString(foodBuf, DISPLAY_W - 2, 4);
     topBar.setTextDatum(top_left);
 }
 

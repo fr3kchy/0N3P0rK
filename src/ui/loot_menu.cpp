@@ -1,5 +1,6 @@
 #include "loot_menu.h"
 #include "display.h"
+#include "keys.h"
 #include "../storage/littlefs_ops.h"
 #include "../sync/wpasec.h"
 #include "../sync/pwncrack.h"
@@ -356,9 +357,7 @@ void LootMenu::handleInput() {
     keyWasPressed = true;
 
     auto keys = M5Cardputer.Keyboard.keysState();
-    bool esc = M5Cardputer.Keyboard.isKeyPressed('`') ||
-               M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) ||
-               keys.del;
+    bool esc = keyEsc();
     if (esc) {
         if (detailView) { detailView = false; return; }
         if (syncModal) { syncModal = false; return; }

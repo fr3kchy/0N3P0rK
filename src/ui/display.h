@@ -5,7 +5,7 @@
 
 #define DISPLAY_W 240
 #define DISPLAY_H 135
-#define TOP_BAR_H 14
+#define TOP_BAR_H 16
 #define BOTTOM_BAR_H 14
 #define MAIN_H (DISPLAY_H - TOP_BAR_H - BOTTOM_BAR_H)
 

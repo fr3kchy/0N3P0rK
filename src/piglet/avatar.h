@@ -109,6 +109,7 @@ public:
     // Night sky (RTC / synthetic cycle / SKY setting)
     // isNightTime: true when past dusk mid-point (blend ≥ half night)
     static bool isNightTime();
+    static void getSkyHud(char* out, size_t len);
     // Tree crown tops into top bar (call after bar sky fill, before text)
     static void drawTreeBarOverflow(M5Canvas& bar);
 

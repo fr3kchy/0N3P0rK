@@ -2828,13 +2828,13 @@ void Avatar::onWolfBitten() {
     setManualWalk(false);
     setPlayDead(true);
     setState(AvatarState::SAD);
-    int lifeBefore = Mood::getLife();
-    Mood::hurt(18);
+    int heartsBefore = Mood::getHearts();
+    Mood::hurt(1);
     s_hiding = false;
     s_sitAfterWalk = false;
     s_strollDir = 0;
     SFX::play(SFX::OINK_GRUNT);
-    if (lifeBefore > 0 && Mood::getLife() <= 0 &&
+    if (heartsBefore > 0 && Mood::getHearts() <= 0 &&
         Config::personality().wolfEatLoot && Config::isSDAvailable()) {
         uint8_t n = 1 + (uint8_t)(esp_random() % 3);
         uint8_t ate = Storage::eatRandomLoot(n);
@@ -2867,6 +2867,91 @@ bool Avatar::isNightTime() {
     uint32_t now = millis();
     uint16_t amt = (s_lastNightBlendMs != 0) ? s_nightBlend : computeNightTarget(now);
     return (amt >= 128);
+}
+
+void Avatar::getSkyHud(char* out, size_t len) {
+    if (!out || len < 8) return;
+    out[0] = '\0';
+    const char* sn = Weather::getSeasonShort();
+    uint8_t sky = Config::personality().skyMode;
+    if (sky == (uint8_t)SkyMode::DAY) {
+        snprintf(out, len, "DAY %s", sn);
+        return;
+    }
+    if (sky == (uint8_t)SkyMode::NIGHT) {
+        snprintf(out, len, "NITE %s", sn);
+        return;
+    }
+
+    Season season = Weather::getActiveSeason();
+    int hour = -1, minute = 0, mins = 0;
+    auto dt = M5.Rtc.getDateTime();
+    if (dt.date.year >= 2024) {
+        hour = (int)dt.time.hours;
+        minute = (int)dt.time.minutes;
+        mins = hour * 60 + minute;
+    } else {
+        time_t unixNow = time(nullptr);
+        if (unixNow >= 1700000000) {
+            struct tm timeinfo;
+            localtime_r(&unixNow, &timeinfo);
+            hour = timeinfo.tm_hour;
+            minute = timeinfo.tm_min;
+            mins = hour * 60 + minute;
+        }
+    }
+
+    char phase = isNightTime() ? 'N' : 'D';
+    if (hour >= 0) {
+        int dawn0, dusk0;
+        if (season == Season::SUMMER) {
+            dawn0 = 4 * 60; dusk0 = 20 * 60;
+        } else if (season == Season::WINTER) {
+            dawn0 = 8 * 60; dusk0 = 15 * 60;
+        } else {
+            dawn0 = 5 * 60; dusk0 = 17 * 60;
+        }
+        int leftMin;
+        if (!isNightTime()) {
+            leftMin = dusk0 - mins;
+            if (leftMin < 0) leftMin += 24 * 60;
+        } else {
+            leftMin = dawn0 - mins;
+            if (leftMin < 0) leftMin += 24 * 60;
+        }
+        if (leftMin >= 60)
+            snprintf(out, len, "%02d:%02d %c %s", hour, minute, phase, sn);
+        else
+            snprintf(out, len, "%02d:%02d %c%dm %s", hour, minute, phase, leftMin, sn);
+        return;
+    }
+
+    uint32_t sec = (millis() / 1000u) % 360u;
+    uint32_t dayS, duskS, nightS, dawnS;
+    if (season == Season::SUMMER) {
+        dayS = 200; duskS = 40; nightS = 80; dawnS = 40;
+    } else if (season == Season::WINTER) {
+        dayS = 80; duskS = 40; nightS = 200; dawnS = 40;
+    } else {
+        dayS = 140; duskS = 40; nightS = 140; dawnS = 40;
+    }
+    uint32_t left = 0;
+    if (sec < dayS) {
+        left = dayS - sec;
+        phase = 'D';
+    } else if (sec < dayS + duskS) {
+        left = dayS + duskS - sec;
+        phase = 'D';
+    } else if (sec < dayS + duskS + nightS) {
+        left = dayS + duskS + nightS - sec;
+        phase = 'N';
+    } else {
+        left = 360u - sec;
+        if (left == 0) left = dawnS ? dawnS : 1;
+        phase = 'N';
+    }
+    snprintf(out, len, "%c %u:%02u %s", phase, (unsigned)(left / 60),
+             (unsigned)(left % 60), sn);
 }
 
 void Avatar::drawTreeBarOverflow(M5Canvas& bar) {

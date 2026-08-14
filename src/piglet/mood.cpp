@@ -9,7 +9,7 @@
 
 int Mood::happiness = 70;
 int Mood::hunger = 70;
-int Mood::life = 100;
+int Mood::life = 5;  // discrete hearts 0–5
 char Mood::currentPhrase[40] = "oink";
 uint32_t Mood::lastPhraseChange = 0;
 uint32_t Mood::lastActivityTime = 0;
@@ -70,10 +70,14 @@ void Mood::init() {
     if (s_moodPrefs.begin("pigmood", false)) {
         happiness = s_moodPrefs.getInt("hap", 70);
         hunger = s_moodPrefs.getInt("hun", 70);
-        life = s_moodPrefs.getInt("life", 100);
+        int storedLife = s_moodPrefs.getInt("life", 5);
+        // Old builds saved 0–100. New: 0–5 hearts.
+        if (storedLife > 5) life = (storedLife + 19) / 20;
+        else life = storedLife;
         clampStat(happiness);
         clampStat(hunger);
-        clampStat(life);
+        if (life < 0) life = 0;
+        if (life > 5) life = 5;
     }
     lastEffective = happiness;
     say("oink oink");
@@ -96,7 +100,8 @@ int Mood::getCurrentHappiness() { return happiness; }
 int Mood::getEffectiveHappiness() { return happiness; }
 int Mood::getLastEffectiveHappiness() { return lastEffective; }
 int Mood::getHunger() { return hunger; }
-int Mood::getLife() { return life; }
+int Mood::getHearts() { return life; }
+int Mood::getLife() { return life * 20; }
 uint32_t Mood::getLastActivityTime() { return lastActivityTime; }
 const char* Mood::getCurrentPhrase() {
     if (s_status[0] && millis() < s_statusUntil) return s_status;
@@ -114,12 +119,10 @@ void Mood::setStatusMessage(const char* msg) {
 }
 
 void Mood::feed() {
-    hunger += 28;
+    hunger += 30;
     happiness += 6;
-    life += 4;
     clampStat(hunger);
     clampStat(happiness);
-    clampStat(life);
     lastActivityTime = millis();
     lastEffective = happiness;
     say(PICK(PH_FED));
@@ -130,11 +133,9 @@ void Mood::feed() {
 }
 
 void Mood::eatWorld() {
-    hunger += 10;
-    life += 2;
+    hunger += 14;
     happiness += 2;
     clampStat(hunger);
-    clampStat(life);
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
@@ -144,13 +145,15 @@ void Mood::eatWorld() {
 }
 
 void Mood::hurt(int amount) {
-    if (amount < 0) amount = 0;
+    if (amount < 1) amount = 1;
+    // amount is hearts. Old call sites that passed 18 still mean 1 heart.
+    if (amount > 5) amount = 1;
     life -= amount;
-    happiness -= amount / 2;
-    clampStat(life);
+    if (life < 0) life = 0;
+    happiness -= 10 * amount;
     clampStat(happiness);
     lastEffective = happiness;
-    if (life < 25) say("ow...");
+    say("ow...");
     saveMood();
     updateAvatarState();
 }
@@ -225,15 +228,16 @@ void Mood::pickPhrase() {
 void Mood::update() {
     uint32_t now = millis();
 
-    if (now - lastDecayMs >= 45000) {
+    if (now - lastDecayMs >= 10000) {
         lastDecayMs = now;
-        hunger -= 3;
-        if (hunger < 12) life -= 2;
-        else if (hunger > 70 && life < 100) life += 1;
-        if ((now - lastActivityTime) > 90000) happiness -= 2;
+        hunger -= 4;
         clampStat(hunger);
+        if (hunger == 0 && life > 0) {
+            life -= 1;
+            say("so empty");
+        }
+        if ((now - lastActivityTime) > 90000) happiness -= 2;
         clampStat(happiness);
-        clampStat(life);
         lastEffective = happiness;
         saveMood();
     }

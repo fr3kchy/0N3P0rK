@@ -23,8 +23,9 @@ public:
     static int getCurrentHappiness();
     static int getEffectiveHappiness();
     static int getLastEffectiveHappiness();
-    static int getHunger();
-    static int getLife();
+    static int getHunger();   // 0–100 food percent
+    static int getLife();     // 0–100 mapped from hearts
+    static int getHearts();   // 0–5 discrete hearts
     static uint32_t getLastActivityTime();
     static const char* getCurrentPhrase();
 
