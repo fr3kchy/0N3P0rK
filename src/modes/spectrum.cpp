@@ -8,6 +8,7 @@
 #include "../core/config.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
+#include "../core/app.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -881,6 +882,7 @@ void update() {
         s_beepCli = false;
         SFX::play(SFX::CLIENT_FOUND);
     }
+    if (App::windowHidden()) return;
     if (!keyNewPress(s_keyWas)) return;
     if (keyEsc()) {
         if (s_phase == LOCK) {

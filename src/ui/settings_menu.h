@@ -17,6 +17,7 @@ namespace SettingsMenu {
 void show(SettingsPage page);
 void hide();
 bool isActive();
+bool isTyping();
 void update();
 void draw(M5Canvas& canvas);
 const char* bottomHint();

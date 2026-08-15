@@ -27,4 +27,8 @@ AppMode mode();
 void setMode(AppMode m);
 const char* modeName();
 
+bool windowHidden();
+void setWindowHidden(bool hid);
+bool overlayMode();
+
 }  // namespace App

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <algorithm>
 #include "../ui/display.h"
+#include "../ui/keys.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../core/network_recon.h"
@@ -18,6 +19,7 @@
 #include "../core/sdlog.h"
 #include "../core/sd_layout.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../core/xp.h"
 #include "../audio/sfx.h"
 #include "oink.h"  // DetectedNetwork
@@ -753,6 +755,13 @@ void EvilPigMode::handleInputSelect() {
         }
         return;
     }
+    if (keyEsc()) {
+        if (!keyWas) {
+            keyWas = true;
+            stop();
+        }
+        return;
+    }
     if (M5Cardputer.Keyboard.isKeyPressed(KEY_ENTER)) {
         if (!keyWas && listCount > 0) {
             keyWas = true;
@@ -800,6 +809,13 @@ void EvilPigMode::handleInputPortal() {
         }
         return;
     }
+    if (keyEsc()) {
+        if (!keyWas) {
+            keyWas = true;
+            stop();
+        }
+        return;
+    }
     if (!M5Cardputer.Keyboard.isPressed()) keyWas = false;
 }
 
@@ -823,8 +839,8 @@ void EvilPigMode::handleInputLoot() {
         }
         return;
     }
-    // Backspace / Enter / V = back
-    if (M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE) ||
+    // ` / Enter / V = back to previous phase
+    if (keyEsc() ||
         M5Cardputer.Keyboard.isKeyPressed(KEY_ENTER) ||
         M5Cardputer.Keyboard.isKeyPressed('v') ||
         M5Cardputer.Keyboard.isKeyPressed('V')) {
@@ -846,17 +862,17 @@ void EvilPigMode::update() {
             servicePortalNet();
             tickDeauth();
         }
-        handleInputLoot();
+        if (!App::windowHidden()) handleInputLoot();
         return;
     }
 
     if (phase == Phase::SELECT) {
         if ((millis() - lastListRefresh) > 8000) refreshNetworkList();
-        handleInputSelect();
+        if (!App::windowHidden()) handleInputSelect();
         return;
     }
 
-    handleInputPortal();
+    if (!App::windowHidden()) handleInputPortal();
     servicePortalNet();
     tickDeauth();
 

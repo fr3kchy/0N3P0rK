@@ -414,6 +414,10 @@ void show(SettingsPage page) {
     }
 }
 
+bool isTyping() {
+    return s_text || (s_page == SettingsPage::CONNECT && s_conn == ConnPhase::PASS);
+}
+
 void hide() {
     s_active = false;
     s_editing = false;
@@ -484,9 +488,7 @@ static void updateConnect() {
         return;
     }
 
-    bool esc = tick || erase;
-
-    if (esc) {
+    if (tick) {
         hide();
         return;
     }
@@ -525,6 +527,7 @@ static void updateConnect() {
 
 void update() {
     if (!s_active) return;
+    if (App::windowHidden()) return;
     if (!keyNewPress(s_keyWas)) return;
 
     if (s_page == SettingsPage::CONNECT) {

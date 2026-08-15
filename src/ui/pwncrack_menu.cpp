@@ -1,5 +1,6 @@
 #include "pwncrack_menu.h"
 #include "display.h"
+#include "keys.h"
 #include "../storage/littlefs_ops.h"
 #include "../sync/pwncrack.h"
 #include "../net/ap_sta.h"
@@ -210,7 +211,7 @@ void PwncrackMenu::handleInput() {
     if (keyWasPressed) return;
     keyWasPressed = true;
 
-    if (M5Cardputer.Keyboard.isKeyPressed('`')) {
+    if (keyEsc()) {
         if (detailView) { detailView = false; return; }
         if (syncModal) { syncModal = false; return; }
         if (diagModal) { diagModal = false; return; }

@@ -1,5 +1,6 @@
 #include "display.h"
 #include "menu.h"
+#include "keys.h"
 #include "../core/app.h"
 #include "../core/config.h"
 #include "../piglet/avatar.h"
@@ -248,9 +249,7 @@ bool Display::showConfirmBox(const char* title, const char* message) {
         if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
             auto k = M5Cardputer.Keyboard.keysState();
             if (k.enter) return true;
-            if (k.del || M5Cardputer.Keyboard.isKeyPressed('`') ||
-                M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE))
-                return false;
+            if (keyEsc()) return false;
         }
         delay(16);
     }
@@ -568,6 +567,14 @@ void Display::drawBottomBar() {
         }
     }
 
+    if (App::windowHidden()) {
+        char tmp[48];
+        if (left[0]) snprintf(tmp, sizeof(tmp), "MIN %s", left);
+        else snprintf(tmp, sizeof(tmp), "MIN %s", App::modeName());
+        strncpy(left, tmp, sizeof(left) - 1);
+        left[sizeof(left) - 1] = '\0';
+    }
+
     if (capLive && left[0] && strcmp(left, "SCAN") != 0)
         bottomBar.setTextColor(0xFE60); // gold — caught / heard SSID
     bottomBar.drawString(left, 2, 3);
@@ -607,10 +614,12 @@ void Display::update() {
         refreshBrightness();
     }
 
-    if (App::mode() != AppMode::SPECTRUM && App::mode() != AppMode::USBSD)
-        drawFarm();
+    const bool hid = App::windowHidden();
+    const bool coverFarm = !hid &&
+        (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD);
+    if (!coverFarm) drawFarm();
 
-    if (App::mode() != AppMode::FARM) {
+    if (App::mode() != AppMode::FARM && !hid) {
         if (App::mode() == AppMode::LOOT) LootMenu::draw(mainCanvas);
         else if (App::mode() == AppMode::EVILPIG) EvilPigMode::draw(mainCanvas);
         else if (App::mode() == AppMode::PIGPASS) PigpassMode::draw(mainCanvas);
@@ -619,6 +628,8 @@ void Display::update() {
         else if (App::mode() == AppMode::SPECTRUM) SpectrumMode::draw(mainCanvas);
         else if (App::mode() == AppMode::USBSD) UsbSdMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
+        drawToast();
+    } else if (hid) {
         drawToast();
     }
 

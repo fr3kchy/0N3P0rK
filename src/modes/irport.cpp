@@ -5,6 +5,7 @@
 #include "../audio/sfx.h"
 #include "../piglet/avatar.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../storage/littlefs_ops.h"
 #include <M5Cardputer.h>
 #include <SD.h>
@@ -305,7 +306,7 @@ void IrPortMode::handleInput() {
 
 void IrPortMode::update() {
     if (!running) return;
-    handleInput();
+    if (!App::windowHidden()) handleInput();
     if (!running) return;
     if (phase != Phase::BLAST) return;
     if (millis() < nextSendMs) return;

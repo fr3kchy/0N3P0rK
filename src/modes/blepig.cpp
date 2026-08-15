@@ -1,6 +1,7 @@
 // Raw BLE pairing-frame advertise. Own / lab devices only.
 #include "blepig.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
 #include "../piglet/avatar.h"
@@ -227,7 +228,9 @@ void BlePigMode::update() {
     if (!running) return;
 
     static bool keyWas = false;
-    if (!M5Cardputer.Keyboard.isPressed()) {
+    if (App::windowHidden()) {
+        keyWas = false;
+    } else if (!M5Cardputer.Keyboard.isPressed()) {
         keyWas = false;
     } else if (!keyWas) {
         keyWas = true;

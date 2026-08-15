@@ -5,11 +5,23 @@
 #include <string.h>
 #include <strings.h>
 #include <esp_random.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 namespace Storage {
 
 static bool s_mounted = false;
 static SPIClass s_sdSPI(FSPI);
+static SemaphoreHandle_t s_sdMux = nullptr;
+
+static void lockSd() {
+    if (!s_sdMux) s_sdMux = xSemaphoreCreateMutex();
+    if (s_sdMux) xSemaphoreTake(s_sdMux, portMAX_DELAY);
+}
+
+static void unlockSd() {
+    if (s_sdMux) xSemaphoreGive(s_sdMux);
+}
 
 static constexpr int SD_CS_PIN   = 12;
 static constexpr int SD_MOSI_PIN = 14;
@@ -75,7 +87,11 @@ static void prepareBus() {
 }
 
 bool begin() {
-    if (s_mounted) return true;
+    lockSd();
+    if (s_mounted) {
+        unlockSd();
+        return true;
+    }
 
     pinMode(5, OUTPUT);
     digitalWrite(5, HIGH);
@@ -96,6 +112,7 @@ bool begin() {
 
     if (!s_mounted) {
         Serial.println("[SD] mount failed");
+        unlockSd();
         return false;
     }
 
@@ -108,14 +125,20 @@ bool begin() {
     SD.mkdir(DIR_PASSWORLD);
     SD.mkdir(DIR_IR);
     migrateLegacy();
+    unlockSd();
     return true;
 }
 
 void end() {
-    if (!s_mounted) return;
+    lockSd();
+    if (!s_mounted) {
+        unlockSd();
+        return;
+    }
     SD.end();
     s_mounted = false;
     Serial.println("[SD] released");
+    unlockSd();
 }
 
 bool remount() {
@@ -137,12 +160,18 @@ uint32_t numSectors() {
 
 bool readSector(uint32_t lba, uint8_t* buf) {
     if (!s_mounted || !buf) return false;
-    return SD.readRAW(buf, lba);
+    lockSd();
+    bool ok = SD.readRAW(buf, lba);
+    unlockSd();
+    return ok;
 }
 
 bool writeSector(uint32_t lba, const uint8_t* buf) {
     if (!s_mounted || !buf) return false;
-    return SD.writeRAW(const_cast<uint8_t*>(buf), lba);
+    lockSd();
+    bool ok = SD.writeRAW(const_cast<uint8_t*>(buf), lba);
+    unlockSd();
+    return ok;
 }
 
 bool available() { return s_mounted; }

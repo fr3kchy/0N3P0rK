@@ -16,10 +16,12 @@
 #include <ctype.h>
 
 #include "../ui/display.h"
+#include "../ui/keys.h"
 #include "../piglet/avatar.h"
 #include "../core/sdlog.h"
 #include "../core/sd_layout.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../core/xp.h"
 
 // Static member initialization
@@ -1657,7 +1659,7 @@ void PigpassMode::update() {
     if (state == PigpassState::SELECT_HANDSHAKE ||
         state == PigpassState::SELECT_WORDLIST ||
         state == PigpassState::SELECT_MASK) {
-        handleInput();
+        if (!App::windowHidden()) handleInput();
         return;
     }
 
@@ -1672,19 +1674,19 @@ void PigpassMode::update() {
             lastUpdateTime = now;
             uiDirty = true;
         }
-        handleInput();
+        if (!App::windowHidden()) handleInput();
         runBrute();  // harvest found / EOF; task does the work
         return;
     }
 
     if (state == PigpassState::PAUSED) {
         attempts = s_attempts;
-        handleInput();
+        if (!App::windowHidden()) handleInput();
         return;
     }
 
     if (state == PigpassState::DONE) {
-        handleInput();
+        if (!App::windowHidden()) handleInput();
     }
 }
 
@@ -1730,7 +1732,7 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
             canvas.drawString("/0N3P0rK/Passworld", 4, 68);
         }
         canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString("BKSP=EXIT", 4, MAIN_H - 10);
+        canvas.drawString("` =EXIT", 4, MAIN_H - 10);
         return;
     }
 
@@ -1769,7 +1771,7 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
     }
 
     canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. move  ENT sel  BKSP back", 4, MAIN_H - 10);
+    canvas.drawString(";/. move  ENT sel  ` back", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
@@ -1935,17 +1937,17 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
 
     canvas.setTextColor(UiStyle::GOLD);
     if (state == PigpassState::RUNNING) {
-        canvas.drawString("ENT pause   BKSP save+exit", 4, MAIN_H - 10);
+        canvas.drawString("ENT pause   ` save+exit", 4, MAIN_H - 10);
     } else if (state == PigpassState::PAUSED) {
-        canvas.drawString("ENT resume  BKSP save+exit", 4, MAIN_H - 10);
+        canvas.drawString("ENT resume  ` save+exit", 4, MAIN_H - 10);
     } else {
-        canvas.drawString("ENT / BKSP exit", 4, MAIN_H - 10);
+        canvas.drawString("ENT / ` exit", 4, MAIN_H - 10);
     }
 }
 
 void PigpassMode::handleMaskInput() {
     auto keys = M5Cardputer.Keyboard.keysState();
-    bool back = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE);
+    bool back = keyEsc();
     bool up = M5Cardputer.Keyboard.isKeyPressed(';');
     bool down = M5Cardputer.Keyboard.isKeyPressed('.');
     bool lenDown = M5Cardputer.Keyboard.isKeyPressed(',');
@@ -1992,7 +1994,7 @@ void PigpassMode::handleInput() {
     keyWasPressed = true;
 
     auto keys = M5Cardputer.Keyboard.keysState();
-    bool back = M5Cardputer.Keyboard.isKeyPressed(KEY_BACKSPACE);
+    bool back = keyEsc();
     bool up = M5Cardputer.Keyboard.isKeyPressed(';');
     bool down = M5Cardputer.Keyboard.isKeyPressed('.');
 
@@ -2193,7 +2195,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
     switch (state) {
         case PigpassState::SELECT_HANDSHAKE:
             if (files.empty()) {
-                snprintf(out, len, "NO HANDSHAKES  BKSP=EXIT");
+                snprintf(out, len, "NO HANDSHAKES  ` EXIT");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "HS: %s", files[selectedIndex].name);
             } else {
@@ -2202,7 +2204,7 @@ void PigpassMode::getStatusLine(char* out, size_t len) {
             break;
         case PigpassState::SELECT_WORDLIST:
             if (files.empty()) {
-                snprintf(out, len, "NO WORDLISTS  BKSP=BACK");
+                snprintf(out, len, "NO WORDLISTS  ` BACK");
             } else if (selectedIndex < files.size()) {
                 snprintf(out, len, "WL: %s", files[selectedIndex].name);
             } else {

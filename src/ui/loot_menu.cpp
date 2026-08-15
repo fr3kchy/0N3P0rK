@@ -1,6 +1,7 @@
 #include "loot_menu.h"
 #include "display.h"
 #include "keys.h"
+#include "../core/app.h"
 #include "../storage/littlefs_ops.h"
 #include "../sync/wpasec.h"
 #include "../sync/pwncrack.h"
@@ -390,6 +391,7 @@ void LootMenu::handleInput() {
 
 void LootMenu::update() {
     if (!active) return;
+    if (App::windowHidden()) return;
     handleInput();
 }
 

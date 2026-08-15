@@ -19,6 +19,22 @@ namespace App {
 
 static AppMode s_mode = AppMode::FARM;
 static bool s_g0Was = false;
+static bool s_winHid = false;
+static bool s_minLatch = false;
+
+bool overlayMode() {
+    return s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
+           s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
+           s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
+           s_mode == AppMode::USBSD || s_mode == AppMode::PIG ||
+           s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
+}
+
+bool windowHidden() { return s_winHid && overlayMode(); }
+
+void setWindowHidden(bool hid) {
+    s_winHid = hid && overlayMode();
+}
 
 void begin() {
     s_mode = AppMode::FARM;
@@ -59,6 +75,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::IR && IrPortMode::isRunning()) IrPortMode::stop();
     if (s_mode == AppMode::SPECTRUM && SpectrumMode::isRunning()) SpectrumMode::stop();
     if (s_mode == AppMode::USBSD && UsbSdMode::isRunning()) UsbSdMode::stop();
+    s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
     if (m == AppMode::LOOT) LootMenu::show();
@@ -135,7 +152,19 @@ void loop() {
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
-    if (s_mode == AppMode::FARM) farmPoll();
+    if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
+
+    if (overlayMode() && !SettingsMenu::isTyping()) {
+        if (keyNewPress(s_minLatch)) {
+            if (keyMin()) {
+                s_winHid = !s_winHid;
+                SFX::play(SFX::MENU_CLICK);
+                Display::showToast(s_winHid ? "MIN" : "WIN", 500);
+            } else if (s_winHid && keyEsc()) {
+                setMode(AppMode::MENU);
+            }
+        }
+    }
 
     if (s_mode == AppMode::LOOT) {
         LootMenu::update();

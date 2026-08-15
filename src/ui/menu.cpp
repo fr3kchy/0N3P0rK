@@ -79,7 +79,7 @@ static const char* const H_CONN[] = {
 };
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
-    "PLUG USB. EJECT THEN ESC."
+    "PLUG USB. EJECT THEN `."
 };
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
