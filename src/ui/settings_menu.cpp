@@ -15,7 +15,7 @@
 
 namespace SettingsMenu {
 
-enum class Kind : uint8_t { TOGGLE, VALUE, TEXT };
+enum class Kind : uint8_t { TOGGLE, VALUE, TEXT, BIND };
 enum class ConnPhase : uint8_t { LIST = 0, PASS = 1 };
 
 struct Item {
@@ -72,6 +72,18 @@ static const Item BLE[] = {
 };
 static const uint8_t BLE_N = sizeof(BLE) / sizeof(BLE[0]);
 
+static const Item KEYS[] = {
+    {"AGGRO",    Kind::BIND, 0, 0, 0, 0},
+    {"LIGHT",    Kind::BIND, 1, 0, 0, 0},
+    {"PIGPASS",  Kind::BIND, 2, 0, 0, 0},
+    {"EVILPIG",  Kind::BIND, 3, 0, 0, 0},
+    {"BLE",      Kind::BIND, 4, 0, 0, 0},
+    {"IR PORT",  Kind::BIND, 5, 0, 0, 0},
+    {"SPECTRUM", Kind::BIND, 6, 0, 0, 0},
+    {"LOOT",     Kind::BIND, 7, 0, 0, 0},
+};
+static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
+
 static const char* const H_SCENE[] = {
     "TYPE NAME. ENT SAVE.",
     "SKIN OF THE HOG.",
@@ -109,6 +121,16 @@ static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
     "MS EACH ADVERTISEMENT."
 };
+static const char* const H_KEYS[] = {
+    "A = AGGRO HUNT.",
+    "L = QUIET SNIFF.",
+    "P = WORDLIST / MASK.",
+    "E = LAB PORTAL.",
+    "B = BLE FRAMES.",
+    "I = IR BLAST.",
+    "S = 2.4 SWEEP.",
+    "H = WPASEC / PWN."
+};
 
 struct NetRow {
     char ssid[33];
@@ -121,6 +143,7 @@ static bool s_keyWas = false;
 static uint32_t s_openMs = 0;
 static bool s_editing = false;
 static bool s_text = false;
+static bool s_bind = false;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
@@ -140,6 +163,7 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::SYSTEM) { *n = SYSTEM_N; return SYSTEM; }
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
+    if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     *n = SCENE_N;
     return SCENE;
@@ -241,6 +265,20 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     if (it.kind == Kind::TEXT) {
         const char* n = s_text ? s_edit : Config::personality().name;
         snprintf(out, len, editing || s_text ? ">%s" : "%s", n);
+        return;
+    }
+    if (it.kind == Kind::BIND) {
+        if (s_bind && editing) {
+            snprintf(out, len, ">?");
+            return;
+        }
+        char k = Config::hotkeys().key[it.id];
+        if (!k) {
+            snprintf(out, len, "-");
+            return;
+        }
+        if (k >= 'a' && k <= 'z') k = (char)(k - 'a' + 'A');
+        snprintf(out, len, "%c", k);
         return;
     }
     if (it.kind == Kind::TOGGLE) {
@@ -404,6 +442,7 @@ void show(SettingsPage page) {
     s_scroll = 0;
     s_editing = false;
     s_text = false;
+    s_bind = false;
     s_keyWas = true;
     s_openMs = millis();
     if (page == SettingsPage::CONNECT) {
@@ -415,13 +454,15 @@ void show(SettingsPage page) {
 }
 
 bool isTyping() {
-    return s_text || (s_page == SettingsPage::CONNECT && s_conn == ConnPhase::PASS);
+    return s_text || s_bind ||
+           (s_page == SettingsPage::CONNECT && s_conn == ConnPhase::PASS);
 }
 
 void hide() {
     s_active = false;
     s_editing = false;
     s_text = false;
+    s_bind = false;
 }
 
 bool isActive() { return s_active; }
@@ -433,6 +474,8 @@ const char* bottomHint() {
         return ";/. pick  ENT  R rescan";
     }
     if (s_text) return "type  ENT save  BS erase";
+    if (s_bind) return "press a key  ` cancel";
+    if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
     if (s_editing) return ";/. change  ENT done";
     uint8_t n = 0;
     const Item* it = items(&n);
@@ -580,6 +623,50 @@ void update() {
         return;
     }
 
+    if (s_bind) {
+        if (tick) {
+            s_bind = false;
+            SFX::play(SFX::BACK_NAV);
+            return;
+        }
+        if (erase) {
+            Config::hotkeys().key[cur.id] = 0;
+            Config::save();
+            s_bind = false;
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("CLEARED", 700);
+            return;
+        }
+        char picked = 0;
+        for (char c : keys.word) {
+            if (c < 32 || c >= 127) continue;
+            picked = c;
+            break;
+        }
+        if (!picked) return;
+        if (picked >= 'A' && picked <= 'Z') picked = (char)(picked - 'A' + 'a');
+        bool bad = (picked == '`' || picked == '~' || picked == ' ' ||
+                    picked == ';' || picked == '.' || picked == ',' || picked == '/');
+        if (bad) {
+            Display::showToast("KEY TAKEN", 800);
+            return;
+        }
+        HotkeyConfig& hk = Config::hotkeys();
+        for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
+            if (i != cur.id && hk.key[i] == picked) hk.key[i] = 0;
+        }
+        hk.key[cur.id] = picked;
+        Config::save();
+        s_bind = false;
+        SFX::play(SFX::CONFIRM);
+        char up = picked;
+        if (up >= 'a' && up <= 'z') up = (char)(up - 'a' + 'A');
+        char msg[12];
+        snprintf(msg, sizeof(msg), "KEY %c", up);
+        Display::showToast(msg, 800);
+        return;
+    }
+
     if (esc) {
         if (s_editing) {
             s_editing = false;
@@ -604,7 +691,22 @@ void update() {
         return;
     }
 
+    if (erase && cur.kind == Kind::BIND) {
+        Config::hotkeys().key[cur.id] = 0;
+        Config::save();
+        SFX::play(SFX::CONFIRM);
+        Display::showToast("CLEARED", 700);
+        return;
+    }
+
     if (!keys.enter) return;
+
+    if (cur.kind == Kind::BIND) {
+        s_bind = true;
+        SFX::play(SFX::MENU_CLICK);
+        Display::showToast("PRESS KEY", 700);
+        return;
+    }
 
     if (cur.kind == Kind::TOGGLE) {
         int next = getValue(cur) ? 0 : 1;
@@ -713,6 +815,7 @@ void draw(M5Canvas& canvas) {
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";
+    else if (s_page == SettingsPage::KEYS) title = "KEYS";
 
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);
@@ -740,7 +843,7 @@ void draw(M5Canvas& canvas) {
         }
         canvas.drawString(list[idx].label, 12, y);
         char val[22];
-        formatValue(list[idx], val, sizeof(val), sel && s_editing);
+        formatValue(list[idx], val, sizeof(val), sel && (s_editing || s_bind));
         canvas.setTextDatum(top_right);
         canvas.drawString(val, DISPLAY_W - 10, y);
         canvas.setTextDatum(top_left);
@@ -755,6 +858,7 @@ void draw(M5Canvas& canvas) {
     if (s_page == SettingsPage::SYSTEM) hints = H_SYSTEM;
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
+    else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
     if (s_idx < n) {
         canvas.setTextColor(UI_TITLE);
         canvas.setTextDatum(top_center);

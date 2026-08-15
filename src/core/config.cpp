@@ -6,7 +6,21 @@
 PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
+HotkeyConfig Config::hotkeyConfig;
 bool Config::initialized = false;
+
+static char normHot(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c - 'A' + 'a');
+    return c;
+}
+
+static bool hotReserved(char c) {
+    c = normHot(c);
+    if (c == 0) return false;
+    if (c < 32 || c >= 127) return true;
+    return c == '`' || c == '~' || c == ' ' ||
+           c == ';' || c == '.' || c == ',' || c == '/';
+}
 
 static Preferences s_prefs;
 
@@ -52,6 +66,18 @@ bool Config::init() {
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
+
+    HotkeyConfig def{};
+    char raw[HOTKEY_COUNT];
+    size_t got = s_prefs.getBytes("hotk", raw, HOTKEY_COUNT);
+    if (got == HOTKEY_COUNT) {
+        for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
+            char c = normHot(raw[i]);
+            hotkeyConfig.key[i] = hotReserved(c) ? 0 : c;
+        }
+    } else {
+        hotkeyConfig = def;
+    }
 
     if (p.soundLevel > 5) p.soundLevel = 5;
     if (p.brightness > 100) p.brightness = 100;
@@ -108,6 +134,11 @@ bool Config::save() {
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
     s_prefs.putUShort("blea", b.advMs);
+
+    char raw[HOTKEY_COUNT];
+    for (uint8_t i = 0; i < HOTKEY_COUNT; i++)
+        raw[i] = normHot(hotkeyConfig.key[i]);
+    s_prefs.putBytes("hotk", raw, HOTKEY_COUNT);
     return true;
 }
 

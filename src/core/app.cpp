@@ -162,6 +162,7 @@ void loop() {
                 Display::showToast(s_winHid ? "MIN" : "WIN", 500);
             } else if (s_winHid && keyEsc()) {
                 setMode(AppMode::MENU);
+            } else if (s_winHid && Menu::tryHotkey()) {
             }
         }
     }
@@ -220,6 +221,7 @@ void loop() {
             setMode(AppMode::MENU);
             return;
         }
+        Menu::tryHotkey();
         return;
     }
 

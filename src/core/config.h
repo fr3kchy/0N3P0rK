@@ -78,6 +78,12 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
+static const uint8_t HOTKEY_COUNT = 8;
+// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT
+struct HotkeyConfig {
+    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h' };
+};
+
 class Config {
 public:
     static bool init();
@@ -86,6 +92,7 @@ public:
     static PersonalityConfig& personality() { return personalityConfig; }
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
+    static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
 
     static bool isZombieSkinUnlocked();
@@ -96,5 +103,6 @@ private:
     static PersonalityConfig personalityConfig;
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
+    static HotkeyConfig hotkeyConfig;
     static bool initialized;
 };

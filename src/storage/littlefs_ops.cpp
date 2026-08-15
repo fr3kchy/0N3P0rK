@@ -417,6 +417,28 @@ bool loadKeyFile(const char* path, char* dest, size_t destLen) {
     dest[n] = '\0';
     while (n > 0 && (dest[n - 1] == '\n' || dest[n - 1] == '\r' || dest[n - 1] == ' '))
         dest[--n] = '\0';
+    // WPA-SEC wants 32 hex. Pull that run out of "key: abcd..." lines.
+    if (n != 32) {
+        int run = 0, start = -1;
+        for (size_t i = 0; dest[i]; i++) {
+            char c = dest[i];
+            bool hx = (c >= '0' && c <= '9') ||
+                      (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (hx) {
+                if (run == 0) start = (int)i;
+                run++;
+                if (run == 32) {
+                    memmove(dest, dest + start, 32);
+                    dest[32] = '\0';
+                    n = 32;
+                    break;
+                }
+            } else {
+                run = 0;
+                start = -1;
+            }
+        }
+    }
     return dest[0] != '\0';
 }
 

@@ -457,13 +457,37 @@ struct WpaScanCtx {
 };
 static WpaScanCtx s_wpaScan;
 
+static void wpaIdFromName(const char* name, char bssid[13]) {
+    bssid[0] = '\0';
+    if (bssidFromFilename(name, bssid) && bssid[0]) return;
+    char hex[13] = {0};
+    if (CapName::extractBssidHex(name, hex) && hex[0]) {
+        memcpy(bssid, hex, 13);
+        return;
+    }
+    // SSID-only names still upload — keep a stable 12-char id from the stem.
+    const char* base = name;
+    const char* slash = strrchr(name, '/');
+    if (slash) base = slash + 1;
+    char stem[16];
+    size_t n = 0;
+    for (const char* p = base; *p && *p != '.' && n < 12; p++) {
+        char c = *p;
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) stem[n++] = c;
+    }
+    while (n < 12) stem[n++] = '0';
+    memcpy(bssid, stem, 12);
+    bssid[12] = '\0';
+}
+
 static void wpaCollect(const char* name, size_t size, void* raw) {
     WpaScanCtx* ctx = (WpaScanCtx*)raw;
     if (ctx->count >= WPASEC_MAX_PENDING) return;
     if (size == 0 || !isPcapName(name)) return;
     char bssid[13];
-    if (!bssidFromFilename(name, bssid)) return;
-    if (WPASec::isUploaded(bssid)) {
+    wpaIdFromName(name, bssid);
+    if ((bssid[0] && WPASec::isUploaded(bssid)) || WPASec::isUploaded(name)) {
         ctx->skipped++;
         return;
     }

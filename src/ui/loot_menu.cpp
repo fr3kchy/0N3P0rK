@@ -10,8 +10,11 @@
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
 #include "../cap/capture_name.h"
+#include "../sync/net_io.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <SD.h>
 #include <string.h>
 #include <ctype.h>
@@ -42,7 +45,7 @@ struct Row {
 
 static Row s_rows[48];
 static char s_syncText[48] = "";
-static char s_diag[8][28];
+static char s_diag[10][32];
 static uint8_t s_diagN = 0;
 static const uint8_t VISIBLE = 4;
 
@@ -245,33 +248,154 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    return "ENT:PASS  S:SYNC  ,/:TAB";
+    return "S SYNC  T TEST  ,/ TAB";
+}
+
+static void paintLoot() {
+    Display::update();
+}
+
+static void addDiag(const char* s) {
+    if (s_diagN >= 10) {
+        for (uint8_t i = 0; i < 9; i++) memcpy(s_diag[i], s_diag[i + 1], 32);
+        s_diagN = 9;
+    }
+    strncpy(s_diag[s_diagN], s ? s : "", 31);
+    s_diag[s_diagN][31] = '\0';
+    s_diagN++;
+    paintLoot();
+}
+
+static bool httpHeadLine(WiFiClient& c, char* out, size_t n) {
+    if (!out || n < 4) return false;
+    out[0] = '\0';
+    unsigned long t0 = millis();
+    while (c.connected() && !c.available() && millis() - t0 < 8000) {
+        delay(15);
+        yield();
+    }
+    if (!c.available()) return false;
+    size_t got = c.readBytesUntil('\n', out, n - 1);
+    out[got] = '\0';
+    while (got > 0 && (out[got - 1] == '\r' || out[got - 1] == '\n'))
+        out[--got] = '\0';
+    return out[0] != '\0';
 }
 
 void LootMenu::runDiag() {
     s_diagN = 0;
-    auto add = [&](const char* s) {
-        if (s_diagN >= 8) return;
-        strncpy(s_diag[s_diagN], s, 27);
-        s_diag[s_diagN][27] = '\0';
-        s_diagN++;
-    };
-    char buf[28];
-    if (tab == Tab::WPASEC) {
-        add("WPA-SEC TEST");
-        add(WPASec::hasApiKey() ? "KEY  ok" : "KEY  /0N3P0rK/wpa-sec/");
-        add(WPASec::canSync() ? "TLS  heap ok" : WPASec::getLastError());
-    } else {
-        add("PWNCRACK TEST");
-        add(Pwncrack::hasApiKey() ? "KEY  ok" : "KEY  /0N3P0rK/pwncrack/");
-        add(Pwncrack::canSync() ? "NET  heap ok" : Pwncrack::getLastError());
-    }
-    add(Net::hasStaCreds() ? "WIFI  saved" : "WIFI  no home SSID");
-    snprintf(buf, sizeof(buf), "SD  %s", Storage::available() ? "ok" : "NO CARD");
-    add(buf);
-    snprintf(buf, sizeof(buf), "FILES %u", (unsigned)count);
-    add(buf);
     diagModal = true;
+    const bool wpa = (tab == Tab::WPASEC);
+    addDiag(wpa ? "WPA-SEC LIVE TEST" : "PWNCRACK LIVE TEST");
+
+    if (Cap::isRunning()) Cap::stop();
+    Avatar::suspendScene();
+    SFX::stop();
+    Storage::loadKeysIntoNet();
+    Storage::brewHeap();
+
+    char line[32];
+    if (wpa) {
+        addDiag(WPASec::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
+    } else {
+        addDiag(Pwncrack::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
+    }
+    snprintf(line, sizeof(line), "SD %s  FILES %u",
+             Storage::available() ? "ok" : "NO", (unsigned)count);
+    addDiag(line);
+    snprintf(line, sizeof(line), "HEAP %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    addDiag(line);
+
+    if (!Net::hasStaCreds()) {
+        addDiag("WIFI no home in SET");
+        addDiag("TEST STOP");
+        Avatar::resumeScene();
+        return;
+    }
+
+    snprintf(line, sizeof(line), "WIFI join %s", Net::cfg().staSsid);
+    addDiag(line);
+    if (!connectHome()) {
+        addDiag("WIFI FAIL timeout");
+        dropWifi();
+        Avatar::resumeScene();
+        return;
+    }
+    snprintf(line, sizeof(line), "WIFI %s", WiFi.localIP().toString().c_str());
+    addDiag(line);
+
+    const char* host = wpa ? "wpa-sec.stanev.org" : "pwncrack.org";
+    addDiag(wpa ? "DNS wpa-sec..." : "DNS pwncrack...");
+    IPAddress ip;
+    if (!Net::resolveHost(host, ip, 3)) {
+        addDiag("DNS FAIL");
+        dropWifi();
+        Avatar::resumeScene();
+        return;
+    }
+    snprintf(line, sizeof(line), "DNS %s", ip.toString().c_str());
+    addDiag(line);
+
+    char status[48] = "";
+    if (wpa) {
+        addDiag("TLS 443...");
+        WiFiClientSecure c;
+        if (!ioTlsOpen(c, host, 443)) {
+            addDiag("TLS FAIL");
+            c.stop();
+            dropWifi();
+            Avatar::resumeScene();
+            return;
+        }
+        addDiag("TLS ok  GET /");
+        c.print("GET / HTTP/1.0\r\nHost: ");
+        c.print(host);
+        c.print("\r\nConnection: close\r\n\r\n");
+        if (!httpHeadLine(c, status, sizeof(status))) {
+            addDiag("HTTP no reply");
+        } else {
+            snprintf(line, sizeof(line), "%s", status);
+            addDiag(line);
+        }
+        c.stop();
+    } else {
+        addDiag("HTTP 80...");
+        WiFiClientSecure tls;
+        WiFiClient plain;
+        bool useTls = false;
+        if (!ioPwnOpen(tls, plain, useTls, host)) {
+            addDiag("HTTP+TLS FAIL");
+            tls.stop();
+            plain.stop();
+            dropWifi();
+            Avatar::resumeScene();
+            return;
+        }
+        WiFiClient& c = useTls ? (WiFiClient&)tls : (WiFiClient&)plain;
+        addDiag(useTls ? "TLS 443 ok  GET /" : "HTTP 80 ok  GET /");
+        c.print("GET / HTTP/1.0\r\nHost: ");
+        c.print(host);
+        c.print("\r\nConnection: close\r\n\r\n");
+        if (!httpHeadLine(c, status, sizeof(status))) {
+            addDiag("HTTP no reply");
+        } else {
+            snprintf(line, sizeof(line), "%s", status);
+            addDiag(line);
+        }
+        tls.stop();
+        plain.stop();
+    }
+
+    if (strstr(status, "200") || strstr(status, "301") || strstr(status, "302") ||
+        strstr(status, "303") || strstr(status, "307") || strstr(status, "308"))
+        addDiag("TEST OK");
+    else if (status[0])
+        addDiag("TEST REACH but odd HTTP");
+    else
+        addDiag("TEST FAIL");
+
+    dropWifi();
+    Avatar::resumeScene();
 }
 
 void LootMenu::startSync() {

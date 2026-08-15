@@ -81,6 +81,10 @@ static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
     "PLUG USB. EJECT THEN `."
 };
+static const char* const H_KEYS[] = {
+    "BIND FARM / MENU SHORTCUTS.",
+    "ENT SET. BS CLEAR. ` BACK."
+};
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
     "OWN DEVICES. ;/. FAMILY."
@@ -154,6 +158,7 @@ static const Item G_SET[] = {
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
     {"))", "CONNECT",  6, H_CONN,   2},
+    {"**", "KEYS",    18, H_KEYS,   2},
     {"U:", "USB SD",  17, H_USB,    2}
 };
 
@@ -183,7 +188,7 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 5;
+    if (g == GroupId::SET) return 6;
     return 0;
 }
 
@@ -231,6 +236,10 @@ static void doAction(uint8_t id) {
             break;
         case 12:
             SettingsMenu::show(SettingsPage::BLE);
+            App::setMode(AppMode::TUNE);
+            break;
+        case 18:
+            SettingsMenu::show(SettingsPage::KEYS);
             App::setMode(AppMode::TUNE);
             break;
         case 13:
@@ -355,6 +364,23 @@ void handleKey(char c, bool enter, bool del, bool fn) {
     (void)fn;
 }
 
+bool tryHotkey() {
+    static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4 };
+    const HotkeyConfig& hk = Config::hotkeys();
+    for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
+        char k = hk.key[i];
+        if (!k) continue;
+        char up = k;
+        if (up >= 'a' && up <= 'z') up = (char)(up - 'a' + 'A');
+        if (M5Cardputer.Keyboard.isKeyPressed(k) ||
+            (up != k && M5Cardputer.Keyboard.isKeyPressed(up))) {
+            doAction(ACT[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
 void update() {
     if (!s_active || App::mode() != AppMode::MENU) return;
     if (!keyNewPress(s_keyWas)) return;
@@ -366,6 +392,7 @@ void update() {
         else App::setMode(AppMode::FARM);
         return;
     }
+    if (tryHotkey()) return;
 
     if (s_group != GroupId::NONE) {
         uint8_t n = groupSize(s_group);

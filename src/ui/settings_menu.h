@@ -9,7 +9,8 @@ enum class SettingsPage : uint8_t {
     SYSTEM = 1,
     RADIO = 2,
     BLE = 3,
-    CONNECT = 4
+    CONNECT = 4,
+    KEYS = 5
 };
 
 namespace SettingsMenu {

@@ -16,6 +16,7 @@ void update();
 void draw(M5Canvas& canvas);
 void onEnter(AppMode mode);
 void handleKey(char c, bool enter, bool del, bool fn);
+bool tryHotkey();
 const char* hint();
 const char* selectedHint();
 

@@ -11,11 +11,12 @@
 inline bool ioTlsOpen(WiFiClientSecure& c, const char* host, uint16_t port = 443) {
     if (!host) return false;
     IPAddress ip;
-    Net::resolveHost(host, ip, 3);
+    bool haveIp = Net::resolveHost(host, ip, 3);
     c.setInsecure();
     c.setTimeout(20000);
     Storage::brewHeap();
     for (uint8_t i = 0; i < 3; i++) {
+        if (haveIp && c.connect(ip, port, 12000)) return true;
         if (c.connect(host, port, 12000)) return true;
         c.stop();
         delay(250);
