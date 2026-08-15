@@ -14,6 +14,8 @@
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
 #include "../modes/irport.h"
+#include "../modes/spectrum.h"
+#include "../modes/usbsd.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -75,6 +77,10 @@ static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
     "HOME WIFI FOR S-SYNC."
 };
+static const char* const H_USB[] = {
+    "SD AS A DISK ON THE PC.",
+    "PLUG USB. EJECT THEN ESC."
+};
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
     "OWN DEVICES. ;/. FAMILY."
@@ -82,6 +88,10 @@ static const char* const H_BLE[] = {
 static const char* const H_IR[] = {
     "IR PORT. POINT AT THE TV.",
     "SPC FIRE. R NA/EU. E FILE."
+};
+static const char* const H_SPEC[] = {
+    "2.4 SWEEP. LOBES AND FALL.",
+    "ENT LOCK. SPC KICK. W WAKE."
 };
 
 static const char* const H_LIGHT[] = {
@@ -110,7 +120,7 @@ static const char* const H_HASHES[] = {
 };
 static const char* const H_PWN[] = {
     "PWNCRACK.ORG — NOT WPA-SEC.",
-    "KEY IN /0N3P0rK/pwncrack/"
+    "KEY IN /0N3P0rK/pwncrack/  HS /hs/"
 };
 static const char* const H_LIFE[] = {
     "SHE WALKS, JUMPS, HIDES.",
@@ -136,13 +146,15 @@ static const Item G_ATTACK[] = {
     {"PP", "PIGPASS", 10, H_PASS,  2},
     {"BL", "BLE",     13, H_BLE,   2},
     {"IR", "IR PORT", 15, H_IR,    2},
+    {"~)", "SPECTRUM",16, H_SPEC,  2},
     {"xx", "STOP",    3,  H_STOP,  2}
 };
 static const Item G_SET[] = {
     {"[]", "SYSTEM",  14, H_SYS,    2},
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
-    {"))", "CONNECT",  6, H_CONN,   2}
+    {"))", "CONNECT",  6, H_CONN,   2},
+    {"U:", "USB SD",  17, H_USB,    2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -170,8 +182,8 @@ static const Item* groupItems(GroupId g) {
 }
 
 static uint8_t groupSize(GroupId g) {
-    if (g == GroupId::ATTACK) return 7;
-    if (g == GroupId::SET) return 4;
+    if (g == GroupId::ATTACK) return 8;
+    if (g == GroupId::SET) return 5;
     return 0;
 }
 
@@ -228,6 +240,14 @@ static void doAction(uint8_t id) {
         case 15:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::IR);
+            break;
+        case 16:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::SPECTRUM);
+            break;
+        case 17:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::USBSD);
             break;
         case 9:
             if (Cap::isRunning()) Cap::stop();

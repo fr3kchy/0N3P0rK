@@ -17,6 +17,8 @@
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
 #include "../modes/irport.h"
+#include "../modes/spectrum.h"
+#include "../modes/usbsd.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -541,6 +543,12 @@ void Display::drawBottomBar() {
             case AppMode::IR:
                 IrPortMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::SPECTRUM:
+                SpectrumMode::getStatusLine(left, sizeof(left));
+                break;
+            case AppMode::USBSD:
+                UsbSdMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -590,7 +598,7 @@ void Display::update() {
     SceneLayers::beginFrame();
     updateDimming();
 
-    Mood::update();
+    if (!Avatar::isSceneSuspended()) Mood::update();
 
     static int8_t lastSkyNight = -1;
     bool night = Avatar::isNightTime();
@@ -599,8 +607,8 @@ void Display::update() {
         refreshBrightness();
     }
 
-    // Always tick the farm so the pig lives while you are in menus.
-    drawFarm();
+    if (App::mode() != AppMode::SPECTRUM && App::mode() != AppMode::USBSD)
+        drawFarm();
 
     if (App::mode() != AppMode::FARM) {
         if (App::mode() == AppMode::LOOT) LootMenu::draw(mainCanvas);
@@ -608,6 +616,8 @@ void Display::update() {
         else if (App::mode() == AppMode::PIGPASS) PigpassMode::draw(mainCanvas);
         else if (App::mode() == AppMode::BLE) BlePigMode::draw(mainCanvas);
         else if (App::mode() == AppMode::IR) IrPortMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::SPECTRUM) SpectrumMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::USBSD) UsbSdMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     }

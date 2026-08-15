@@ -328,4 +328,54 @@ bool restoreApRadio() {
     return ok;
 }
 
+bool resolveHost(const char* host, IPAddress& ip, uint8_t tries) {
+    if (!host || !host[0]) return false;
+    for (uint8_t i = 0; i < tries; i++) {
+        if (WiFi.hostByName(host, ip) && ip != IPAddress()) {
+            Serial.printf("[NET] dns %s -> %s\n", host, ip.toString().c_str());
+            return true;
+        }
+        delay(200);
+        yield();
+    }
+    Serial.printf("[NET] dns fail %s\n", host);
+    return false;
+}
+
+bool joinHome(uint32_t timeoutMs) {
+    if (!hasStaCreds()) return false;
+
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(nullptr);
+    WiFi.softAPdisconnect(true);
+    WiFi.disconnect(false, false);
+    delay(80);
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.begin(s_cfg.staSsid, s_cfg.staPass);
+    Serial.printf("[NET] join home %s\n", s_cfg.staSsid);
+
+    uint32_t t0 = millis();
+    while (millis() - t0 < timeoutMs) {
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress()) {
+            delay(300);
+            IPAddress ip;
+            resolveHost("wpa-sec.stanev.org", ip, 2);
+            resolveHost("pwncrack.org", ip, 2);
+            Serial.printf("[NET] home ip %s rssi %d\n",
+                          WiFi.localIP().toString().c_str(), WiFi.RSSI());
+            return true;
+        }
+        delay(150);
+        yield();
+    }
+    Serial.println("[NET] join home timeout");
+    return false;
+}
+
+void leaveHome() {
+    // Keep the WiFi driver up — WIFI_OFF breaks DNS/TLS on the next sync.
+    WiFi.disconnect(false, false);
+}
+
 } // namespace Net

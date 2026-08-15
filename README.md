@@ -76,6 +76,7 @@ Tamagotchi-свинка + сарай на **M5Cardputer** (ESP32-S3, 8 MB).
 | **PIGPASS** | Оффлайн WPA: wordlist / mask на SD |
 | **BLE** | Сырые кадры Apple / Win / Android. Свои устройства |
 | **IR PORT** | Сначала регион **NA / EU**, потом Space — fire. GPIO44. Файлы с SD |
+| **SPECTRUM** | 2.4 sweep: лепестки + водопад. ENT — сеть, клиенты, пакеты. Space — kick |
 | **STOP** | Радио спать |
 
 ### LOOT
@@ -89,7 +90,7 @@ Tamagotchi-свинка + сарай на **M5Cardputer** (ESP32-S3, 8 MB).
 
 ### SET
 
-**SYSTEM** (яркость, звук, dim) · **RADIO** · **BLE** · **CONNECT** (скан + пароль домашней сети для sync).
+**SYSTEM** (яркость, звук, dim) · **RADIO** · **BLE** · **CONNECT** (скан + пароль домашней сети для sync) · **USB SD** (карта как диск на ПК, как в Launcher).
 
 ---
 
@@ -124,16 +125,26 @@ pio run -e m5cardputer -t upload
 
 ## SD
 
+Рукопожатия в одной папке. Ключи и логи — у каждого сервиса свои.
+
 ```text
 /0N3P0rK/
-  wpa-sec/       ключ + pot + .pcap
-  pwncrack/      key.txt + .hc22000
-  pigpass/       оффлайн крак
-  Passworld/     словари
-  evilpig/       creds
-  ir/            свои IR-паки
+  hs/                  все рукопожатия (.pcap .22000 .txt)
+  wpa-sec/
+    key.txt            ключ WPA-SEC
+    results.txt        potfile
+    uploaded.txt
+  pwncrack/
+    key.txt            ключ pwncrack.org
+    results.txt
+    uploaded.txt
+  pigpass/
+  Passworld/
+  evilpig/
+  ir/
 ```
 
+Старые `.pcap` / `.22000` из `wpa-sec/` и `pwncrack/` переедут в `hs/` при загрузке.  
 Ключи кладите файлами на карту. Веб-морды для ключей нет.
 
 ---

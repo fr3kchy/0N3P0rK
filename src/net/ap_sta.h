@@ -4,6 +4,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFi.h>
 
 namespace Net {
 
@@ -54,6 +55,11 @@ bool setSta(const char* ssid, const char* pass);
 void clearSta();
 bool hasStaCreds();
 bool staLinked();   // STA associated (STA or APSTA)
+
+// Home STA for WPA-SEC / Pwncrack. Does not WIFI_OFF (kills DNS/TLS).
+bool joinHome(uint32_t timeoutMs = 22000);
+void leaveHome();
+bool resolveHost(const char* host, IPAddress& ip, uint8_t tries = 3);
 
 bool setWpaSecKey(const char* key);
 bool setPwncrackKey(const char* key);

@@ -90,23 +90,11 @@ static void formatSize(char* out, size_t len, uint32_t bytes) {
 }
 
 static bool connectHome() {
-    if (!Net::hasStaCreds()) return false;
-    const Net::Cfg& c = Net::cfg();
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-    WiFi.begin(c.staSsid, c.staPass);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-        delay(200);
-        yield();
-    }
-    return WiFi.status() == WL_CONNECTED;
+    return Net::joinHome(22000);
 }
 
 static void dropWifi() {
-    WiFi.disconnect(true, false);
-    delay(50);
-    WiFi.mode(WIFI_OFF);
+    Net::leaveHome();
 }
 
 void LootMenu::scan() {
@@ -125,13 +113,9 @@ void LootMenu::scan() {
         Pwncrack::loadCache();
     }
 
-    const char* dirs[4];
+    const char* dirs[2];
     uint8_t nd = 0;
-    if (wpa) {
-        dirs[nd++] = Storage::DIR_WPASEC;
-    } else {
-        dirs[nd++] = Storage::DIR_PWNCRACK;
-    }
+    dirs[nd++] = Storage::DIR_HS;
 
     for (uint8_t d = 0; d < nd && count < 48; d++) {
         File root = SD.open(dirs[d]);
@@ -310,7 +294,11 @@ void LootMenu::startSync() {
     syncModal = true;
     strncpy(s_syncText, "CONNECTING...", sizeof(s_syncText) - 1);
     Avatar::suspendScene();
+    SFX::stop();
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
     Display::update();
+    Storage::brewHeap();
 
     if (!connectHome()) {
         strncpy(s_syncText, "WIFI FAIL", sizeof(s_syncText) - 1);
@@ -324,10 +312,11 @@ void LootMenu::startSync() {
             snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u", st, p, t);
         else
             strncpy(s_syncText, st ? st : "...", sizeof(s_syncText) - 1);
-        Display::update();
+        // Do not redraw during TLS/HTTP — farm draw + WiFi stack reboots the S3.
     };
-    strncpy(s_syncText, "CONVERTING...", sizeof(s_syncText) - 1);
+    strncpy(s_syncText, "SYNC...", sizeof(s_syncText) - 1);
     Display::update();
+    Storage::brewHeap();
     if (tab == Tab::WPASEC) {
         WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
         if (r.success)
@@ -473,7 +462,7 @@ void LootMenu::draw(M5Canvas& canvas) {
         canvas.print(tab == Tab::WPASEC ? "NO PCAP IN LOOT" : "NO 22000 IN LOOT");
         canvas.setTextColor(UiStyle::TEXT);
         canvas.setCursor(4, 52);
-        canvas.print(tab == Tab::WPASEC ? "/0N3P0rK/wpa-sec/" : "/0N3P0rK/pwncrack/");
+        canvas.print("/0N3P0rK/hs/");
         return;
     }
 

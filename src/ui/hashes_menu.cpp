@@ -73,23 +73,11 @@ static void parseBssidFromName(const char* name, char* hex13, char* pretty) {
 }
 
 static bool connectHome() {
-    if (!Net::hasStaCreds()) return false;
-    const Net::Cfg& c = Net::cfg();
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-    WiFi.begin(c.staSsid, c.staPass);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-        delay(200);
-        yield();
-    }
-    return WiFi.status() == WL_CONNECTED;
+    return Net::joinHome(22000);
 }
 
 static void dropWifi() {
-    WiFi.disconnect(true, false);
-    delay(50);
-    WiFi.mode(WIFI_OFF);
+    Net::leaveHome();
 }
 
 void HashesMenu::scan() {
@@ -98,7 +86,7 @@ void HashesMenu::scan() {
     scroll = 0;
     if (!Storage::available()) return;
     WPASec::loadCache();
-    File root = SD.open(Storage::DIR_WPASEC);
+    File root = SD.open(Storage::DIR_HS);
     if (!root || !root.isDirectory()) {
         if (root) root.close();
         return;
@@ -206,6 +194,7 @@ void HashesMenu::startSync() {
 
     strncpy(syncText, "UPLOADING...", sizeof(syncText) - 1);
     Display::update();
+    Storage::brewHeap();
     WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, nullptr);
     dropWifi();
     Avatar::resumeScene();

@@ -954,6 +954,7 @@ void PigpassMode::scanHandshakeFiles() {
     const char* hsDir = resolveHandshakeDir();
     scanDirForExt(hsDir, hsExts, 3);
     scanDirForExt(SDLayout::pigpassDir(), hsExts, 3);
+    scanDirForExt("/0N3P0rK/hs", hsExts, 3);
     scanDirForExt("/0N3P0rK/pwncrack", hsExts, 3);
     scanDirForExt("/0N3P0rK/wpa-sec", hsExts, 3);
 

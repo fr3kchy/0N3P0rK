@@ -46,7 +46,7 @@ static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
-static const char* const PREFIX = "/0N3P0rK/wpa-sec/";
+static const char* const PREFIX = "/0N3P0rK/hs/";
 
 static const uint8_t BEACON_SLOTS = 16;
 struct BeaconSlot {
@@ -319,7 +319,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
 
     char ssid[33];
     ssidForBssid(bssid, ssid);
-    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_WPASEC, name, ssid);
+    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, name, ssid);
 
     if (createdNew) {
         const BeaconSlot* bcn = findBeacon(bssid);
@@ -359,7 +359,7 @@ static void writeFrameToFile(const Slot& s) {
     if (ssid[0]) {
         strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
         s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
-        CapName::writeCompanionSsid(Storage::DIR_WPASEC, s_fileName, ssid);
+        CapName::writeCompanionSsid(Storage::DIR_HS, s_fileName, ssid);
     }
 }
 
@@ -410,6 +410,7 @@ static void kickOnThisChannel() {
 
 void begin() {
     Storage::begin();
+    Storage::ensureDir(Storage::DIR_HS);
     Storage::ensureDir(Storage::DIR_WPASEC);
     Storage::ensureDir(Storage::DIR_PWNCRACK);
     s_cnt = {};

@@ -13,7 +13,9 @@ enum class AppMode : uint8_t {
     EVILPIG,
     PIGPASS,
     BLE,
-    IR
+    IR,
+    SPECTRUM,
+    USBSD
 };
 
 namespace App {

@@ -57,7 +57,7 @@ static void makePath(const Hs* h, const char* suffix, char* path, size_t pathLen
     essidOf(h, ssid);
     char stem[40];
     CapName::buildStem(ssid, h->bssid, stem, sizeof(stem));
-    snprintf(path, pathLen, "%s/%s%s", Storage::DIR_PWNCRACK, stem, suffix);
+    snprintf(path, pathLen, "%s/%s%s", Storage::DIR_HS, stem, suffix);
 }
 
 static Hs* slotFor(const uint8_t* bssid) {
@@ -82,7 +82,7 @@ static void maybeWrite(Hs* h);
 
 static bool writeLine(Hs* h, const char* suffix, const char* line) {
     if (!h) return false;
-    Storage::ensureDir(Storage::DIR_PWNCRACK);
+    Storage::ensureDir(Storage::DIR_HS);
     char path[80];
     makePath(h, suffix, path, sizeof(path));
     File f = SD.open(path, "w");
@@ -91,11 +91,11 @@ static bool writeLine(Hs* h, const char* suffix, const char* line) {
     f.close();
     char ssid[33];
     essidOf(h, ssid);
-    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_PWNCRACK, Storage::baseName(path), ssid);
+    if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, Storage::baseName(path), ssid);
     char legacy[64];
     snprintf(legacy, sizeof(legacy),
              "%s/%02X-%02X-%02X-%02X-%02X-%02X%s",
-             Storage::DIR_PWNCRACK,
+             Storage::DIR_HS,
              h->bssid[0], h->bssid[1], h->bssid[2],
              h->bssid[3], h->bssid[4], h->bssid[5], suffix);
     if (strcmp(legacy, path) != 0 && SD.exists(legacy)) SD.remove(legacy);
@@ -296,7 +296,7 @@ uint16_t convertPcap(const char* pcapPath) {
     CapName::extractBssidHex(pcapPath, hex);
     CapName::extractSsidFromName(pcapPath, nameSsid);
     if (!nameSsid[0]) {
-        CapName::readCompanionSsid(Storage::DIR_WPASEC, Storage::baseName(pcapPath), nameSsid);
+        CapName::readCompanionSsid(Storage::DIR_HS, Storage::baseName(pcapPath), nameSsid);
     }
 
     File f = SD.open(pcapPath, "r");
@@ -351,7 +351,7 @@ static void convOne(const char* name, size_t, void* raw) {
     size_t L = strlen(name);
     if (L < 6 || strcasecmp(name + L - 5, ".pcap") != 0) return;
     char path[80];
-    snprintf(path, sizeof(path), "%s/%s", Storage::DIR_WPASEC, name);
+    snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
     uint16_t add = convertPcap(path);
     ((ConvCtx*)raw)->n = (uint16_t)(((ConvCtx*)raw)->n + add);
 }

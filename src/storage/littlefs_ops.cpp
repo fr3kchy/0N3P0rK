@@ -100,6 +100,7 @@ bool begin() {
     }
 
     SD.mkdir(DIR_ROOT);
+    SD.mkdir(DIR_HS);
     SD.mkdir(DIR_WPASEC);
     SD.mkdir(DIR_PWNCRACK);
     SD.mkdir(DIR_EVILPIG);
@@ -108,6 +109,40 @@ bool begin() {
     SD.mkdir(DIR_IR);
     migrateLegacy();
     return true;
+}
+
+void end() {
+    if (!s_mounted) return;
+    SD.end();
+    s_mounted = false;
+    Serial.println("[SD] released");
+}
+
+bool remount() {
+    end();
+    delay(40);
+    return begin();
+}
+
+uint32_t sectorSize() {
+    if (!s_mounted) return 0;
+    uint32_t n = SD.sectorSize();
+    return n ? n : 512;
+}
+
+uint32_t numSectors() {
+    if (!s_mounted) return 0;
+    return SD.numSectors();
+}
+
+bool readSector(uint32_t lba, uint8_t* buf) {
+    if (!s_mounted || !buf) return false;
+    return SD.readRAW(buf, lba);
+}
+
+bool writeSector(uint32_t lba, const uint8_t* buf) {
+    if (!s_mounted || !buf) return false;
+    return SD.writeRAW(const_cast<uint8_t*>(buf), lba);
 }
 
 bool available() { return s_mounted; }
@@ -152,8 +187,8 @@ Stats stats() {
     s.total = SD.totalBytes();
     s.used  = SD.usedBytes();
     s.free  = (s.total > s.used) ? (s.total - s.used) : 0;
-    s.handshakes = countFiles(DIR_WPASEC);
-    s.results = countFiles(DIR_PWNCRACK);
+    s.handshakes = countFiles(DIR_HS);
+    s.results = countFiles(DIR_WPASEC) + countFiles(DIR_PWNCRACK);
     return s;
 }
 
@@ -179,19 +214,29 @@ uint16_t forEachInDir(const char* dir, FileVisitor fn, void* ctx) {
 }
 
 uint16_t forEachHandshake(FileVisitor fn, void* ctx) {
-    return forEachInDir(DIR_WPASEC, fn, ctx);
+    return forEachInDir(DIR_HS, fn, ctx);
 }
 
 uint16_t forEachPwn(FileVisitor fn, void* ctx) {
-    return forEachInDir(DIR_PWNCRACK, fn, ctx);
+    return forEachInDir(DIR_HS, fn, ctx);
 }
 
 uint16_t listHandshakes(char out[][FILE_NAME_MAX], uint16_t max) {
-    return listDir(DIR_WPASEC, out, max);
+    return listDir(DIR_HS, out, max);
 }
 
 uint16_t listResults(char out[][FILE_NAME_MAX], uint16_t max) {
-    return listDir(DIR_WPASEC, out, max);
+    return listDir(DIR_HS, out, max);
+}
+
+static bool isServiceFileName(const char* name) {
+    if (!name || !name[0]) return true;
+    if (strcasecmp(name, "key.txt") == 0) return true;
+    if (strcasecmp(name, "key.txt.imported") == 0) return true;
+    if (strcasecmp(name, "results.txt") == 0) return true;
+    if (strcasecmp(name, "uploaded.txt") == 0) return true;
+    if (strncasecmp(name, "wpasec_", 7) == 0) return true;
+    return false;
 }
 
 static bool endsWithCI(const char* name, const char* suf) {
@@ -254,12 +299,10 @@ static void migrateDirByExt(const char* from) {
             snprintf(path, sizeof(path), "%s/%s", from, baseName(f.name()));
             const char* name = baseName(f.name());
             f.close();
-            if (endsWithCI(name, ".22000") || endsWithCI(name, ".hc22000"))
-                moveInto(path, DIR_PWNCRACK);
-            else if (endsWithCI(name, ".pcap") || endsWithCI(name, ".pcapng"))
+            if (isServiceFileName(name))
                 moveInto(path, DIR_WPASEC);
             else
-                moveInto(path, DIR_WPASEC);
+                moveInto(path, DIR_HS);
         } else {
             f.close();
         }
@@ -289,14 +332,46 @@ static void migrateAll(const char* from, const char* toDir) {
     root.close();
 }
 
+static void splitCapturesOut(const char* from) {
+    File root = SD.open(from);
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return;
+    }
+    File f = root.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* name = baseName(f.name());
+            char path[96];
+            snprintf(path, sizeof(path), "%s/%s", from, name);
+            f.close();
+            if (!isServiceFileName(name)) moveInto(path, DIR_HS);
+        } else {
+            f.close();
+        }
+        f = root.openNextFile();
+    }
+    root.close();
+}
+
 void migrateLegacy() {
     if (!s_mounted) return;
-    // Our previous /loot layout → /0N3P0rK. No m5porkchop.
+    ensureDir(DIR_HS);
+    ensureDir(DIR_WPASEC);
+    ensureDir(DIR_PWNCRACK);
     migrateAll("/loot/wpa-sec", DIR_WPASEC);
     migrateAll("/loot/pwncrack", DIR_PWNCRACK);
     migrateAll("/loot/evilpig", DIR_EVILPIG);
     migrateAll("/loot/pigpass", DIR_PIGPASS);
     migrateAll("/loot/Passworld", DIR_PASSWORLD);
+    splitCapturesOut(DIR_WPASEC);
+    splitCapturesOut(DIR_PWNCRACK);
+    if (!SD.exists(FILE_WPASEC_KEY) && SD.exists("/0N3P0rK/wpa-sec/wpasec_key.txt"))
+        SD.rename("/0N3P0rK/wpa-sec/wpasec_key.txt", FILE_WPASEC_KEY);
+    if (!SD.exists(FILE_WPASEC_RESULTS) && SD.exists("/0N3P0rK/wpa-sec/wpasec_results.txt"))
+        SD.rename("/0N3P0rK/wpa-sec/wpasec_results.txt", FILE_WPASEC_RESULTS);
+    if (!SD.exists(FILE_WPASEC_UPLOADED) && SD.exists("/0N3P0rK/wpa-sec/wpasec_uploaded.txt"))
+        SD.rename("/0N3P0rK/wpa-sec/wpasec_uploaded.txt", FILE_WPASEC_UPLOADED);
 }
 
 bool formatStorage() {
@@ -316,11 +391,32 @@ bool loadKeyFile(const char* path, char* dest, size_t destLen) {
     return dest[0] != '\0';
 }
 
+void brewHeap() {
+    const size_t sizes[] = {24576, 16384, 8192, 4096};
+    for (size_t i = 0; i < 4; i++) {
+        void* p = malloc(sizes[i]);
+        if (p) {
+            memset(p, 0, 8);
+            free(p);
+        }
+    }
+    delay(60);
+    yield();
+}
+
 void loadKeysIntoNet() {
     char buf[65];
-    if (loadKeyFile(FILE_WPASEC_KEY, buf, sizeof(buf))) {
-        Net::setWpaSecKey(buf);
-        Serial.println("[SD] wpasec key loaded");
+    const char* wpaKeys[] = {
+        FILE_WPASEC_KEY,
+        "/0N3P0rK/wpa-sec/wpasec_key.txt",
+        nullptr
+    };
+    for (uint8_t i = 0; wpaKeys[i]; i++) {
+        if (loadKeyFile(wpaKeys[i], buf, sizeof(buf))) {
+            Net::setWpaSecKey(buf);
+            Serial.println("[SD] wpasec key loaded");
+            break;
+        }
     }
     if (loadKeyFile(FILE_PWNCRACK_KEY, buf, sizeof(buf))) {
         Net::setPwncrackKey(buf);
@@ -357,8 +453,7 @@ uint8_t eatRandomLoot(uint8_t want) {
         if (f) f.close();
         root.close();
     };
-    collect(DIR_WPASEC);
-    collect(DIR_PWNCRACK);
+    collect(DIR_HS);
     if (n == 0) return 0;
     if (want > n) want = n;
     uint8_t eaten = 0;
@@ -375,13 +470,7 @@ uint8_t eatRandomLoot(uint8_t want) {
 }
 
 static bool isProtectedName(const char* name) {
-    if (!name || !name[0]) return true;
-    if (strncasecmp(name, "wpasec_", 7) == 0) return true;
-    if (strcasecmp(name, "key.txt") == 0) return true;
-    if (strcasecmp(name, "key.txt.imported") == 0) return true;
-    if (strcasecmp(name, "results.txt") == 0) return true;
-    if (strcasecmp(name, "uploaded.txt") == 0) return true;
-    return false;
+    return isServiceFileName(name);
 }
 
 static bool isLootCap(const char* name) {
@@ -490,7 +579,7 @@ static uint8_t compactOneDir(const char* dir) {
 
 uint8_t compactLoot() {
     if (!s_mounted) return 0;
-    uint8_t n = (uint8_t)(compactOneDir(DIR_WPASEC) + compactOneDir(DIR_PWNCRACK));
+    uint8_t n = compactOneDir(DIR_HS);
     if (n) Serial.printf("[LOOT] compact removed %u dupes\n", (unsigned)n);
     return n;
 }

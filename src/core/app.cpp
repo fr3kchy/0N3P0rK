@@ -8,6 +8,8 @@
 #include "../modes/pigpass.h"
 #include "../modes/blepig.h"
 #include "../modes/irport.h"
+#include "../modes/spectrum.h"
+#include "../modes/usbsd.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../audio/sfx.h"
@@ -40,6 +42,8 @@ const char* modeName() {
         case AppMode::PIGPASS:  return "PIGPASS";
         case AppMode::BLE:      return "BLE";
         case AppMode::IR:       return "IR";
+        case AppMode::SPECTRUM: return "SPEC";
+        case AppMode::USBSD:    return "USB";
         default:                return "?";
     }
 }
@@ -53,6 +57,8 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::PIGPASS && PigpassMode::isRunning()) PigpassMode::stop();
     if (s_mode == AppMode::BLE && BlePigMode::isRunning()) BlePigMode::stop();
     if (s_mode == AppMode::IR && IrPortMode::isRunning()) IrPortMode::stop();
+    if (s_mode == AppMode::SPECTRUM && SpectrumMode::isRunning()) SpectrumMode::stop();
+    if (s_mode == AppMode::USBSD && UsbSdMode::isRunning()) UsbSdMode::stop();
     s_mode = m;
     Menu::onEnter(m);
     if (m == AppMode::LOOT) LootMenu::show();
@@ -60,6 +66,8 @@ void setMode(AppMode m) {
     if (m == AppMode::PIGPASS) PigpassMode::start();
     if (m == AppMode::BLE) BlePigMode::start();
     if (m == AppMode::IR) IrPortMode::start();
+    if (m == AppMode::SPECTRUM) SpectrumMode::start();
+    if (m == AppMode::USBSD) UsbSdMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -144,6 +152,12 @@ void loop() {
     } else if (s_mode == AppMode::IR) {
         IrPortMode::update();
         if (!IrPortMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::SPECTRUM) {
+        SpectrumMode::update();
+        if (!SpectrumMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::USBSD) {
+        UsbSdMode::update();
+        if (!UsbSdMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -159,6 +173,8 @@ void loop() {
     if (s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
         s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
         s_mode == AppMode::IR ||
+        s_mode == AppMode::SPECTRUM ||
+        s_mode == AppMode::USBSD ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI) return;
 

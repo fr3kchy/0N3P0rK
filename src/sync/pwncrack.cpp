@@ -5,8 +5,10 @@
 #include "../cap/capture_name.h"
 #include "pot_parse.h"
 #include "../net/ap_sta.h"
+#include "net_io.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <SD.h>
 #include <ctype.h>
 #include <string.h>
@@ -88,7 +90,7 @@ bool Pwncrack::hasApiKey() {
 bool Pwncrack::canSync() {
     uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     uint32_t freeH = ESP.getFreeHeap();
-    if (largest < 8000 || freeH < 16000) {
+    if (largest < 16000 || freeH < 28000) {
         snprintf(lastError, sizeof(lastError), "low heap %u/%uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;
@@ -98,10 +100,9 @@ bool Pwncrack::canSync() {
 }
 
 void Pwncrack::freeCacheMemory() {
+    // Never shrink_to_fit — failed realloc on ESP32 is a hard reboot.
     crackedCache.clear();
-    crackedCache.shrink_to_fit();
     uploadedCache.clear();
-    uploadedCache.shrink_to_fit();
     cacheLoaded = false;
 }
 
@@ -307,23 +308,41 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     snprintf(fileTail, sizeof(fileTail), "\r\n--%s--\r\n", boundary);
     size_t contentLength = strlen(keyPart) + strlen(fileHead) + fileSize + strlen(fileTail);
 
-    WiFiClient client;
-    client.setTimeout(15000);
-    if (!client.connect(PWN_HOST, 80, 8000)) {
+    static bool s_forceHttps = false;
+    WiFiClientSecure tls;
+    WiFiClient plain;
+    bool useTls = false;
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, s_forceHttps)) {
         capFile.close();
         snprintf(lastError, sizeof(lastError), "connect fail");
         return false;
     }
+    Serial.printf("[PWNCRACK] via %s\n", useTls ? "HTTPS" : "HTTP");
 
-    char hdr[280];
+    auto sendAll = [&](const uint8_t* data, size_t n) -> bool {
+        size_t off = 0;
+        while (off < n) {
+            size_t w = useTls ? tls.write(data + off, n - off) : plain.write(data + off, n - off);
+            if (w == 0) return false;
+            off += w;
+            yield();
+        }
+        return true;
+    };
+    auto sendStr = [&](const char* s) -> bool {
+        return sendAll(reinterpret_cast<const uint8_t*>(s), strlen(s));
+    };
+
+    char hdr[320];
     snprintf(hdr, sizeof(hdr),
              "POST %s HTTP/1.1\r\nHost: %s\r\n"
+             "User-Agent: 0N3P0rK/0.1\r\n"
              "Content-Type: multipart/form-data; boundary=%s\r\n"
              "Content-Length: %u\r\nConnection: close\r\n\r\n",
              PWN_UPLOAD_PATH, PWN_HOST, boundary, (unsigned)contentLength);
-    if (!writeStr(client, hdr) || !writeStr(client, keyPart) || !writeStr(client, fileHead)) {
+    if (!sendStr(hdr) || !sendStr(keyPart) || !sendStr(fileHead)) {
         capFile.close();
-        client.stop();
+        if (useTls) tls.stop(); else plain.stop();
         snprintf(lastError, sizeof(lastError), "send hdr");
         return false;
     }
@@ -334,9 +353,9 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         size_t chunk = left > sizeof(buf) ? sizeof(buf) : left;
         size_t rd = capFile.read(buf, chunk);
         if (rd == 0) break;
-        if (!writeAll(client, buf, rd)) {
+        if (!sendAll(buf, rd)) {
             capFile.close();
-            client.stop();
+            if (useTls) tls.stop(); else plain.stop();
             snprintf(lastError, sizeof(lastError), "send body");
             return false;
         }
@@ -344,8 +363,8 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         yield();
     }
     capFile.close();
-    if (!writeStr(client, fileTail)) {
-        client.stop();
+    if (!sendStr(fileTail)) {
+        if (useTls) tls.stop(); else plain.stop();
         snprintf(lastError, sizeof(lastError), "send tail");
         return false;
     }
@@ -354,21 +373,30 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     char status[80] = {0};
     size_t si = 0;
     while (millis() - t0 < 20000) {
-        if (!client.available()) {
-            if (!client.connected() && si > 0) break;
+        int avail = useTls ? tls.available() : plain.available();
+        if (avail <= 0) {
+            if ((useTls && !tls.connected()) || (!useTls && !plain.connected())) break;
             delay(10);
             yield();
             continue;
         }
-        char ch = (char)client.read();
+        char ch = useTls ? (char)tls.read() : (char)plain.read();
         if (ch == '\n') break;
         if (ch != '\r' && si + 1 < sizeof(status)) status[si++] = ch;
     }
     status[si] = '\0';
-    client.stop();
+    if (useTls) tls.stop(); else plain.stop();
     Serial.printf("[PWNCRACK] %s\n", status);
 
-    bool ok = strstr(status, "200") || strstr(status, "201") || strstr(status, "409");
+    if (ioHttpRedirect(status) && !useTls && !s_forceHttps) {
+        Serial.println("[PWNCRACK] HTTP redirected, retry HTTPS");
+        s_forceHttps = true;
+        bool again = uploadFile(filepath, apiKey);
+        s_forceHttps = false;
+        return again;
+    }
+
+    bool ok = ioHttpOk(status);
     if (!ok) {
         if (strstr(status, "401") || strstr(status, "403")) {
             snprintf(lastError, sizeof(lastError), "bad key");
@@ -389,21 +417,30 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     newCracks = 0;
     if (!apiKey) return false;
 
-    WiFiClient client;
-    client.setTimeout(15000);
-    if (!client.connect(PWN_HOST, 80, 8000)) {
+    WiFiClientSecure tls;
+    WiFiClient plain;
+    bool useTls = false;
+    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST)) {
         snprintf(lastError, sizeof(lastError), "pot connect");
         return false;
     }
 
-    char req[256];
+    char req[280];
     snprintf(req, sizeof(req),
-             "GET %s?key=%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
+             "GET %s?key=%s HTTP/1.1\r\nHost: %s\r\n"
+             "User-Agent: 0N3P0rK/0.1\r\nConnection: close\r\n\r\n",
              PWN_POTFILE_PATH, apiKey, PWN_HOST);
-    if (!writeStr(client, req)) {
-        client.stop();
-        snprintf(lastError, sizeof(lastError), "pot send");
-        return false;
+    size_t reqN = strlen(req);
+    size_t off = 0;
+    while (off < reqN) {
+        size_t w = useTls ? tls.write((const uint8_t*)req + off, reqN - off)
+                          : plain.write((const uint8_t*)req + off, reqN - off);
+        if (w == 0) {
+            if (useTls) tls.stop(); else plain.stop();
+            snprintf(lastError, sizeof(lastError), "pot send");
+            return false;
+        }
+        off += w;
     }
 
     bool headersDone = false;
@@ -416,20 +453,23 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     Storage::ensureDir(Storage::DIR_PWNCRACK);
     File out = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
     if (!out) {
-        client.stop();
+        if (useTls) tls.stop(); else plain.stop();
         snprintf(lastError, sizeof(lastError), "pot save");
         return false;
     }
 
     size_t body = 0;
     while (millis() - t0 < 25000) {
-        if (!client.available()) {
-            if (!client.connected() && headersDone) break;
+        int avail = useTls ? tls.available() : plain.available();
+        if (avail <= 0) {
+            if (headersDone &&
+                ((useTls && !tls.connected()) || (!useTls && !plain.connected())))
+                break;
             delay(5);
             yield();
             continue;
         }
-        int ch = client.read();
+        int ch = useTls ? tls.read() : plain.read();
         if (ch < 0) continue;
         if (!headersDone) {
             if (ch == '\n') {
@@ -451,7 +491,7 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
         }
     }
     out.close();
-    client.stop();
+    if (useTls) tls.stop(); else plain.stop();
 
     if (!headersDone || !statusOk) {
         snprintf(lastError, sizeof(lastError), "pot http");
@@ -477,6 +517,7 @@ struct PwnScanCtx {
     uint8_t count;
     uint8_t skipped;
 };
+static PwnScanCtx s_pwnScan;
 
 static bool isHashName(const char* name) {
     size_t n = strlen(name);
@@ -494,7 +535,7 @@ static void pwnCollect(const char* name, size_t size, void* raw) {
         return;
     }
     snprintf(ctx->items[ctx->count].path, sizeof(ctx->items[0].path),
-             "%s/%s", Storage::DIR_PWNCRACK, name);
+             "%s/%s", Storage::DIR_HS, name);
     strncpy(ctx->items[ctx->count].id, name, sizeof(ctx->items[0].id) - 1);
     ctx->count++;
 }
@@ -527,29 +568,29 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
 
     if (cb) cb("Converting", 0, 1);
     uint16_t conv = Hc22000::convertAllPcaps();
-    Storage::compactLoot();
     Serial.printf("[PWNCRACK] converted %u pcap->22000\n", (unsigned)conv);
+    Storage::brewHeap();
 
     loadCache();
-    PwnScanCtx scan{};
-    Storage::forEachPwn(pwnCollect, &scan);
-    result.skipped = scan.skipped;
+    memset(&s_pwnScan, 0, sizeof(s_pwnScan));
+    Storage::forEachPwn(pwnCollect, &s_pwnScan);
+    result.skipped = s_pwnScan.skipped;
 
-    if (cb) cb("Uploading", 0, scan.count);
-    for (uint8_t i = 0; i < scan.count; i++) {
-        if (cb) cb("Uploading", i + 1, scan.count);
-        if (uploadFile(scan.items[i].path, apiKey)) {
-            markAsUploaded(scan.items[i].id);
+    if (cb) cb("Uploading", 0, s_pwnScan.count);
+    for (uint8_t i = 0; i < s_pwnScan.count; i++) {
+        if (cb) cb("Uploading", i + 1, s_pwnScan.count);
+        if (uploadFile(s_pwnScan.items[i].path, apiKey)) {
+            markAsUploaded(s_pwnScan.items[i].id);
             result.uploaded++;
         } else {
             result.failed++;
         }
-        delay(50);
+        delay(80);
         yield();
     }
     if (result.uploaded > 0) saveUploadedList();
 
-    if (cb) cb("Potfile", scan.count, scan.count);
+    if (cb) cb("Potfile", s_pwnScan.count, s_pwnScan.count);
     uint16_t newCracks = 0;
     bool potOk = downloadPotfile(apiKey, newCracks);
     if (potOk) {

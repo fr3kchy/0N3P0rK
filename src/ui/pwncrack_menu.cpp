@@ -67,23 +67,11 @@ static bool endsWith(const char* name, const char* suf) {
 }
 
 static bool connectHome() {
-    if (!Net::hasStaCreds()) return false;
-    const Net::Cfg& c = Net::cfg();
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-    WiFi.begin(c.staSsid, c.staPass);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-        delay(200);
-        yield();
-    }
-    return WiFi.status() == WL_CONNECTED;
+    return Net::joinHome(22000);
 }
 
 static void dropWifi() {
-    WiFi.disconnect(true, false);
-    delay(50);
-    WiFi.mode(WIFI_OFF);
+    Net::leaveHome();
 }
 
 void PwncrackMenu::scan() {
@@ -92,7 +80,7 @@ void PwncrackMenu::scan() {
     scroll = 0;
     if (!Storage::available()) return;
     Pwncrack::loadCache();
-    File root = SD.open(Storage::DIR_PWNCRACK);
+    File root = SD.open(Storage::DIR_HS);
     if (!root || !root.isDirectory()) {
         if (root) root.close();
         return;
@@ -201,6 +189,7 @@ void PwncrackMenu::startSync() {
 
     strncpy(syncText, "UPLOADING...", sizeof(syncText) - 1);
     Display::update();
+    Storage::brewHeap();
     PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey);
     dropWifi();
     Avatar::resumeScene();
