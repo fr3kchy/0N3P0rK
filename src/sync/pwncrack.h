@@ -25,7 +25,6 @@ public:
     static bool hasApiKey(const char* key);
     static bool canSync();
     static PwncrackSyncResult syncCaptures(const char* apiKey, PwncrackProgressCallback cb = nullptr);
-    static bool pullPotfile(const char* apiKey, uint16_t& lines);
 
     static bool loadCache();
     static void freeCacheMemory();

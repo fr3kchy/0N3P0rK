@@ -636,19 +636,3 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
                   result.uploaded, result.failed, result.skipped, result.cracked);
     return result;
 }
-
-bool Pwncrack::pullPotfile(const char* apiKey, uint16_t& lines) {
-    lines = 0;
-    if (!hasApiKey(apiKey)) {
-        strncpy(lastError, "invalid API key", sizeof(lastError) - 1);
-        return false;
-    }
-    uint16_t n = 0;
-    bool ok = downloadPotfile(apiKey, n);
-    if (ok) {
-        cacheLoaded = false;
-        loadCache();
-        lines = getCrackedCount();
-    }
-    return ok;
-}

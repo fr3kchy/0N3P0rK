@@ -51,7 +51,6 @@ static uint8_t s_diagN = 0;
 static const uint8_t VISIBLE = 4;
 enum class SyncGo : uint8_t { Off, Wifi, Work };
 static SyncGo s_syncGo = SyncGo::Off;
-static bool s_pullOnly = false;
 
 static bool endsWith(const char* name, const char* suf) {
     size_t n = strlen(name), s = strlen(suf);
@@ -257,7 +256,7 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    return "S SYNC  D GET  T TEST  ,/ TAB";
+    return "S SYNC  T TEST  ,/ TAB";
 }
 
 static void paintLoot() {
@@ -427,37 +426,7 @@ void LootMenu::startSync() {
         return;
     }
     syncModal = true;
-    s_pullOnly = false;
     strncpy(s_syncText, "CONNECTING...", sizeof(s_syncText) - 1);
-    Avatar::suspendScene();
-    SFX::stop();
-    WPASec::freeCacheMemory();
-    Pwncrack::freeCacheMemory();
-    s_syncGo = SyncGo::Wifi;
-}
-
-void LootMenu::startPull() {
-    if (Cap::isRunning()) Cap::stop();
-    if (!Storage::available()) {
-        Display::showToast("NO SD", 1500);
-        return;
-    }
-    Storage::loadKeysIntoNet();
-    if (tab == Tab::WPASEC && !WPASec::hasApiKey()) {
-        Display::showToast("NO WPA KEY", 1500);
-        return;
-    }
-    if (tab == Tab::PWNCRACK && !Pwncrack::hasApiKey()) {
-        Display::showToast("NO PWN KEY", 1500);
-        return;
-    }
-    if (!Net::hasStaCreds()) {
-        Display::showToast("SET HOME WIFI", 1500);
-        return;
-    }
-    syncModal = true;
-    s_pullOnly = true;
-    strncpy(s_syncText, "GET RESULTS...", sizeof(s_syncText) - 1);
     Avatar::suspendScene();
     SFX::stop();
     WPASec::freeCacheMemory();
@@ -513,7 +482,6 @@ void LootMenu::handleInput() {
     }
     if (M5Cardputer.Keyboard.keysState().enter && count) detailView = true;
     if (M5Cardputer.Keyboard.isKeyPressed('s') || M5Cardputer.Keyboard.isKeyPressed('S')) startSync();
-    if (M5Cardputer.Keyboard.isKeyPressed('d') || M5Cardputer.Keyboard.isKeyPressed('D')) startPull();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
 }
 
@@ -543,16 +511,7 @@ void LootMenu::update() {
         };
         Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
         Storage::brewHeap();
-        if (s_pullOnly) {
-            uint16_t n = 0;
-            bool ok = false;
-            if (tab == Tab::WPASEC)
-                ok = WPASec::pullPotfile(Net::cfg().wpaSecKey, n);
-            else
-                ok = Pwncrack::pullPotfile(Net::cfg().pwncrackKey, n);
-            if (ok) snprintf(s_syncText, sizeof(s_syncText), "GOT %u CRACKS", (unsigned)n);
-            else snprintf(s_syncText, sizeof(s_syncText), "GET FAIL");
-        } else if (tab == Tab::WPASEC) {
+        if (tab == Tab::WPASEC) {
             WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
             if (r.success)
                 snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
