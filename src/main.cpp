@@ -13,6 +13,7 @@
 #include "piglet/mood.h"
 #include "audio/sfx.h"
 #include "storage/littlefs_ops.h"
+#include "board/board.h"
 #include "net/ap_sta.h"
 #include "cap/sniffer.h"
 #include "modes/evilpig.h"
@@ -46,10 +47,6 @@ void setup() {
     Serial.println();
     Serial.printf(">>> %s v%s build=%s\n", ON3PORK_NAME, ON3PORK_VERSION, ON3PORK_BUILD);
 
-    // CapLoRa CS high so a shared SPI bus cannot steal the SD lines
-    pinMode(5, OUTPUT);
-    digitalWrite(5, HIGH);
-
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
     pinMode(0, INPUT_PULLUP);
@@ -60,6 +57,8 @@ void setup() {
     if (!Storage::begin()) {
         Serial.println("[BOOT] LittleFS failed - continuing");
     }
+    Board::startKeyboard();
+    Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
 
     Config::init();
     M5.Display.setBrightness(Config::personality().brightness * 255 / 100);

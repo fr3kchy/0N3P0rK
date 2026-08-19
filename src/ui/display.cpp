@@ -21,6 +21,7 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../build_info.h"
+#include "../board/board.h"
 #include <M5Cardputer.h>
 #include <string.h>
 #include <stdio.h>
@@ -116,7 +117,7 @@ void Display::showBootSplash() {
     M5.Display.setTextColor(UiStyle::TEXT);
     M5.Display.drawString(Config::personality().name, DISPLAY_W / 2, 78);
     M5.Display.setTextColor(UiStyle::DIM);
-    M5.Display.drawString("tamagotchi + barn", DISPLAY_W / 2, 98);
+    M5.Display.drawString(Board::modelLabel(), DISPLAY_W / 2, 98);
     M5.Display.setTextDatum(TL_DATUM);
     delay(900);
 }

@@ -19,6 +19,11 @@ namespace Board {
 
 const char* name();
 const char* chip();
+// Runtime: "Cardputer" or "Cardputer ADV"
+const char* modelLabel();
+bool isAdv();
+// Pick IO-matrix or TCA8418 after M5 + SD (Launcher can leave pins dirty).
+void startKeyboard();
 uint8_t defaultButtonGpio();
 bool gpioAllowed(int gpio);
 uint32_t flashBytes();

@@ -93,8 +93,6 @@ bool begin() {
         return true;
     }
 
-    pinMode(5, OUTPUT);
-    digitalWrite(5, HIGH);
     prepareBus();
 
     const uint32_t speeds[] = {25000000, 20000000, 10000000, 8000000, 4000000, 1000000};
