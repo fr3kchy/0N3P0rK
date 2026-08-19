@@ -18,13 +18,15 @@ struct Hs {
     uint8_t sta[6];
     uint8_t essid[32];
     uint8_t essidLen;
-    uint8_t anonce[32];
+    uint8_t anonce[32];     // from M1
+    uint8_t anonce3[32];    // from M3 (M2+M3 fallback)
     uint8_t pmkid[16];
     uint8_t m2[MAX_EAPOL];
     uint16_t m2Len;
     bool used;
     bool haveEssid;
     bool haveAnonce;
+    bool haveAnonce3;
     bool havePmkid;
     bool haveM2;
     bool wrotePmkid;
@@ -126,24 +128,35 @@ static void maybeWrite(Hs* h) {
     hexEnc(h->sta, 6, sta);
     hexEnc(h->essid, h->essidLen, ess);
 
-    // Prefer one file per BSSID: handshake first, PMKID only if no HS.
-    if (h->haveAnonce && h->haveM2 && !h->wroteEapol && h->m2Len >= 97) {
-        uint16_t eapolLen = (uint16_t)((h->m2[2] << 8) | h->m2[3]);
-        eapolLen = (uint16_t)(eapolLen + 4);
-        if (eapolLen > h->m2Len) eapolLen = h->m2Len;
-        if (eapolLen >= 97 && eapolLen <= MAX_EAPOL) {
-            uint8_t eapol[MAX_EAPOL];
-            memcpy(eapol, h->m2, eapolLen);
-            memset(eapol + 81, 0, 16);
-            char mic[33], an[65];
-            hexEnc(h->m2 + 81, 16, mic);
-            hexEnc(h->anonce, 32, an);
-            char ehex[MAX_EAPOL * 2 + 1];
-            hexEnc(eapol, eapolLen, ehex);
-            char line[768];
-            snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*00",
-                     mic, ap, sta, ess, an, ehex);
-            if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
+    // Same pairs as M5PORKCHOP: M1+M2 (00) or M2+M3 (02).
+    if (!h->wroteEapol && h->haveM2 && h->m2Len >= 97) {
+        uint8_t pair = 0xFF;
+        const uint8_t* nonce = nullptr;
+        if (h->haveAnonce) {
+            pair = 0x00;
+            nonce = h->anonce;
+        } else if (h->haveAnonce3) {
+            pair = 0x02;
+            nonce = h->anonce3;
+        }
+        if (nonce) {
+            uint16_t eapolLen = (uint16_t)((h->m2[2] << 8) | h->m2[3]);
+            eapolLen = (uint16_t)(eapolLen + 4);
+            if (eapolLen > h->m2Len) eapolLen = h->m2Len;
+            if (eapolLen >= 97 && eapolLen <= MAX_EAPOL) {
+                uint8_t eapol[MAX_EAPOL];
+                memcpy(eapol, h->m2, eapolLen);
+                memset(eapol + 81, 0, 16);
+                char mic[33], an[65];
+                hexEnc(h->m2 + 81, 16, mic);
+                hexEnc(nonce, 32, an);
+                char ehex[MAX_EAPOL * 2 + 1];
+                hexEnc(eapol, eapolLen, ehex);
+                char line[768];
+                snprintf(line, sizeof(line), "WPA*02*%s*%s*%s*%s*%s*%s*%02x",
+                         mic, ap, sta, ess, an, ehex, (unsigned)pair);
+                if (writeLine(h, "_hs.22000", line)) h->wroteEapol = true;
+            }
         }
     }
     if (!h->wroteEapol && h->havePmkid && !h->wrotePmkid) {
@@ -253,18 +266,23 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     Hs* h = slotFor(bssid);
     memcpy(h->sta, sta, 6);
 
+    // First copy of each message wins — retransmit can change nonce/MIC.
     if (msg == 1) {
-        memcpy(h->anonce, e + 17, 32);
-        h->haveAnonce = true;
+        if (!h->haveAnonce) {
+            memcpy(h->anonce, e + 17, 32);
+            h->haveAnonce = true;
+        }
         s_lastM1Ms = millis();
         uint8_t pmk[16];
         if (findPmkidKde(e, total, pmk)) {
             memcpy(h->pmkid, pmk, 16);
             h->havePmkid = true;
         }
-    } else if (msg == 3 && !h->haveAnonce) {
-        memcpy(h->anonce, e + 17, 32);
-        h->haveAnonce = true;
+    } else if (msg == 3) {
+        if (!h->haveAnonce3) {
+            memcpy(h->anonce3, e + 17, 32);
+            h->haveAnonce3 = true;
+        }
     } else if (msg == 2 && !h->haveM2) {
         memcpy(h->m2, e, total);
         h->m2Len = total;

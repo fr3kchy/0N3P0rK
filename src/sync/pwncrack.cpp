@@ -459,6 +459,8 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     }
 
     size_t body = 0;
+    bool looksHtml = false;
+    bool firstNonWs = false;
     while (millis() - t0 < 25000) {
         int avail = useTls ? tls.available() : plain.available();
         if (avail <= 0) {
@@ -485,6 +487,17 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
                 line[li++] = (char)ch;
             }
         } else if (statusOk) {
+            // pwncrack.org /download_potfile_script serves an HTML page
+            // when the key is bad or the session is wrong. Sniff the first
+            // non-whitespace byte: a real potfile starts with "WPA*01*" /
+            // hex BSSID, never with '<'.
+            if (!firstNonWs && body < 64) {
+                if (ch == '<') {
+                    looksHtml = true;
+                } else if (ch != '\r' && ch != '\n' && ch != ' ' && ch != '\t') {
+                    firstNonWs = true;
+                }
+            }
             out.write((uint8_t)ch);
             body++;
             if (body > 80000) break;
@@ -495,6 +508,18 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
 
     if (!headersDone || !statusOk) {
         snprintf(lastError, sizeof(lastError), "pot http");
+        return false;
+    }
+
+    // Reject HTML responses — the site returned an error/login page, not
+    // a potfile. Keep the previous results.txt intact.
+    if (looksHtml || body < 4) {
+        // rewind the file we just wrote by truncating it to 0
+        File trunc = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
+        if (trunc) trunc.close();
+        snprintf(lastError, sizeof(lastError), looksHtml ? "pot html" : "pot empty");
+        Serial.printf("[PWNCRACK] pot rejected: %s (body=%u)\n",
+                      lastError, (unsigned)body);
         return false;
     }
 

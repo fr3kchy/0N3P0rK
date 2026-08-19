@@ -201,14 +201,24 @@ static const char* groupName(GroupId g) {
 static void doAction(uint8_t id) {
     switch (id) {
         case 1:
-            Cap::startLight();
-            App::setMode(AppMode::FARM);
-            Display::showToast("LIGHT", 900);
+            if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Light) {
+                Cap::stop();
+                Display::showToast("LIGHT OFF", 900);
+            } else {
+                Cap::startLight();
+                App::setMode(AppMode::FARM);
+                Display::showToast("LIGHT", 900);
+            }
             break;
         case 2:
-            Cap::startAggressive();
-            App::setMode(AppMode::FARM);
-            Display::showToast("AGGRO", 900);
+            if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Aggressive) {
+                Cap::stop();
+                Display::showToast("AGGRO OFF", 900);
+            } else {
+                Cap::startAggressive();
+                App::setMode(AppMode::FARM);
+                Display::showToast("AGGRO", 900);
+            }
             break;
         case 3:
             Cap::stop();

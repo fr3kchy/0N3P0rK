@@ -4,6 +4,7 @@
 #include "pwncrack.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
+#include <WiFi.h>
 #include <string.h>
 
 namespace SyncManager {
@@ -73,6 +74,11 @@ void start(SyncTarget target, const char* apiKey) {
     if (Net::staLinked()) {
         enterPhase(PHASE_UPLOADING, SYNC_UPLOADING, "Uploading...", 40, 180000);
     } else if (Net::cfg().mode == Net::Mode::APSTA) {
+        // AP+STA already on, just wait for the link to come up.
+        // Some firmwares need an explicit WiFi.begin() after mode switch.
+        if (Net::cfg().staSsid[0]) {
+            WiFi.begin(Net::cfg().staSsid, Net::cfg().staPass);
+        }
         enterPhase(PHASE_WAITING_FOR_CONNECTION, SYNC_CONNECTING,
                    "Waiting for WiFi...", 20, 45000);
     } else {
@@ -106,6 +112,24 @@ SyncState getStatus() {
 }
 
 static void runUpload() {
+    // One last safety net: if we got here without a real STA link, try
+    // joinHome() once before paying the TLS cost.
+    if (!Net::staLinked() && Net::hasStaCreds()) {
+        Serial.println("[SYNC] pre-upload: STA not linked, trying joinHome()");
+        if (!Net::joinHome(15000)) {
+            setMessage("WiFi connect failed");
+            enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 100, 0);
+            s_state.running = false;
+            return;
+        }
+    }
+    if (!Net::staLinked()) {
+        setMessage("No WiFi link");
+        enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 100, 0);
+        s_state.running = false;
+        return;
+    }
+
     bool ok = false;
     char msg[128];
     msg[0] = '\0';
@@ -165,18 +189,36 @@ void loop() {
     Net::Status wifi = Net::status();
 
     switch (s_state.phase) {
-        case PHASE_SWITCHING_TO_STA:
+        case PHASE_SWITCHING_TO_STA: {
+            // OnePork's recipe: switch to APSTA first, give the link 5s.
+            // If that fails, fall back to joinHome() which drops the AP
+            // and goes pure STA. AP-only is never useful for sync.
             if (wifi.mode == Net::Mode::APSTA) {
                 enterPhase(PHASE_WAITING_FOR_CONNECTION, SYNC_CONNECTING,
                            "Waiting for WiFi...", 20, 45000);
-            } else if (!s_state.staSwitchSent) {
+                break;
+            }
+            if (!s_state.staSwitchSent) {
                 if (now - s_state.lastStateChange < 400) break;
-                if (!Net::setMode(Net::Mode::APSTA)) {
+                if (Net::setMode(Net::Mode::APSTA)) {
+                    s_state.staSwitchSent = true;
+                    s_state.lastStateChange = now;
+                } else {
                     setMessage("AP+STA switch failed");
                     enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 0, 0);
                     s_state.running = false;
+                }
+            } else if (now - s_state.lastStateChange > 5000 &&
+                       !Net::staLinked()) {
+                // APSTA path didn't link in 5s — drop the AP and go pure STA.
+                Serial.println("[SYNC] APSTA link slow, falling back to joinHome()");
+                if (Net::joinHome(15000)) {
+                    enterPhase(PHASE_UPLOADING, SYNC_UPLOADING,
+                               "Uploading...", 40, 180000);
                 } else {
-                    s_state.staSwitchSent = true;
+                    setMessage("WiFi connect failed");
+                    enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 0, 0);
+                    s_state.running = false;
                 }
             } else if (now > s_state.timeout) {
                 setMessage("WiFi switch timeout");
@@ -184,10 +226,23 @@ void loop() {
                 s_state.running = false;
             }
             break;
+        }
 
         case PHASE_WAITING_FOR_CONNECTION:
             if (Net::staLinked()) {
                 enterPhase(PHASE_UPLOADING, SYNC_UPLOADING, "Uploading...", 40, 180000);
+            } else if (now - s_state.lastStateChange > 12000 &&
+                       !Net::staLinked()) {
+                // 12s of APSTA waiting is plenty. Drop AP and join pure STA.
+                Serial.println("[SYNC] APSTA wait long, falling back to joinHome()");
+                if (Net::joinHome(15000)) {
+                    enterPhase(PHASE_UPLOADING, SYNC_UPLOADING,
+                               "Uploading...", 40, 180000);
+                } else {
+                    setMessage("WiFi connect failed");
+                    enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 0, 0);
+                    s_state.running = false;
+                }
             } else if (now > s_state.timeout) {
                 setMessage("WiFi connect timeout");
                 enterPhase(PHASE_DONE, SYNC_DONE_FAILURE, nullptr, 0, 0);

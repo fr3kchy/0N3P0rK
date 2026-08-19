@@ -404,6 +404,7 @@ void LootMenu::startSync() {
         Display::showToast("NO SD", 1500);
         return;
     }
+    Storage::loadKeysIntoNet();
     if (tab == Tab::WPASEC && !WPASec::hasApiKey()) {
         Display::showToast("NO WPA KEY", 1500);
         return;

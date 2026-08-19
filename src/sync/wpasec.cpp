@@ -1,4 +1,4 @@
-// sync/wpasec.cpp
+﻿// sync/wpasec.cpp
 #include "wpasec.h"
 #include "../storage/littlefs_ops.h"
 #include "../cap/capture_name.h"
@@ -251,7 +251,7 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
         return false;
     }
     size_t fileSize = capFile.size();
-    if (fileSize == 0 || fileSize > 100000) {
+    if (fileSize == 0 || fileSize > 250000) {
         capFile.close();
         snprintf(lastError, sizeof(lastError), "bad size");
         return false;
@@ -413,6 +413,7 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     }
 
     uint16_t lines = 0;
+    bool looksHtml = false;
     while (client.connected() || client.available()) {
         if (!client.available()) {
             if (millis() - t0 > 45000) break;
@@ -424,7 +425,10 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
         if (n == 0) continue;
         line[n] = '\0';
         if (n > 0 && line[n - 1] == '\r') line[n - 1] = '\0';
-        if (line[0] == '<' || strncmp(line, "<!", 2) == 0) continue;
+        if (line[0] == '<' || strncmp(line, "<!", 2) == 0) {
+            looksHtml = true;
+            continue;
+        }
         char bssidP[18], ssid[33], pass[64];
         bool keep = Pot::parseLine(line, bssidP, ssid, pass);
         if (!keep && line[0] && line[0] != '#' && strlen(line) > 8) {
@@ -440,6 +444,16 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     }
     out.close();
     client.stop();
+
+    // Server returned HTML (bad key / login page) — keep the old results.
+    if (looksHtml && lines == 0) {
+        File trunc = SD.open(Storage::FILE_WPASEC_RESULTS, "w");
+        if (trunc) trunc.close();
+        snprintf(lastError, sizeof(lastError), "pot html");
+        Serial.println("[WPASEC] pot rejected: html body");
+        return false;
+    }
+
     newCracks = lines;
     Serial.printf("[WPASEC] potfile %u lines\n", (unsigned)lines);
     lastError[0] = '\0';
@@ -481,10 +495,18 @@ static void wpaIdFromName(const char* name, char bssid[13]) {
     bssid[12] = '\0';
 }
 
+static bool isWpaUploadName(const char* name) {
+    if (isPcapName(name)) return true;
+    size_t n = strlen(name);
+    if (n > 6 && strcasecmp(name + n - 6, ".22000") == 0) return true;
+    if (n > 8 && strcasecmp(name + n - 8, ".hc22000") == 0) return true;
+    return false;
+}
+
 static void wpaCollect(const char* name, size_t size, void* raw) {
     WpaScanCtx* ctx = (WpaScanCtx*)raw;
     if (ctx->count >= WPASEC_MAX_PENDING) return;
-    if (size == 0 || !isPcapName(name)) return;
+    if (size == 0 || !isWpaUploadName(name)) return;
     char bssid[13];
     wpaIdFromName(name, bssid);
     if ((bssid[0] && WPASec::isUploaded(bssid)) || WPASec::isUploaded(name)) {
