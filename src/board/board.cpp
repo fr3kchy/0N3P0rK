@@ -2,10 +2,6 @@
 #include "board.h"
 #include <M5Cardputer.h>
 #include <M5Unified.h>
-#include <driver/gpio.h>
-#include <memory>
-#include "utility/Keyboard/KeyboardReader/IOMatrix.h"
-#include "utility/Keyboard/KeyboardReader/TCA8418.h"
 #include <esp_system.h>
 
 namespace Board {
@@ -51,30 +47,9 @@ uint32_t flashBytes() {
     return (uint32_t)ESP.getFlashChipSize();
 }
 
-static bool gpio89LooksLikeAdv() {
-    pinMode(8, INPUT_PULLDOWN);
-    pinMode(9, INPUT_PULLDOWN);
-    delayMicroseconds(80);
-    bool hi = digitalRead(8) && digitalRead(9);
-    gpio_reset_pin((gpio_num_t)8);
-    gpio_reset_pin((gpio_num_t)9);
-    return hi;
-}
-
 void startKeyboard() {
-    auto b = M5.getBoard();
-    s_adv = (b == m5::board_t::board_M5CardputerADV);
-    if (!s_adv) s_adv = gpio89LooksLikeAdv();
-
-    if (s_adv) {
-        M5Cardputer.Keyboard.begin(
-            std::unique_ptr<KeyboardReader>(new TCA8418KeyboardReader()));
-        Serial.println("[KB] Cardputer ADV TCA8418");
-    } else {
-        M5Cardputer.Keyboard.begin(
-            std::unique_ptr<KeyboardReader>(new IOMatrixKeyboardReader()));
-        Serial.println("[KB] Cardputer IO matrix");
-    }
+    s_adv = (M5.getBoard() == m5::board_t::board_M5CardputerADV);
+    Serial.printf("[KB] %s\n", s_adv ? "ADV" : "Cardputer");
 }
 
 } // namespace Board

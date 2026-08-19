@@ -11,7 +11,6 @@
 namespace Storage {
 
 static bool s_mounted = false;
-static SPIClass s_sdSPI(FSPI);
 static SemaphoreHandle_t s_sdMux = nullptr;
 
 static void lockSd() {
@@ -22,6 +21,9 @@ static void lockSd() {
 static void unlockSd() {
     if (s_sdMux) xSemaphoreGive(s_sdMux);
 }
+
+void sdLock() { lockSd(); }
+void sdUnlock() { unlockSd(); }
 
 static constexpr int SD_CS_PIN   = 12;
 static constexpr int SD_MOSI_PIN = 14;
@@ -82,7 +84,9 @@ static uint16_t listDir(const char* dir, char out[][FILE_NAME_MAX], uint16_t max
 static void prepareBus() {
     pinMode(SD_CS_PIN, OUTPUT);
     digitalWrite(SD_CS_PIN, HIGH);
-    s_sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    // Official Cardputer path: default SPI (SPI2). LCD is SPI3 — do not
+    // make a second SPIClass(FSPI), that fights M5GFX and drops the card.
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
     delay(20);
 }
 
@@ -93,23 +97,30 @@ bool begin() {
         return true;
     }
 
+    delay(40);
     prepareBus();
 
-    const uint32_t speeds[] = {25000000, 20000000, 10000000, 8000000, 4000000, 1000000};
-    for (uint8_t i = 0; i < 6 && !s_mounted; i++) {
+    // 25MHz first-try often false-fails on Cardputer; official example uses
+    // default SPI @ 25MHz. We start at 20 and step down if the card is picky.
+    const uint32_t speeds[] = {20000000, 10000000, 4000000, 1000000};
+    for (uint8_t i = 0; i < 4 && !s_mounted; i++) {
         if (i > 0) {
             SD.end();
             delay(80);
             prepareBus();
         }
-        if (SD.begin(SD_CS_PIN, s_sdSPI, speeds[i])) {
-            Serial.printf("[SD] mounted %luMHz\n", speeds[i] / 1000000UL);
+        if (SD.begin(SD_CS_PIN, SPI, speeds[i]) && SD.cardType() != CARD_NONE) {
+            Serial.printf("[SD] mounted %luMHz type=%u\n",
+                          speeds[i] / 1000000UL, (unsigned)SD.cardType());
             s_mounted = true;
+        } else if (SD.cardType() == CARD_NONE) {
+            SD.end();
         }
     }
 
     if (!s_mounted) {
         Serial.println("[SD] mount failed");
+        digitalWrite(SD_CS_PIN, HIGH);
         unlockSd();
         return false;
     }
@@ -123,6 +134,7 @@ bool begin() {
     SD.mkdir(DIR_PASSWORLD);
     SD.mkdir(DIR_IR);
     SD.mkdir(DIR_WOLF);
+    SD.mkdir(DIR_SHOTS);
     migrateLegacy();
     unlockSd();
     return true;

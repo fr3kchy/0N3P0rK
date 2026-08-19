@@ -2,6 +2,7 @@
 #include "weather.h"
 #include "wolf.h"
 #include "../core/config.h"
+#include "../core/app.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <Preferences.h>
@@ -128,6 +129,7 @@ void Mood::init() {
     }
     lastEffective = happiness;
     say("привет");
+    maybeCureZombie();
     updateAvatarState();
 }
 
@@ -179,6 +181,24 @@ int Mood::addFood(int amount) {
     return gained;
 }
 
+void Mood::maybeCureZombie() {
+    if (life < 5) return;
+    if (Config::personality().pigSkin != (uint8_t)PigSkin::ZOMBIE) return;
+    Config::cureZombie();
+    Display::showToast("PIG AGAIN!", 2000);
+    Display::notify(NoticeKind::REWARD, "P1G AGAIN", 3000, NoticeChannel::TOP_BAR);
+}
+
+void Mood::onZombieApplied() {
+    // Full hearts + zombie = no room to refill. Start the eat-5-hearts curse.
+    if (life >= 5) {
+        life = 0;
+        hunger = 0;
+        saveMood();
+        Display::showToast("ZOMBIE: EAT 5 HEARTS", 1800);
+    }
+}
+
 void Mood::feed() {
     int gained = addFood(30);
     happiness += 6;
@@ -189,12 +209,13 @@ void Mood::feed() {
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
     if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
+    maybeCureZombie();
     saveMood();
     updateAvatarState();
 }
 
 void Mood::eatWorld() {
-    int gained = addFood(20);
+    int gained = addFood(5);
     happiness += 2;
     clampStat(happiness);
     lastActivityTime = millis();
@@ -203,6 +224,7 @@ void Mood::eatWorld() {
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
     if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
+    maybeCureZombie();
     saveMood();
     updateAvatarState();
 }
@@ -261,6 +283,7 @@ void Mood::onIdle() {
 
 void Mood::updateAvatarState() {
     Avatar::setMoodIntensity(happiness - 50);
+    if (Config::personality().animTest && App::mode() == AppMode::FARM) return;
     if (hunger < 22 || happiness < 18) {
         Avatar::setState(AvatarState::SAD);
     } else if (Avatar::isNightTime() && (millis() - lastActivityTime) > 20000) {

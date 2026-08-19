@@ -83,7 +83,7 @@ static const char* const H_USB[] = {
 };
 static const char* const H_KEYS[] = {
     "BIND FARM / MENU SHORTCUTS.",
-    "ENT SET. BS CLEAR. ` BACK."
+    "RADIO R. ENT SET. BS CLEAR."
 };
 static const char* const H_BLE[] = {
     "APPLE / WIN / ANDROID FRAMES.",
@@ -375,7 +375,7 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 }
 
 bool tryHotkey() {
-    static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4 };
+    static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4, 11 };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
         char k = hk.key[i];

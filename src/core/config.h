@@ -48,6 +48,7 @@ struct PersonalityConfig {
     uint16_t dimTimeout = 30;
     uint8_t skyMode = 0;
     uint8_t pigSkin = 0;
+    uint8_t pigSkinAlive = 0;  // last non-zombie skin (restore on 5 hearts)
     uint8_t nightWolfBites = 0;
     bool zombieSkinUnlocked = false;
     uint8_t seasonMode = 0;
@@ -99,11 +100,12 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 8;
-// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT
+static const uint8_t HOTKEY_COUNT = 9;
+// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT RADIO
 struct HotkeyConfig {
-    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h' };
+    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r' };
 };
+static const uint8_t HOTKEY_RADIO = 8;
 
 class Config {
 public:
@@ -120,6 +122,8 @@ public:
 
     static bool isZombieSkinUnlocked();
     static bool registerNightWolfBite();
+    static void becomeZombie();
+    static void cureZombie();
     static bool isSDAvailable();
 
 private:

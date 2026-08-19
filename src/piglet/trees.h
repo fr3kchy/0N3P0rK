@@ -40,8 +40,8 @@ void hideAll();
 void dropFruit();   // fruit tree only (ambient rain)
 bool tryCollectNearbyFruit(int pigCenterX, int pigFeetY, int radius = 18);
 // Idle ambient: random fruit-tree grow/drop + auto-collect near pig.
-// Returns true if a fruit/berry was picked up this call.
-bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX, bool pigOnRight);
+// Returns how many fruit/berries were picked up this call.
+uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX, bool pigOnRight);
 // Airborne stomp near ANY tree/bush; 3 hits collapses. Returns true if hit landed.
 bool tryStompFruitTree(int pigFeetX, bool airborne);
 int16_t getFruitTreeScreenX();  // -1 if none

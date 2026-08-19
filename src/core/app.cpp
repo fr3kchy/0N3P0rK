@@ -12,8 +12,11 @@
 #include "../modes/usbsd.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
+#include "../piglet/wolf.h"
 #include "../audio/sfx.h"
+#include "../core/config.h"
 #include <M5Cardputer.h>
+#include <stdio.h>
 
 namespace App {
 
@@ -88,11 +91,99 @@ void setMode(AppMode m) {
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
+// SETTINGS → ANIM TEST: - previous / = next demo (OnePork lab).
+static void animTestPoll() {
+    if (!Config::personality().animTest) return;
+    static bool minusWas = false;
+    static bool eqWas = false;
+    bool minus = M5Cardputer.Keyboard.isKeyPressed('-') ||
+                 M5Cardputer.Keyboard.isKeyPressed('_');
+    bool eq = M5Cardputer.Keyboard.isKeyPressed('=') ||
+              M5Cardputer.Keyboard.isKeyPressed('+');
+    bool prev = minus && !minusWas;
+    bool next = eq && !eqWas;
+    minusWas = minus;
+    eqWas = eq;
+    if (!prev && !next) return;
+
+    static const char* const kAnimNames[] = {
+        "NEUTRAL", "HAPPY", "EXCITED", "HUNTING", "SLEEPY", "SAD", "ANGRY",
+        "BLINK", "SNIFF", "JUMP", "PERK UP", "FLINCH", "SPIN", "PAW SCRATCH",
+        "TAIL WIGGLE", "SPARKLES", "ATTACK HOP", "WAVE IN", "WAVE OUT",
+        "FACE LEFT", "FACE RIGHT", "TREE ON", "TREE OFF", "WOLF",
+        "SIT", "PLAY DEAD", "STAND",
+    };
+    static const uint8_t kAnimCount =
+        (uint8_t)(sizeof(kAnimNames) / sizeof(kAnimNames[0]));
+    static int8_t s_animIdx = 0;
+    if (next) s_animIdx = (int8_t)((s_animIdx + 1) % kAnimCount);
+    else s_animIdx = (int8_t)((s_animIdx - 1 + kAnimCount) % kAnimCount);
+
+    Avatar::setAttackShake(false, false);
+    Avatar::setThunderFlash(false);
+    Avatar::setMicDance(0.0f);
+    Avatar::waveRipple(WaveMode::NONE, 0);
+
+    switch (s_animIdx) {
+        case 0: Avatar::setState(AvatarState::NEUTRAL); break;
+        case 1: Avatar::setState(AvatarState::HAPPY); break;
+        case 2: Avatar::setState(AvatarState::EXCITED); break;
+        case 3: Avatar::setState(AvatarState::HUNTING); break;
+        case 4: Avatar::setState(AvatarState::SLEEPY); break;
+        case 5: Avatar::setState(AvatarState::SAD); break;
+        case 6: Avatar::setState(AvatarState::ANGRY); break;
+        case 7: Avatar::setState(AvatarState::HAPPY); Avatar::blink(); break;
+        case 8: Avatar::setState(AvatarState::HAPPY); Avatar::sniff(); break;
+        case 9: Avatar::setState(AvatarState::EXCITED); Avatar::cuteJump(); break;
+        case 10: Avatar::setState(AvatarState::HAPPY); Avatar::perkUp(); break;
+        case 11: Avatar::setState(AvatarState::SAD); Avatar::flinch(); break;
+        case 12: Avatar::setState(AvatarState::EXCITED); Avatar::spin(); break;
+        case 13: Avatar::setState(AvatarState::NEUTRAL); Avatar::pawScratch(); break;
+        case 14: Avatar::setState(AvatarState::HAPPY); Avatar::triggerTailWiggle(); break;
+        case 15: Avatar::setState(AvatarState::EXCITED); Avatar::triggerSparkles(8); break;
+        case 16: Avatar::setState(AvatarState::HUNTING); Avatar::attackHop(); break;
+        case 17: Avatar::setState(AvatarState::HUNTING); Avatar::waveRipple(WaveMode::INCOMING, 4); break;
+        case 18: Avatar::setState(AvatarState::ANGRY); Avatar::waveRipple(WaveMode::OUTGOING, 4); break;
+        case 19: Avatar::setState(AvatarState::NEUTRAL); Avatar::setFacingLeft(); break;
+        case 20: Avatar::setState(AvatarState::NEUTRAL); Avatar::setFacingRight(); break;
+        case 21: Avatar::setState(AvatarState::HAPPY); Avatar::showTree(5); break;
+        case 22: Avatar::setState(AvatarState::NEUTRAL); Avatar::hideTree(); break;
+        case 23:
+            Avatar::setPlayDead(false);
+            Avatar::setSitting(false);
+            Avatar::setState(AvatarState::EXCITED);
+            Wolf::spawnNow();
+            break;
+        case 24:
+            Avatar::setPlayDead(false);
+            Avatar::setSitting(true);
+            Avatar::setState(AvatarState::HAPPY);
+            break;
+        case 25:
+            Avatar::setSitting(false);
+            Avatar::setPlayDead(true);
+            break;
+        case 26:
+            Avatar::setSitting(false);
+            Avatar::setPlayDead(false);
+            Avatar::setState(AvatarState::NEUTRAL);
+            break;
+        default: break;
+    }
+
+    char msg[36];
+    snprintf(msg, sizeof(msg), "ANIM %d/%u  %s",
+             (int)(s_animIdx + 1), (unsigned)kAnimCount, kAnimNames[s_animIdx]);
+    Display::showToast(msg, 1200);
+}
+
 // Same idle roam as OnePork:
 //   , left hold    / right hold
 //   ; jump         SPACE attack-hop
 //   . sit hold
+//   ANIM TEST: - previous  = next
 static void farmPoll() {
+    animTestPoll();
     bool left  = M5Cardputer.Keyboard.isKeyPressed(',');
     bool right = M5Cardputer.Keyboard.isKeyPressed('/');
     bool jumpKey = M5Cardputer.Keyboard.isKeyPressed(';');
@@ -151,6 +242,15 @@ void loop() {
     // Any key wakes the dimmed backlight (not only isChange, not only FARM).
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
+
+    // Snap on 0 — edge only, do not call isChange() (that ate menu/hotkeys in 1.4)
+    {
+        static bool snapWas = false;
+        bool snap = M5Cardputer.Keyboard.isKeyPressed('0');
+        if (snap && !snapWas && !SettingsMenu::isTyping() && !Display::isSnapping())
+            Display::takeScreenshot();
+        snapWas = snap;
+    }
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 

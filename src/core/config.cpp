@@ -44,6 +44,7 @@ bool Config::init() {
     p.dimTimeout = s_prefs.getUShort("dimt", p.dimTimeout);
     p.skyMode = s_prefs.getUChar("sky", p.skyMode);
     p.pigSkin = s_prefs.getUChar("skin", p.pigSkin);
+    p.pigSkinAlive = s_prefs.getUChar("skinal", p.pigSkinAlive);
     p.nightWolfBites = s_prefs.getUChar("nwolf", p.nightWolfBites);
     p.zombieSkinUnlocked = s_prefs.getBool("zombie", p.zombieSkinUnlocked);
     p.seasonMode = s_prefs.getUChar("season", p.seasonMode);
@@ -80,15 +81,15 @@ bool Config::init() {
     b.advMs = s_prefs.getUShort("blea", b.advMs);
 
     HotkeyConfig def{};
+    hotkeyConfig = def;
     char raw[HOTKEY_COUNT];
     size_t got = s_prefs.getBytes("hotk", raw, HOTKEY_COUNT);
-    if (got == HOTKEY_COUNT) {
-        for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
+    if (got > 0) {
+        if (got > HOTKEY_COUNT) got = HOTKEY_COUNT;
+        for (size_t i = 0; i < got; i++) {
             char c = normHot(raw[i]);
             hotkeyConfig.key[i] = hotReserved(c) ? 0 : c;
         }
-    } else {
-        hotkeyConfig = def;
     }
 
     if (p.soundLevel > 5) p.soundLevel = 5;
@@ -96,6 +97,9 @@ bool Config::init() {
     if (p.scrollSpeed < 1) p.scrollSpeed = 1;
     if (p.scrollSpeed > 10) p.scrollSpeed = 10;
     if (p.pigSkin >= PIG_SKIN_COUNT) p.pigSkin = 0;
+    if (p.pigSkinAlive >= PIG_SKIN_COUNT ||
+        p.pigSkinAlive == (uint8_t)PigSkin::ZOMBIE)
+        p.pigSkinAlive = 0;
     if (p.seasonMode >= SEASON_MODE_COUNT) p.seasonMode = 0;
     if (p.skyMode >= SKY_MODE_COUNT) p.skyMode = 0;
     if (r.hopMs < 50) r.hopMs = 50;
@@ -134,6 +138,7 @@ bool Config::save() {
     s_prefs.putUShort("dimt", p.dimTimeout);
     s_prefs.putUChar("sky", p.skyMode);
     s_prefs.putUChar("skin", p.pigSkin);
+    s_prefs.putUChar("skinal", p.pigSkinAlive);
     s_prefs.putUChar("nwolf", p.nightWolfBites);
     s_prefs.putBool("zombie", p.zombieSkinUnlocked);
     s_prefs.putUChar("season", p.seasonMode);
@@ -226,11 +231,31 @@ bool Config::registerNightWolfBite() {
     if (personalityConfig.zombieSkinUnlocked) return false;
     if (personalityConfig.nightWolfBites < 255)
         personalityConfig.nightWolfBites++;
-    if (personalityConfig.nightWolfBites >= 3) {
+    if (personalityConfig.nightWolfBites >= 5) {
         personalityConfig.zombieSkinUnlocked = true;
         save();
         return true;
     }
     save();
     return false;
+}
+
+void Config::becomeZombie() {
+    if (personalityConfig.pigSkin != (uint8_t)PigSkin::ZOMBIE) {
+        personalityConfig.pigSkinAlive = personalityConfig.pigSkin;
+        if (personalityConfig.pigSkinAlive == (uint8_t)PigSkin::ZOMBIE ||
+            personalityConfig.pigSkinAlive >= PIG_SKIN_COUNT)
+            personalityConfig.pigSkinAlive = (uint8_t)PigSkin::CLASSIC;
+    }
+    personalityConfig.pigSkin = (uint8_t)PigSkin::ZOMBIE;
+    save();
+}
+
+void Config::cureZombie() {
+    if (personalityConfig.pigSkin != (uint8_t)PigSkin::ZOMBIE) return;
+    uint8_t back = personalityConfig.pigSkinAlive;
+    if (back >= PIG_SKIN_COUNT || back == (uint8_t)PigSkin::ZOMBIE)
+        back = (uint8_t)PigSkin::CLASSIC;
+    personalityConfig.pigSkin = back;
+    save();
 }

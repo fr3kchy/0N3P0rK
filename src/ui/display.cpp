@@ -22,9 +22,13 @@
 #include "../modes/usbsd.h"
 #include "../build_info.h"
 #include "../board/board.h"
+#include "../storage/littlefs_ops.h"
 #include <M5Cardputer.h>
+#include <SD.h>
+#include <Preferences.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 uint16_t getColorFG() {
     if (Weather::getActiveSeason() == Season::RETRO) return 0xE73C;
@@ -71,6 +75,7 @@ char Display::topBarMessage[96] = {0};
 uint32_t Display::topBarMessageStart = 0;
 uint32_t Display::topBarMessageDuration = 0;
 char Display::bottomHint[96] = {0};
+bool Display::snapping = false;
 
 uint8_t* Display::mainCanvasBuffer() { return s_mainCanvasBuf; }
 size_t Display::mainCanvasBufferSize() { return kMainCanvasBytes; }
@@ -302,8 +307,8 @@ void Display::drawFarm() {
     const uint16_t fg = getColorFG();
     const uint16_t bg = getColorBG();
     const bool sceneLive = !Avatar::isSceneSuspended();
-    const bool wolfLive = sceneLive && SceneLayers::wolf &&
-        App::mode() == AppMode::FARM;
+    const bool wolfLive = sceneLive && App::mode() == AppMode::FARM &&
+        (SceneLayers::wolf || Config::personality().animTest);
 
     if (sceneLive) {
         if (SceneLayers::weather) {
@@ -405,13 +410,21 @@ void Display::drawTopBar() {
     topBar.setTextSize(1);
     topBar.setTextDatum(top_left);
 
-    // Hearts left, clock/season center, food % right
+    // Hearts left, clock/season center, [apple][food%] [batt%][snout-batt]
     const int hearts = Mood::getHearts();
     const int food = Mood::getHunger();
     const uint16_t heartOn = 0xF800;
     const uint16_t heartOff = retro ? (uint16_t)0x6B4D : (uint16_t)0x7BEF;
-    const uint16_t appleOn = retro ? (uint16_t)0xC618 : (uint16_t)0xE2C0;
-    const uint16_t stemOn = retro ? (uint16_t)0x8410 : (uint16_t)0x4A00;
+    uint16_t appleOn = 0xE2C0;
+    uint16_t stemOn = 0x4A00;
+    switch (Weather::getActiveSeason()) {
+        case Season::SPRING: appleOn = 0xFDB6; stemOn = 0x07E0; break;
+        case Season::SUMMER: appleOn = 0xE2C0; stemOn = 0x4A00; break;
+        case Season::AUTUMN: appleOn = 0xFD20; stemOn = 0x8200; break;
+        case Season::WINTER: appleOn = 0xC618; stemOn = 0x7BEF; break;
+        case Season::RETRO:  appleOn = 0xC618; stemOn = 0x8410; break;
+    }
+    if (retro) { appleOn = 0xC618; stemOn = 0x8410; }
     auto fat = [&](int px, int py, uint16_t c) {
         topBar.fillRect(px, py, 2, 2, c);
     };
@@ -441,12 +454,48 @@ void Display::drawTopBar() {
     topBar.drawString(sky, DISPLAY_W / 2, 4);
     topBar.setTextDatum(top_left);
 
-    drawApple(DISPLAY_W - 40, appleOn, stemOn);
+    static int battPct = 100;
+    static uint32_t battMs = 0;
+    if (battMs == 0 || (millis() - battMs) > 2000) {
+        battMs = millis();
+        int32_t lv = M5.Power.getBatteryLevel();
+        battPct = (lv < 0) ? 0 : ((lv > 100) ? 100 : (int)lv);
+    }
+    const bool charging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
+    uint16_t battCol = battPct > 40 ? (retro ? (uint16_t)0xC618 : (uint16_t)0x07E0)
+                      : battPct > 15 ? (uint16_t)0xFE60 : (uint16_t)0xF800;
+    if (charging) battCol = retro ? (uint16_t)0xC618 : (uint16_t)0xFD78;
+
     char foodBuf[8];
+    char battBuf[8];
     snprintf(foodBuf, sizeof(foodBuf), "%d%%", food);
+    snprintf(battBuf, sizeof(battBuf), "%d%%", battPct);
+    const int foodW = topBar.textWidth(foodBuf);
+    const int battW = topBar.textWidth(battBuf);
+    const int appleW = 8;
+    const int iconX = DISPLAY_W - 15;
+    const int battPctRight = iconX - 2;
+    const int foodPctRight = battPctRight - battW - 4;
+    const int appleX = foodPctRight - foodW - 2 - appleW;
+
+    drawApple(appleX, appleOn, stemOn);
+
     topBar.setTextDatum(top_right);
-    topBar.drawString(foodBuf, DISPLAY_W - 2, 4);
+    topBar.drawString(foodBuf, foodPctRight, 4);
+    topBar.setTextColor(battCol);
+    topBar.drawString(battBuf, battPctRight, 4);
+    topBar.setTextColor(barFg);
     topBar.setTextDatum(top_left);
+
+    // Snout-battery: body + pig-nose nub
+    topBar.drawRoundRect(iconX, 2, 12, 12, 2, barFg);
+    topBar.fillRect(iconX + 12, 6, 3, 4, barFg);
+    topBar.drawPixel(iconX + 13, 7, charging ? 0xF800 : barBg);
+    topBar.drawPixel(iconX + 13, 9, charging ? 0xF800 : barBg);
+    int fill = (battPct * 8 + 50) / 100;
+    if (fill < 0) fill = 0;
+    if (fill > 8) fill = 8;
+    if (fill) topBar.fillRoundRect(iconX + 2, 4, fill, 8, 1, battCol);
 }
 
 void Display::drawBottomBar() {
@@ -606,6 +655,74 @@ void Display::pushAll() {
     topBar.pushSprite(ox, oy);
     mainCanvas.pushSprite(ox, TOP_BAR_H + oy);
     bottomBar.pushSprite(ox, TOP_BAR_H + MAIN_H + oy);
+}
+
+static uint16_t nextShotNumber() {
+    Preferences p;
+    if (!p.begin("shots", false)) return (uint16_t)((millis() % 900) + 1);
+    uint16_t n = p.getUShort("n", 0);
+    n++;
+    if (n > 999) n = 1;
+    p.putUShort("n", n);
+    p.end();
+    return n;
+}
+
+bool Display::takeScreenshot() {
+    if (snapping) return false;
+    if (!Storage::available()) {
+        setTopBarMessage("NO SD CARD", 2000);
+        return false;
+    }
+    snapping = true;
+    pushAll();
+    Storage::sdLock();
+    Storage::ensureDir(Storage::DIR_SHOTS);
+    uint16_t num = nextShotNumber();
+    char path[64];
+    snprintf(path, sizeof(path), "%s/screenshot%03d.bmp", Storage::DIR_SHOTS, num);
+    File file = SD.open(path, FILE_WRITE);
+    if (!file) {
+        Storage::sdUnlock();
+        setTopBarMessage("SD WRITE FAILED", 2500);
+        snapping = false;
+        return false;
+    }
+    const int w = DISPLAY_W;
+    const int h = DISPLAY_H;
+    const uint32_t pad = (4 - (3 * w) % 4) % 4;
+    const uint32_t filesize = 54 + (3 * w + pad) * h;
+    uint8_t header[54] = {
+        'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0,
+        40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 24, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    for (uint32_t i = 0; i < 4; i++) {
+        header[2 + i] = (uint8_t)((filesize >> (8 * i)) & 0xFF);
+        header[18 + i] = (uint8_t)((w >> (8 * i)) & 0xFF);
+        header[22 + i] = (uint8_t)((h >> (8 * i)) & 0xFF);
+    }
+    file.write(header, 54);
+    uint8_t line[DISPLAY_W * 3 + 4];
+    memset(line + w * 3, 0, pad);
+    for (int y = h - 1; y >= 0; y--) {
+        M5.Display.readRectRGB(0, y, w, 1, line);
+        for (int x = 0; x < w; x++) {
+            uint8_t t = line[x * 3];
+            line[x * 3] = line[x * 3 + 2];
+            line[x * 3 + 2] = t;
+        }
+        file.write(line, w * 3 + pad);
+        if ((y & 15) == 0) yield();
+    }
+    file.close();
+    Storage::sdUnlock();
+    char msg[28];
+    snprintf(msg, sizeof(msg), "SNAP! #%u", (unsigned)num);
+    setTopBarMessage(msg, 2000);
+    snapping = false;
+    return true;
 }
 
 void Display::update() {

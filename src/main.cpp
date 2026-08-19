@@ -54,9 +54,6 @@ void setup() {
     setupHeapLayout();
     yield();
 
-    if (!Storage::begin()) {
-        Serial.println("[BOOT] LittleFS failed - continuing");
-    }
     Board::startKeyboard();
     Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
 
@@ -66,6 +63,12 @@ void setup() {
     Display::init();
     SFX::init();
     Display::showBootSplash();
+
+    // SD after LCD is up (M5 example order). Second SPIClass(FSPI) stole
+    // the bus from the display and the card looked "gone".
+    if (!Storage::begin()) {
+        Serial.println("[BOOT] SD failed - continuing");
+    }
 
     Avatar::init();
     Display::refreshBrightness();

@@ -5,6 +5,7 @@
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
+#include "../piglet/mood.h"
 #include "../storage/littlefs_ops.h"
 #include "../audio/sfx.h"
 #include "../net/ap_sta.h"
@@ -95,6 +96,7 @@ static const Item KEYS[] = {
     {"IR PORT",  Kind::BIND, 5, 0, 0, 0},
     {"SPECTRUM", Kind::BIND, 6, 0, 0, 0},
     {"LOOT",     Kind::BIND, 7, 0, 0, 0},
+    {"RADIO",    Kind::BIND, 8, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -114,7 +116,7 @@ static const char* const H_SCENE[] = {
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE.",
-    "IDLE: CYCLE FACES."
+    "-/= CYCLE ANIMS ON FARM."
 };
 static const char* const H_SYSTEM[] = {
     "SCREEN GLOW.",
@@ -156,7 +158,8 @@ static const char* const H_KEYS[] = {
     "B = BLE FRAMES.",
     "I = IR BLAST.",
     "S = 2.4 SWEEP.",
-    "H = WPASEC / PWN."
+    "H = WPASEC / PWN.",
+    "R = RADIO SETTINGS."
 };
 
 struct NetRow {
@@ -382,9 +385,14 @@ static bool setValue(const Item& it, int v) {
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
             case 1: {
-                if (v == (int)PigSkin::ZOMBIE && !Config::isZombieSkinUnlocked()) {
-                    Display::showToast("ZOMBIE LOCKED", 1200);
-                    return false;
+                if (v == (int)PigSkin::ZOMBIE) {
+                    if (!Config::isZombieSkinUnlocked()) {
+                        Display::showToast("ZOMBIE LOCKED", 1200);
+                        return false;
+                    }
+                    Config::becomeZombie();
+                    Mood::onZombieApplied();
+                    break;
                 }
                 p.pigSkin = (uint8_t)v;
                 break;
@@ -423,7 +431,10 @@ static bool setValue(const Item& it, int v) {
             case 11: SceneLayers::pig = v != 0; break;
             case 12: SceneLayers::seasonFx = v != 0; break;
             case 13: SceneLayers::mood = v != 0; break;
-            case 14: p.animTest = v != 0; break;
+            case 14:
+                p.animTest = v != 0;
+                if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
+                break;
             default: return false;
         }
         Config::save();

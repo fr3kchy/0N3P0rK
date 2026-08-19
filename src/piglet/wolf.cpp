@@ -145,8 +145,9 @@ static bool beginEnter(Actor& w, uint32_t now, bool preferOpposite) {
 
 void spawnNow() {
     if (App::mode() != AppMode::FARM) return;
-    if (!Config::personality().wolfEnabled) return;
-    if (!Avatar::isNightTime()) return;
+    const bool lab = Config::personality().animTest;
+    if (!Config::personality().wolfEnabled && !lab) return;
+    if (!lab && !Avatar::isNightTime()) return;
     uint32_t now = millis();
     // Prefer empty slot
     for (uint8_t i = 0; i < maxActive && i < MAX_WOLVES; i++) {

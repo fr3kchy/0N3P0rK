@@ -1714,8 +1714,9 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         int feet = currentX + 14 * PX;
         int lift = getJumpLiftPx();
         int feetY = 106 - lift;
-        if (Trees::updateAmbient(feet, feetY, currentX, onRightSide)) {
-            Mood::eatWorld();
+        uint8_t ate = Trees::updateAmbient(feet, feetY, currentX, onRightSide);
+        if (ate) {
+            for (uint8_t i = 0; i < ate; i++) Mood::eatWorld();
             triggerSparkles(5);
             triggerTailWiggle();
             if (currentState != AvatarState::HUNTING)
@@ -2804,14 +2805,16 @@ void Avatar::onWolfBitten() {
         return;
     }
 
-    // Night ambient bites unlock ZOMBIE (3 times). Not Fruit Run.
+    // Night ambient bites unlock ZOMBIE (5 hearts). Not Fruit Run.
+    bool justUnlocked = false;
     if (!FruitRunMode::isRunning() && isNightTime()) {
         if (Config::registerNightWolfBite()) {
+            justUnlocked = true;
             Display::showToast("ZOMBIE SKIN UNLOCKED!", 2500);
             Display::notify(NoticeKind::REWARD, "UND3AD P1G", 4000, NoticeChannel::TOP_BAR);
         } else if (!Config::isZombieSkinUnlocked()) {
             char buf[28];
-            snprintf(buf, sizeof(buf), "NIGHT BITE %u/3",
+            snprintf(buf, sizeof(buf), "NIGHT BITE %u/5",
                      (unsigned)Config::personality().nightWolfBites);
             Display::showToast(buf, 1800);
         }
@@ -2828,6 +2831,11 @@ void Avatar::onWolfBitten() {
     setPlayDead(true);
     setState(AvatarState::SAD);
     Mood::hurt(1);
+    // Apply zombie after the 5th bite so this hit still takes a heart.
+    if (justUnlocked) {
+        Config::becomeZombie();
+        Mood::onZombieApplied();
+    }
     s_hiding = false;
     s_sitAfterWalk = false;
     s_strollDir = 0;

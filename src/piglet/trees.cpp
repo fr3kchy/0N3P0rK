@@ -709,7 +709,7 @@ static void forceCollapse(Slot& t) {
 
 // tryCollectNearbyFruit — implemented in trees_drops.cpp
 
-bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRight) {
+uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRight) {
     setPigHint(pigHintX_, pigOnRight);
     uint32_t now = millis();
     const bool fruitAmbient = Config::personality().fruitTreesAmbient;
@@ -770,10 +770,10 @@ bool updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRight)
     }
 
     // --- Auto-collect fallen fruit/berries near pig ---
-    bool got = tryCollectNearbyFruit(pigCenterX, pigFeetY, 24);
-    // Keep sucking nearby produce if several landed together
-    if (got) {
-        tryCollectNearbyFruit(pigCenterX, pigFeetY, 28);
+    uint8_t got = 0;
+    while (got < 4 &&
+           tryCollectNearbyFruit(pigCenterX, pigFeetY, got ? 28 : 24)) {
+        got++;
     }
     return got;
 }
