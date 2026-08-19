@@ -22,13 +22,11 @@ static const int L = 20;
 static const int R = 236;
 static const int W = R - L;
 static const int TOP = 2;
-static const int BOT = 48;
-static const int WF_TOP = 50;
-static const int WF_ROWS = 16;
-static const int CH_Y = 64;
-static const int FILT_Y = 74;
-static const int SEL_Y = 84;
-static const int KEY_Y = MAIN_H - 10;
+static const int BOT = 44;
+static const int WF_TOP = 46;
+static const int WF_ROWS = 10;
+static const int CH_Y = 58;
+static const int SEL_Y = 72;
 
 static const int8_t RSSI_MIN = -95;
 static const int8_t RSSI_MAX = -30;
@@ -635,6 +633,7 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
 }
 
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
+    c.setTextWrap(false);
     c.drawFastVLine(L - 2, TOP, BOT - TOP, fg);
     c.setTextSize(1);
     c.setTextColor(fg);
@@ -647,13 +646,6 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.drawString(lb, L - 5, y < 6 ? 6 : y);
     }
     c.drawFastHLine(L, BOT, R - L, fg);
-
-    for (int x = L; x < R; x++) {
-        uint8_t n = noise7();
-        int up = n / 2;
-        if (up) c.drawFastVLine(x, BOT - up, up, fg);
-        if ((x % 3) == 0 && (n & 1)) c.drawPixel(x, BOT + 1, fg);
-    }
 
     for (uint8_t i = 0; i < s_nNet; i++) {
         if (!passFilt(s_net[i])) continue;
@@ -685,8 +677,7 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int x = freqToX(chToFreq(ch));
         if (x < L || x > R) continue;
         bool hop = (ch == s_ch);
-        c.drawFastVLine(x, BOT, 3, fg);
-        if (hop) c.drawFastHLine(x - 3, CH_Y + 8, 7, fg);
+        c.drawFastVLine(x, BOT, 2, fg);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
         c.setTextColor(hop ? UiStyle::GOLD : fg);
@@ -694,84 +685,66 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.setTextColor(fg);
     }
 
-    uint8_t shown = 0, tot = 0;
-    for (uint8_t i = 0; i < s_nNet; i++) {
-        if (!passFilt(s_net[i])) continue;
-        tot++;
-        float f = s_net[i].freq;
-        if (f > s_center - WIDTH0 * 0.5f - 10 && f < s_center + WIDTH0 * 0.5f + 10)
-            shown++;
-    }
     const char* fn = "ALL";
     if (s_filt == F_VULN) fn = "VULN";
     else if (s_filt == F_SOFT) fn = "SOFT";
     else if (s_filt == F_HIDDEN) fn = "HID";
-    char bar[40];
-    snprintf(bar, sizeof(bar), "[F] %s %u/%u  %upps", fn, shown, tot, (unsigned)s_pps);
     c.setTextDatum(top_left);
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString(bar, 2, FILT_Y);
-
-    c.setTextColor(fg);
     if (s_sel >= 0 && s_sel < s_nNet && passFilt(s_net[s_sel])) {
         const Net& n = s_net[s_sel];
-        char name[22];
+        char name[16];
         if (n.ssid[0]) {
-            strncpy(name, n.ssid, 20);
-            name[20] = 0;
+            strncpy(name, n.ssid, 15);
+            name[15] = 0;
         } else {
             strncpy(name, "<HIDDEN>", sizeof(name));
         }
         for (char* p = name; *p; p++) *p = (char)toupper((unsigned char)*p);
-        char line[48];
-        snprintf(line, sizeof(line), "%s  CH%u %s %+ddB",
-                 name, n.ch, authStr(n.auth), n.rssi);
+        char line[40];
+        snprintf(line, sizeof(line), "%s  %s CH%u %+d",
+                 name, authStr(n.auth), n.ch, n.rssi);
         c.setTextColor(n.pmf ? UiStyle::DIM : UiStyle::PINK);
         c.drawString(line, 2, SEL_Y);
+        c.setTextColor(UiStyle::DIM);
+        c.drawString(fn, DISPLAY_W - 28, SEL_Y);
     } else {
         c.setTextColor(UiStyle::DIM);
-        c.drawString("NO NET SELECTED", 2, SEL_Y);
+        c.drawString("NO NET", 2, SEL_Y);
+        c.drawString(fn, DISPLAY_W - 28, SEL_Y);
     }
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString(";/. sel  ENT lock  A hunt  F filt  ` exit", 2, KEY_Y);
 }
 
 static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
+    c.setTextWrap(false);
     int idx = findNet(s_monBssid);
     c.setTextSize(1);
     c.setTextDatum(top_left);
     if (idx < 0) {
         c.setTextColor(UiStyle::GOLD);
-        c.drawString("NETWORK LOST", 8, 40);
+        c.drawString("LOST", 4, 4);
         return;
     }
     const Net& n = s_net[idx];
-    char head[40];
+    char name[16];
     if (n.ssid[0]) {
-        char up[22];
-        strncpy(up, n.ssid, 20);
-        up[20] = 0;
-        for (char* p = up; *p; p++) *p = (char)toupper((unsigned char)*p);
-        snprintf(head, sizeof(head), "LOCK %s", up);
+        strncpy(name, n.ssid, 15);
+        name[15] = 0;
     } else {
-        snprintf(head, sizeof(head), "LOCK <HIDDEN>");
+        strncpy(name, "<HIDDEN>", sizeof(name));
     }
+    for (char* p = name; *p; p++) *p = (char)toupper((unsigned char)*p);
     c.setTextColor(UiStyle::GOLD);
-    c.drawString(head, 4, 2);
-    char meta[36];
-    snprintf(meta, sizeof(meta), "CH%u %s  %upps  %u STA",
-             n.ch, authStr(n.auth), (unsigned)s_pps, n.nCli);
+    c.drawString(name, 4, 2);
+    char meta[28];
+    snprintf(meta, sizeof(meta), "CH%u %s  %u STA", n.ch, authStr(n.auth), n.nCli);
     c.setTextColor(fg);
     c.drawString(meta, 4, 14);
 
     if (n.nCli == 0) {
         c.setTextColor(UiStyle::DIM);
-        c.setTextDatum(middle_center);
-        c.drawString("NEGATIVE CONTACT", 120, 48);
-        c.drawString("W  WAKE THE ROOM", 120, 64);
-        c.setTextDatum(top_left);
+        c.drawString("NO CLIENTS", 4, 36);
     } else {
-        const int lh = 13;
+        const int lh = 12;
         if (s_cliSel < s_cliScroll) s_cliScroll = (uint8_t)s_cliSel;
         if (s_cliSel >= s_cliScroll + VIS_CLI)
             s_cliScroll = (uint8_t)(s_cliSel - VIS_CLI + 1);
@@ -780,80 +753,56 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
             if (ci >= n.nCli) break;
             const Client& cl = n.cli[ci];
             int y = 28 + i * lh;
-            bool sel = (ci == s_cliSel);
-            if (sel) {
+            if (ci == s_cliSel) {
                 c.fillRect(2, y - 1, 236, lh, UiStyle::PINK);
                 c.setTextColor(bg);
             } else {
                 c.setTextColor(fg);
             }
-            uint32_t age = (millis() - cl.lastSeen) / 1000;
-            int dlt = cl.rssi - n.rssi;
-            const char* ar = (dlt > 6) ? ">>" : (dlt < -6) ? "<<" : "==";
-            char line[48];
-            snprintf(line, sizeof(line), "%u %02X:%02X:%02X:%02X  %+ddB  %up  %s %lus",
+            char line[28];
+            snprintf(line, sizeof(line), "%u  %02X%02X%02X  %+d",
                      (unsigned)(ci + 1),
-                     cl.mac[2], cl.mac[3], cl.mac[4], cl.mac[5],
-                     cl.rssi, (unsigned)cl.pkts, ar, (unsigned long)age);
-            c.drawString(line, 6, y + 1);
+                     cl.mac[3], cl.mac[4], cl.mac[5],
+                     cl.rssi);
+            c.drawString(line, 6, y);
         }
     }
 
     if (s_reveal) {
-        c.fillRoundRect(40, 36, 160, 36, 6, fg);
-        c.setTextColor(bg);
-        c.setTextDatum(middle_center);
-        c.drawString("WAKIE WAKIE", 120, 48);
-        char f[20];
-        snprintf(f, sizeof(f), "FOUND %u", n.nCli);
-        c.drawString(f, 120, 62);
-        c.setTextDatum(top_left);
+        c.setTextColor(UiStyle::GOLD);
+        c.drawString("WAKE...", 4, MAIN_H - 12);
     }
-    c.setTextDatum(top_left);
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString("ENT hunt  SPC kick  W wake  ` back", 2, KEY_Y);
 }
 
 static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     (void)bg;
+    c.setTextWrap(false);
     int idx = findNet(s_monBssid);
     const Cap::Counters& cap = Cap::counters();
     c.setTextSize(1);
     c.setTextDatum(top_left);
-    c.setTextColor(UiStyle::GOLD);
     const char* name = (idx >= 0 && s_net[idx].ssid[0]) ? s_net[idx].ssid : "HIDDEN";
-    char up[22];
-    strncpy(up, name, 20);
-    up[20] = 0;
+    char up[16];
+    strncpy(up, name, 15);
+    up[15] = 0;
     for (char* p = up; *p; p++) *p = (char)toupper((unsigned char)*p);
-    char head[40];
-    snprintf(head, sizeof(head), "HUNT %s", up);
-    c.drawString(head, 4, 2);
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString(up, 4, 4);
     c.setTextColor(fg);
-    char line[40];
-    snprintf(line, sizeof(line), "CH%u  %s  %s",
+    char line[28];
+    snprintf(line, sizeof(line), "CH%u  %s",
              s_monCh,
-             idx >= 0 ? authStr(s_net[idx].auth) : "?",
-             cap.methodTag[0] ? cap.methodTag : "OURS");
-    c.drawString(line, 4, 16);
-    c.setTextColor(UiStyle::PINK);
-    snprintf(line, sizeof(line), "EAPOL %u  WRITE %u  KICK %u",
+             idx >= 0 ? authStr(s_net[idx].auth) : "?");
+    c.drawString(line, 4, 18);
+    snprintf(line, sizeof(line), "HS %u   WR %u",
              (unsigned)cap.framesEapol,
-             (unsigned)cap.framesWritten,
-             (unsigned)cap.framesDeauth);
-    c.drawString(line, 4, 32);
+             (unsigned)cap.framesWritten);
+    c.setTextColor(UiStyle::PINK);
+    c.drawString(line, 4, 36);
     if (cap.lastHsSsid[0]) {
         c.setTextColor(UiStyle::GOLD);
-        snprintf(line, sizeof(line), "GOT %s", cap.lastHsSsid);
-        c.drawString(line, 4, 48);
-    } else {
-        c.setTextColor(UiStyle::DIM);
-        c.drawString("POUNDING FOR HANDSHAKE", 4, 48);
+        c.drawString("GOT IT", 4, 54);
     }
-    c.setTextColor(UiStyle::DIM);
-    c.drawString("/0N3P0rK/handshakes/", 4, 64);
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString("SPC extra kick   ` stop hunt", 2, KEY_Y);
 }
 
 void start() {
@@ -904,15 +853,12 @@ bool isRunning() { return s_run; }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_phase == HUNT) {
-        const Cap::Counters& cap = Cap::counters();
-        snprintf(out, n, "HUNT CH%u HS:%u  SPC kick  ` stop",
-                 s_monCh, (unsigned)cap.framesEapol);
-    } else if (s_phase == LOCK) {
-        snprintf(out, n, "ENT hunt  SPC kick  W wake  ` back");
-    } else {
-        snprintf(out, n, ";/. sel  ENT lock  A hunt  F filt");
-    }
+    if (s_phase == HUNT)
+        snprintf(out, n, "SPC kick   ` stop");
+    else if (s_phase == LOCK)
+        snprintf(out, n, "ENT hunt  SPC kick  W  `");
+    else
+        snprintf(out, n, ";/.  ENT lock  A hunt  F  `");
 }
 
 static void handleSweep() {

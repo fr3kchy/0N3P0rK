@@ -475,12 +475,6 @@ void Display::drawBottomBar() {
 
     if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
         SpectrumMode::getStatusLine(left, sizeof(left));
-        if (Cap::isRunning()) {
-            const Cap::Counters& c = Cap::counters();
-            snprintf(rightName, sizeof(rightName), "PIN HS:%02u CH:%02u",
-                     (unsigned)c.framesEapol,
-                     (unsigned)c.currentChannel);
-        }
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
         const char* net = c.lastHsSsid[0] ? c.lastHsSsid
@@ -587,8 +581,10 @@ void Display::drawBottomBar() {
         left[sizeof(left) - 1] = '\0';
     }
 
-    if (capLive && left[0] && strcmp(left, "SCAN") != 0)
-        bottomBar.setTextColor(0xFE60); // gold — caught / heard SSID
+    if (capLive && App::mode() != AppMode::SPECTRUM &&
+        left[0] && strcmp(left, "SCAN") != 0)
+        bottomBar.setTextColor(0xFE60);
+    bottomBar.setTextWrap(false);
     bottomBar.drawString(left, 2, 3);
     bottomBar.setTextColor(TEXT_COL);
     if (rightName[0]) {
