@@ -62,6 +62,18 @@ bool Config::init() {
     r.randomMac = s_prefs.getBool("rndmac", r.randomMac);
     r.minRssi = (int8_t)s_prefs.getChar("rssi", r.minRssi);
     r.hopSet = s_prefs.getUChar("hopset", r.hopSet);
+    r.hsMethod = s_prefs.getUChar("hsmeth", r.hsMethod);
+    r.fallbackSec = s_prefs.getUChar("hsfall", r.fallbackSec);
+    r.kickBurst = s_prefs.getUChar("kickn", r.kickBurst);
+    r.bidirKick = s_prefs.getBool("bidir", r.bidirKick);
+    r.eapolTx = s_prefs.getBool("eapoltx", r.eapolTx);
+    r.pmkidProbe = s_prefs.getBool("pmkid", r.pmkidProbe);
+    r.csaHerd = s_prefs.getBool("csa", r.csaHerd);
+    r.authFlood = s_prefs.getBool("aflood", r.authFlood);
+    r.deauthReason = s_prefs.getUChar("dreason", r.deauthReason);
+    r.pauseMs = s_prefs.getUShort("pausems", r.pauseMs);
+    r.fatPcap = s_prefs.getBool("fatpcap", r.fatPcap);
+    r.pack = s_prefs.getUChar("rpack", r.pack);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -92,6 +104,16 @@ bool Config::init() {
     if (r.minRssi < -90) r.minRssi = -90;
     if (r.minRssi > -50) r.minRssi = -50;
     if (r.hopSet >= HOP_SET_COUNT) r.hopSet = 0;
+    if (r.hsMethod >= HS_METHOD_COUNT) r.hsMethod = 0;
+    if (r.fallbackSec < 10) r.fallbackSec = 10;
+    if (r.fallbackSec > 90) r.fallbackSec = 90;
+    if (r.kickBurst < 1) r.kickBurst = 1;
+    if (r.kickBurst > 6) r.kickBurst = 6;
+    if (r.deauthReason < 1) r.deauthReason = 7;
+    if (r.deauthReason > 8) r.deauthReason = 7;
+    if (r.pauseMs < 400) r.pauseMs = 400;
+    if (r.pauseMs > 3000) r.pauseMs = 3000;
+    if (r.pack >= RADIO_PACK_COUNT) r.pack = 0;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -130,6 +152,18 @@ bool Config::save() {
     s_prefs.putBool("rndmac", r.randomMac);
     s_prefs.putChar("rssi", r.minRssi);
     s_prefs.putUChar("hopset", r.hopSet);
+    s_prefs.putUChar("hsmeth", r.hsMethod);
+    s_prefs.putUChar("hsfall", r.fallbackSec);
+    s_prefs.putUChar("kickn", r.kickBurst);
+    s_prefs.putBool("bidir", r.bidirKick);
+    s_prefs.putBool("eapoltx", r.eapolTx);
+    s_prefs.putBool("pmkid", r.pmkidProbe);
+    s_prefs.putBool("csa", r.csaHerd);
+    s_prefs.putBool("aflood", r.authFlood);
+    s_prefs.putUChar("dreason", r.deauthReason);
+    s_prefs.putUShort("pausems", r.pauseMs);
+    s_prefs.putBool("fatpcap", r.fatPcap);
+    s_prefs.putUChar("rpack", r.pack);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
@@ -145,6 +179,39 @@ bool Config::save() {
 void Config::setPersonality(const PersonalityConfig& cfg) {
     personalityConfig = cfg;
     save();
+}
+
+void Config::applyRadioPack(uint8_t pack) {
+    if (pack >= RADIO_PACK_COUNT) pack = 0;
+    RadioConfig r;
+    if (pack == (uint8_t)RadioPack::OURS) {
+        r.hsMethod = (uint8_t)HsMethod::OURS;
+        r.bidirKick = false;
+        r.eapolTx = false;
+        r.pmkidProbe = false;
+        r.csaHerd = false;
+        r.authFlood = false;
+        r.kickBurst = 2;
+        r.pauseMs = 1200;
+    } else if (pack == (uint8_t)RadioPack::PAN) {
+        r.hsMethod = (uint8_t)HsMethod::PAN;
+        r.bidirKick = true;
+        r.eapolTx = true;
+        r.pmkidProbe = true;
+        r.csaHerd = false;
+        r.authFlood = false;
+        r.kickBurst = 3;
+        r.pauseMs = 1500;
+        r.lockMs = 10000;
+        r.hopMs = 250;
+    }
+    r.pack = pack;
+    radioConfig = r;
+    save();
+}
+
+void Config::resetRadio() {
+    applyRadioPack((uint8_t)RadioPack::STOCK);
 }
 
 bool Config::isSDAvailable() {

@@ -195,26 +195,9 @@ bool readCompanionSsid(const char* dir, const char* captureName, char ssid[33]) 
 }
 
 void writeCompanionSsid(const char* dir, const char* stemOrName, const char* ssid) {
-    if (!dir || !stemOrName || !ssid || !ssid[0]) return;
-    const char* base = fileBase(stemOrName);
-    size_t n = stemLen(base);
-    if (n == 0) return;
-    char path[96];
-    snprintf(path, sizeof(path), "%s/%.*s.txt", dir, (int)n, base);
-    File f = SD.open(path, "w");
-    if (!f) return;
-    f.println(ssid);
-    f.close();
-
-    char hex[13];
-    if (extractBssidHex(base, hex)) {
-        snprintf(path, sizeof(path), "%s/%s.txt", dir, hex);
-        File g = SD.open(path, "w");
-        if (g) {
-            g.println(ssid);
-            g.close();
-        }
-    }
+    (void)dir;
+    (void)stemOrName;
+    (void)ssid;
 }
 
 bool ssidFromMgmt(const uint8_t* frame, uint16_t len, char ssid[33]) {

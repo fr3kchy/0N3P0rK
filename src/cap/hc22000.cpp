@@ -2,6 +2,7 @@
 #include "hc22000.h"
 #include "capture_name.h"
 #include "../storage/littlefs_ops.h"
+#include "../core/config.h"
 #include <SD.h>
 #include <string.h>
 #include <strings.h>
@@ -182,8 +183,56 @@ static uint16_t hdrLen80211(const uint8_t* f, uint16_t len) {
     return off;
 }
 
+static bool parseRsnPmkid(const uint8_t* ie, uint8_t ielen, uint8_t out[16]) {
+    // version(2)+group(4)+pairCnt(2)+pair*4+akmCnt(2)+akm*4+caps(2)+pmkidCnt(2)+pmkid
+    if (ielen < 20) return false;
+    uint16_t off = 2 + 4;
+    if (off + 2 > ielen) return false;
+    uint16_t pairCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    off = (uint16_t)(off + 2 + pairCnt * 4);
+    if (off + 2 > ielen) return false;
+    uint16_t akmCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    off = (uint16_t)(off + 2 + akmCnt * 4);
+    if (off + 2 > ielen) return false;
+    off = (uint16_t)(off + 2); // rsn caps
+    if (off + 2 > ielen) return false;
+    uint16_t pmkCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    off = (uint16_t)(off + 2);
+    if (pmkCnt == 0 || off + 16 > ielen) return false;
+    bool z = true;
+    for (int i = 0; i < 16; i++) if (ie[off + i]) { z = false; break; }
+    if (z) return false;
+    memcpy(out, ie + off, 16);
+    return true;
+}
+
+static void parseAssoc(const uint8_t* f, uint16_t len) {
+    uint8_t subtype = (f[0] >> 4) & 0x0F;
+    if (subtype != 1) return; // association response
+    const uint8_t* bssid = f + 16;
+    const uint8_t* sta = f + 4;
+    uint16_t off = (uint16_t)(24 + 6);
+    while (off + 2 <= len) {
+        uint8_t id = f[off];
+        uint8_t l = f[off + 1];
+        if (off + 2 + l > len) break;
+        if (id == 48) {
+            uint8_t pmk[16];
+            if (parseRsnPmkid(f + off + 2, l, pmk)) {
+                Hs* h = slotFor(bssid);
+                memcpy(h->sta, sta, 6);
+                memcpy(h->pmkid, pmk, 16);
+                h->havePmkid = true;
+                maybeWrite(h);
+            }
+        }
+        off = (uint16_t)(off + 2 + l);
+    }
+}
+
 static void parseBeacon(const uint8_t* f, uint16_t len) {
-    if ((f[0] & 0xFC) != 0x80) return;
+    uint8_t fc = f[0] & 0xFC;
+    if (fc != 0x80 && fc != 0x50) return;
     const uint8_t* bssid = f + 16;
     uint16_t off = 24 + 12;
     if (off + 2 > len) return;
@@ -297,14 +346,36 @@ void reset() {
 }
 
 bool shouldPauseDeauth() {
-    return s_lastM1Ms != 0 && (millis() - s_lastM1Ms) < 1200;
+    uint16_t pause = Config::radio().pauseMs;
+    if (pause < 200) pause = 200;
+    return s_lastM1Ms != 0 && (millis() - s_lastM1Ms) < pause;
+}
+
+bool hasPair(const uint8_t* bssid) {
+    if (!bssid) return false;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0)
+            return s_hs[i].wroteEapol || s_hs[i].wrotePmkid;
+    }
+    return false;
+}
+
+uint16_t pairCount() {
+    uint16_t n = 0;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
+    }
+    return n;
 }
 
 void feed(const uint8_t* frame, uint16_t len) {
     if (!frame || len < 24) return;
     uint8_t type = (frame[0] >> 2) & 0x03;
-    if (type == 0) parseBeacon(frame, len);
-    else if (type == 2) parseEapol(frame, len);
+    if (type == 0) {
+        uint8_t subtype = (frame[0] >> 4) & 0x0F;
+        if (subtype == 8 || subtype == 5) parseBeacon(frame, len);
+        else if (subtype == 1) parseAssoc(frame, len);
+    } else if (type == 2) parseEapol(frame, len);
 }
 
 uint16_t convertPcap(const char* pcapPath) {
@@ -330,9 +401,16 @@ uint16_t convertPcap(const char* pcapPath) {
         uint32_t incl = (uint32_t)ph[8] | ((uint32_t)ph[9] << 8) |
                         ((uint32_t)ph[10] << 16) | ((uint32_t)ph[11] << 24);
         if (incl < 8 || incl > 2048) break;
-        uint8_t skip[8];
-        if (f.read(skip, 8) != 8) break;
-        uint32_t flen = incl - 8;
+        uint8_t rth[8];
+        if (f.read(rth, 8) != 8) break;
+        uint16_t rtLen = (uint16_t)(rth[2] | (rth[3] << 8));
+        if (rtLen < 8 || rtLen > 64 || incl < rtLen) break;
+        if (rtLen > 8) {
+            uint8_t extra[56];
+            uint16_t nskip = (uint16_t)(rtLen - 8);
+            if (f.read(extra, nskip) != nskip) break;
+        }
+        uint32_t flen = incl - rtLen;
         if (flen > 400) {
             uint8_t dump[64];
             while (flen) {

@@ -25,19 +25,17 @@ static const int TOP = 2;
 static const int BOT = 48;
 static const int WF_TOP = 50;
 static const int WF_ROWS = 16;
-static const int CH_Y = 68;
-static const int FILT_Y = 80;
-static const int SEL_Y = 92;
+static const int CH_Y = 64;
+static const int FILT_Y = 74;
+static const int SEL_Y = 84;
+static const int KEY_Y = MAIN_H - 10;
 
 static const int8_t RSSI_MIN = -95;
 static const int8_t RSSI_MAX = -30;
 static const int8_t NOISE = -92;
 
-static const float CENTER0 = 2437.0f;
-static const float WIDTH0 = 60.0f;
-static const float MIN_C = 2412.0f;
-static const float MAX_C = 2472.0f;
-static const float PAN = 5.0f;
+static const float CENTER0 = 2442.0f;
+static const float WIDTH0 = 72.0f;
 
 static const uint8_t MAX_NETS = 24;
 static const uint8_t MAX_CLI = 8;
@@ -46,11 +44,11 @@ static const uint32_t STALE_NET = 12000;
 static const uint32_t STALE_CLI = 25000;
 static const uint8_t HOP[] = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_N = 13;
-static const uint16_t HOP_MS = 140;
+static const uint16_t HOP_MS = 220;
 
 enum Auth : uint8_t { A_OPEN = 0, A_WEP, A_WPA, A_WPA2, A_WPA3, A_MIX };
 enum Filt : uint8_t { F_ALL = 0, F_VULN, F_SOFT, F_HIDDEN };
-enum Phase : uint8_t { SWEEP = 0, LOCK };
+enum Phase : uint8_t { SWEEP = 0, LOCK, HUNT };
 
 struct Client {
     uint8_t mac[6];
@@ -93,6 +91,8 @@ static Filt s_filt = F_ALL;
 static Net s_net[MAX_NETS];
 static uint8_t s_nNet = 0;
 static int8_t s_sel = -1;
+static uint8_t s_selMac[6];
+static bool s_hasSel = false;
 static float s_center = CENTER0;
 static uint8_t s_hopI = 0;
 static uint8_t s_ch = 6;
@@ -196,6 +196,32 @@ static int findNet(const uint8_t* bssid) {
     return -1;
 }
 
+static void setSel(int i) {
+    if (i < 0 || i >= (int)s_nNet) {
+        s_sel = -1;
+        s_hasSel = false;
+        return;
+    }
+    s_sel = (int8_t)i;
+    memcpy(s_selMac, s_net[i].bssid, 6);
+    s_hasSel = true;
+}
+
+static void syncSel() {
+    if (!s_hasSel) {
+        s_sel = -1;
+        return;
+    }
+    s_sel = (int8_t)findNet(s_selMac);
+}
+
+static bool netHeld(int i) {
+    if (i < 0 || i >= (int)s_nNet) return false;
+    if (s_hasSel && macEq(s_net[i].bssid, s_selMac)) return true;
+    if (s_phase != SWEEP && macEq(s_net[i].bssid, s_monBssid)) return true;
+    return false;
+}
+
 static int nextSel(int dir) {
     if (s_nNet == 0) return -1;
     int start = s_sel < 0 ? 0 : s_sel;
@@ -246,17 +272,21 @@ static void parseAuth(const uint8_t* p, uint16_t len, Auth& auth, bool& pmf) {
     else if (wpa) auth = A_WPA;
 }
 
-static void onBeacon(const uint8_t* bssid, uint8_t ch, int8_t rssi,
+static void onBeacon(const uint8_t* bssid, uint8_t rxCh, uint8_t ds, int8_t rssi,
                      const char* ssid, Auth auth, bool pmf, bool probe) {
     if (s_busy) return;
-    if (ch < 1 || ch > 13) return;
     int idx = findNet(bssid);
     if (idx < 0) {
         if (s_nNet >= MAX_NETS) {
-            uint8_t worst = 0;
-            for (uint8_t i = 1; i < s_nNet; i++)
-                if (s_net[i].rssi < s_net[worst].rssi) worst = i;
-            idx = (int)worst;
+            int worst = -1;
+            for (uint8_t i = 0; i < s_nNet; i++) {
+                if (netHeld((int)i)) continue;
+                if (worst < 0 || s_net[i].rssi < s_net[worst].rssi) worst = (int)i;
+            }
+            if (worst < 0) return;
+            idx = worst;
+            memset(&s_net[idx], 0, sizeof(Net));
+            memcpy(s_net[idx].bssid, bssid, 6);
         } else {
             idx = (int)s_nNet++;
             memset(&s_net[idx], 0, sizeof(Net));
@@ -264,13 +294,16 @@ static void onBeacon(const uint8_t* bssid, uint8_t ch, int8_t rssi,
         }
     }
     Net& n = s_net[idx];
-    n.ch = ch;
+    if (ds >= 1 && ds <= 13) n.ch = ds;
+    else if (n.ch < 1 || n.ch > 13) {
+        if (rxCh >= 1 && rxCh <= 13) n.ch = rxCh;
+        else return;
+    }
     n.rssi = rssi;
     n.lastSeen = millis();
     n.auth = auth;
     n.pmf = pmf;
-    n.freq += (chToFreq(ch) - n.freq) * 0.35f;
-    if (n.freq < 2400.f) n.freq = chToFreq(ch);
+    n.freq = chToFreq(n.ch);
     if (ssid && ssid[0]) {
         strncpy(n.ssid, ssid, 32);
         n.ssid[32] = 0;
@@ -349,11 +382,10 @@ static void onRx(void* buf, wifi_promiscuous_pkt_type_t type) {
         }
         o = (uint16_t)(o + 2 + n);
     }
-    uint8_t use = (ds >= 1 && ds <= 13) ? ds : ch;
     Auth auth;
     bool pmf;
     parseAuth(p, len, auth, pmf);
-    onBeacon(bssid, use, rssi, ssid, auth, pmf, ft == 0x50);
+    onBeacon(bssid, ch, ds, rssi, ssid, auth, pmf, ft == 0x50);
 }
 
 static void radioOn() {
@@ -382,7 +414,7 @@ static void radioOff() {
 }
 
 static void hopTick() {
-    if (s_phase == LOCK) return;
+    if (s_phase != SWEEP) return;
     uint32_t now = millis();
     if (now - s_lastHop < HOP_MS) return;
     s_lastHop = now;
@@ -397,14 +429,13 @@ static void prune() {
     s_lastPrune = now;
     s_busy = true;
     for (int i = (int)s_nNet - 1; i >= 0; i--) {
-        if (s_phase == LOCK && macEq(s_net[i].bssid, s_monBssid)) continue;
+        if (netHeld(i)) continue;
         if (now - s_net[i].lastSeen > STALE_NET) {
             s_net[i] = s_net[s_nNet - 1];
             s_nNet--;
-            if (s_sel == i) s_sel = s_nNet ? 0 : -1;
-            else if (s_sel == (int)s_nNet) s_sel = (int)s_nNet - 1;
         }
     }
+    syncSel();
     if (s_phase == LOCK) {
         int idx = findNet(s_monBssid);
         if (idx >= 0) {
@@ -426,6 +457,7 @@ static void enterLock() {
     s_busy = true;
     memcpy(s_monBssid, s_net[s_sel].bssid, 6);
     s_monCh = s_net[s_sel].ch;
+    setSel(s_sel);
     s_net[s_sel].nCli = 0;
     s_cliSel = 0;
     s_cliScroll = 0;
@@ -445,6 +477,38 @@ static void exitLock() {
     s_phase = SWEEP;
     memset(s_monBssid, 0, 6);
     s_busy = false;
+}
+
+static void enterHunt() {
+    if (s_phase == SWEEP) {
+        if (s_sel < 0 || s_sel >= s_nNet) {
+            Display::showToast("PICK A NET");
+            return;
+        }
+        memcpy(s_monBssid, s_net[s_sel].bssid, 6);
+        s_monCh = s_net[s_sel].ch;
+        setSel(s_sel);
+    }
+    int idx = findNet(s_monBssid);
+    if (idx < 0) {
+        Display::showToast("NO TARGET");
+        return;
+    }
+    const Net& n = s_net[idx];
+    s_reveal = false;
+    radioOff();
+    Cap::startPinned(n.ch, n.bssid, n.ssid);
+    s_phase = HUNT;
+    SFX::play(SFX::CHANNEL_LOCK);
+    Display::showToast(n.ssid[0] ? n.ssid : "HUNT");
+}
+
+static void exitHunt() {
+    if (Cap::isRunning()) Cap::stop();
+    s_phase = LOCK;
+    radioOn();
+    esp_wifi_set_channel(s_monCh, WIFI_SECOND_CHAN_NONE);
+    s_ch = s_monCh;
 }
 
 static void kick(int ci) {
@@ -553,16 +617,12 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
     if (lx < L) lx = L;
     if (rx > R) rx = R;
     float leftF = s_center - WIDTH0 * 0.5f;
-    int jit = 0;
-    if (act > 8) {
-        uint32_t ph = (millis() / 40) & 7;
-        jit = (int)((ph % 3) - 1);
-    }
+    (void)act;
     int prevY = BOT;
     for (int x = lx; x <= rx; x++) {
         float f = leftF + (float)(x - L) * WIDTH0 / (float)W;
         float amp = sincAmp(f - freq);
-        int y = BOT - (int)(h * amp) + jit;
+        int y = BOT - (int)(h * amp);
         if (y < TOP) y = TOP;
         if (y > BOT) y = BOT;
         if (filled) {
@@ -625,15 +685,13 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int x = freqToX(chToFreq(ch));
         if (x < L || x > R) continue;
         bool hop = (ch == s_ch);
-        if (hop) {
-            c.fillRect(x - 6, CH_Y - 1, 13, 9, fg);
-            c.setTextColor(bg);
-        }
         c.drawFastVLine(x, BOT, 3, fg);
+        if (hop) c.drawFastHLine(x - 3, CH_Y + 8, 7, fg);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
+        c.setTextColor(hop ? UiStyle::GOLD : fg);
         c.drawString(lb, x, CH_Y);
-        if (hop) c.setTextColor(fg);
+        c.setTextColor(fg);
     }
 
     uint8_t shown = 0, tot = 0;
@@ -672,8 +730,10 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.drawString(line, 2, SEL_Y);
     } else {
         c.setTextColor(UiStyle::DIM);
-        c.drawString(";/. NET  ENT LOCK  ,/ PAN", 2, SEL_Y);
+        c.drawString("NO NET SELECTED", 2, SEL_Y);
     }
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString(";/. sel  ENT lock  A hunt  F filt  ` exit", 2, KEY_Y);
 }
 
 static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
@@ -749,6 +809,51 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.drawString(f, 120, 62);
         c.setTextDatum(top_left);
     }
+    c.setTextDatum(top_left);
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString("ENT hunt  SPC kick  W wake  ` back", 2, KEY_Y);
+}
+
+static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
+    (void)bg;
+    int idx = findNet(s_monBssid);
+    const Cap::Counters& cap = Cap::counters();
+    c.setTextSize(1);
+    c.setTextDatum(top_left);
+    c.setTextColor(UiStyle::GOLD);
+    const char* name = (idx >= 0 && s_net[idx].ssid[0]) ? s_net[idx].ssid : "HIDDEN";
+    char up[22];
+    strncpy(up, name, 20);
+    up[20] = 0;
+    for (char* p = up; *p; p++) *p = (char)toupper((unsigned char)*p);
+    char head[40];
+    snprintf(head, sizeof(head), "HUNT %s", up);
+    c.drawString(head, 4, 2);
+    c.setTextColor(fg);
+    char line[40];
+    snprintf(line, sizeof(line), "CH%u  %s  %s",
+             s_monCh,
+             idx >= 0 ? authStr(s_net[idx].auth) : "?",
+             cap.methodTag[0] ? cap.methodTag : "OURS");
+    c.drawString(line, 4, 16);
+    c.setTextColor(UiStyle::PINK);
+    snprintf(line, sizeof(line), "EAPOL %u  WRITE %u  KICK %u",
+             (unsigned)cap.framesEapol,
+             (unsigned)cap.framesWritten,
+             (unsigned)cap.framesDeauth);
+    c.drawString(line, 4, 32);
+    if (cap.lastHsSsid[0]) {
+        c.setTextColor(UiStyle::GOLD);
+        snprintf(line, sizeof(line), "GOT %s", cap.lastHsSsid);
+        c.drawString(line, 4, 48);
+    } else {
+        c.setTextColor(UiStyle::DIM);
+        c.drawString("POUNDING FOR HANDSHAKE", 4, 48);
+    }
+    c.setTextColor(UiStyle::DIM);
+    c.drawString("/0N3P0rK/handshakes/", 4, 64);
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString("SPC extra kick   ` stop hunt", 2, KEY_Y);
 }
 
 void start() {
@@ -759,6 +864,7 @@ void start() {
     memset(s_net, 0, sizeof(s_net));
     s_nNet = 0;
     s_sel = -1;
+    s_hasSel = false;
     s_phase = SWEEP;
     s_filt = F_ALL;
     s_center = CENTER0;
@@ -784,10 +890,12 @@ void stop() {
     s_run = false;
     s_busy = true;
     s_reveal = false;
-    radioOff();
+    if (Cap::isRunning()) Cap::stop();
+    else radioOff();
     Avatar::resumeScene();
     Avatar::setState(AvatarState::NEUTRAL);
     s_nNet = 0;
+    s_phase = SWEEP;
     s_busy = false;
     Serial.println("[SPEC] stop");
 }
@@ -796,47 +904,41 @@ bool isRunning() { return s_run; }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_phase == LOCK) {
-        int idx = findNet(s_monBssid);
-        snprintf(out, n, "LOCK CH%u  %u STA  SPC KICK",
-                 s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
+    if (s_phase == HUNT) {
+        const Cap::Counters& cap = Cap::counters();
+        snprintf(out, n, "HUNT CH%u HS:%u  SPC kick  ` stop",
+                 s_monCh, (unsigned)cap.framesEapol);
+    } else if (s_phase == LOCK) {
+        snprintf(out, n, "ENT hunt  SPC kick  W wake  ` back");
     } else {
-        snprintf(out, n, "SPEC CH%u  %u AP  ENT LOCK", s_ch, s_nNet);
+        snprintf(out, n, ";/. sel  ENT lock  A hunt  F filt");
     }
 }
 
 static void handleSweep() {
-    if (M5Cardputer.Keyboard.isKeyPressed(',')) {
-        s_center -= PAN;
-        if (s_center < MIN_C) s_center = MIN_C;
-        SFX::play(SFX::MENU_CLICK);
-    }
-    if (M5Cardputer.Keyboard.isKeyPressed('/')) {
-        s_center += PAN;
-        if (s_center > MAX_C) s_center = MAX_C;
-        SFX::play(SFX::MENU_CLICK);
-    }
     if (M5Cardputer.Keyboard.isKeyPressed(';')) {
         int n = nextSel(-1);
         if (n >= 0) {
-            s_sel = (int8_t)n;
-            s_center = chToFreq(s_net[s_sel].ch);
+            setSel(n);
             SFX::play(SFX::MENU_CLICK);
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
         int n = nextSel(+1);
         if (n >= 0) {
-            s_sel = (int8_t)n;
-            s_center = chToFreq(s_net[s_sel].ch);
+            setSel(n);
             SFX::play(SFX::MENU_CLICK);
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('f') || M5Cardputer.Keyboard.isKeyPressed('F')) {
         s_filt = (Filt)((s_filt + 1) & 3);
         if (s_sel < 0 || s_sel >= s_nNet || !passFilt(s_net[s_sel]))
-            s_sel = (int8_t)nextSel(+1);
+            setSel(nextSel(+1));
         SFX::play(SFX::MENU_CLICK);
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed('a') || M5Cardputer.Keyboard.isKeyPressed('A')) {
+        enterHunt();
+        return;
     }
     if (M5Cardputer.Keyboard.keysState().enter) enterLock();
 }
@@ -867,17 +969,33 @@ static void handleLock() {
         SFX::play(SFX::REVEAL_START);
         return;
     }
-    bool kickKey = M5Cardputer.Keyboard.keysState().enter ||
-                   M5Cardputer.Keyboard.isKeyPressed(' ');
-    if (kickKey) kick(nc ? s_cliSel : -1);
+    if (M5Cardputer.Keyboard.keysState().enter ||
+        M5Cardputer.Keyboard.isKeyPressed('a') ||
+        M5Cardputer.Keyboard.isKeyPressed('A')) {
+        enterHunt();
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(' ')) kick(nc ? s_cliSel : -1);
+}
+
+static void handleHunt() {
+    if (M5Cardputer.Keyboard.isKeyPressed(' ')) {
+        int idx = findNet(s_monBssid);
+        uint8_t nc = (idx >= 0) ? s_net[idx].nCli : 0;
+        kick(nc ? s_cliSel : -1);
+    }
 }
 
 void update() {
     if (!s_run) return;
-    hopTick();
-    prune();
-    updateBuf();
-    revealTick();
+    if (s_phase == HUNT) {
+        Cap::loop();
+    } else {
+        hopTick();
+        prune();
+        updateBuf();
+        revealTick();
+    }
     if (s_beepCli) {
         s_beepCli = false;
         SFX::play(SFX::CLIENT_FOUND);
@@ -885,6 +1003,10 @@ void update() {
     if (App::windowHidden()) return;
     if (!keyNewPress(s_keyWas)) return;
     if (keyEsc()) {
+        if (s_phase == HUNT) {
+            exitHunt();
+            return;
+        }
         if (s_phase == LOCK) {
             exitLock();
             return;
@@ -892,15 +1014,18 @@ void update() {
         stop();
         return;
     }
-    if (s_phase == LOCK) handleLock();
+    if (s_phase == HUNT) handleHunt();
+    else if (s_phase == LOCK) handleLock();
     else handleSweep();
 }
 
 void draw(M5Canvas& canvas) {
+    syncSel();
     uint16_t fg = getColorFG();
     uint16_t bg = getColorBG();
     canvas.fillSprite(bg);
-    if (s_phase == LOCK) drawLock(canvas, fg, bg);
+    if (s_phase == HUNT) drawHunt(canvas, fg, bg);
+    else if (s_phase == LOCK) drawLock(canvas, fg, bg);
     else drawSweep(canvas, fg, bg);
 }
 

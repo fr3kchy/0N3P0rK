@@ -14,6 +14,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <string.h>
 
 namespace Cap {
 namespace Pcap {
@@ -38,16 +39,39 @@ struct __attribute__((packed)) PacketHeader {
 };
 
 // Minimal radiotap header (8 bytes). No optional fields.
-// hashcat and hcxpcapng only need a syntactically valid radiotap to parse
-// the 802.11 frame that follows.
 static const uint8_t RADIOTAP_HEADER[8] = {
-    0x00,       // revision
-    0x00,       // pad
-    0x08, 0x00, // header length = 8
-    0x00, 0x00, 0x00, 0x00  // present flags = 0
+    0x00, 0x00,
+    0x08, 0x00,
+    0x00, 0x00, 0x00, 0x00
 };
 
 static const size_t RADIOTAP_LEN = sizeof(RADIOTAP_HEADER);
+static const size_t RADIOTAP_FAT_LEN = 16;
+
+// FLAGS + RATE + CHANNEL + DBM_ANTSIGNAL. wpa-sec / hcxpcapng like this.
+inline uint8_t buildRadiotap(uint8_t* out, uint8_t ch, int8_t rssi, bool fat) {
+    if (!out) return 0;
+    if (!fat) {
+        memcpy(out, RADIOTAP_HEADER, RADIOTAP_LEN);
+        return (uint8_t)RADIOTAP_LEN;
+    }
+    uint32_t present = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = (uint8_t)RADIOTAP_FAT_LEN;
+    out[3] = 0;
+    memcpy(out + 4, &present, 4);
+    out[8] = 0x00;   // flags: no FCS at end
+    out[9] = 0x02;   // rate 1 Mbps
+    uint16_t freq = (ch == 14) ? 2484 : (uint16_t)(2407 + 5 * ch);
+    out[10] = (uint8_t)(freq & 0xFF);
+    out[11] = (uint8_t)(freq >> 8);
+    out[12] = 0xA0;  // 2 GHz + CCK
+    out[13] = 0x00;
+    out[14] = (uint8_t)rssi;
+    out[15] = 0;
+    return (uint8_t)RADIOTAP_FAT_LEN;
+}
 
 } // namespace Pcap
 } // namespace Cap

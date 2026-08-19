@@ -62,6 +62,15 @@ struct PersonalityConfig {
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };
 static const uint8_t HOP_SET_COUNT = 3;
 
+// OURS = current greedy EAPOL + broadcast kick
+// PAN  = extra stack (bidir kick, EAPOL-Start, PMKID probe, optional CSA/flood)
+// AUTO = OURS first, then PAN if no pair lands
+enum class HsMethod : uint8_t { AUTO = 0, OURS = 1, PAN = 2 };
+static const uint8_t HS_METHOD_COUNT = 3;
+
+enum class RadioPack : uint8_t { STOCK = 0, OURS = 1, PAN = 2 };
+static const uint8_t RADIO_PACK_COUNT = 3;
+
 // Knobs for LIGHT / AGGRO / EVILPIG — same code, different tune.
 struct RadioConfig {
     uint16_t hopMs = 300;      // 50..2000 channel dwell
@@ -71,6 +80,18 @@ struct RadioConfig {
     bool randomMac = false;
     int8_t minRssi = -85;      // skip weaker APs for kick
     uint8_t hopSet = 0;        // HopSet: ALL / PRI / 1-6-11
+    uint8_t hsMethod = 0;      // HsMethod AUTO / OURS / PAN
+    uint8_t fallbackSec = 25;  // AUTO: seconds before trying the other method
+    uint8_t kickBurst = 2;     // deauth/disassoc rounds per AP
+    bool bidirKick = true;     // also spoof client -> AP
+    bool eapolTx = true;       // EAPOL-Start / Logoff (works on PMF)
+    bool pmkidProbe = true;    // Open-System auth + assoc for PMKID
+    bool csaHerd = false;      // spoofed CSA beacon
+    bool authFlood = false;    // random-MAC auth flood if no clients
+    uint8_t deauthReason = 7;
+    uint16_t pauseMs = 1200;   // listen after M1, don't kick
+    bool fatPcap = true;       // radiotap with ch / rate / rssi
+    uint8_t pack = 0;          // RadioPack last applied
 };
 
 struct BleConfig {
@@ -88,6 +109,8 @@ class Config {
 public:
     static bool init();
     static bool save();
+    static void applyRadioPack(uint8_t pack);
+    static void resetRadio();
 
     static PersonalityConfig& personality() { return personalityConfig; }
     static RadioConfig& radio() { return radioConfig; }

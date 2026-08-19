@@ -15,7 +15,7 @@
 
 namespace SettingsMenu {
 
-enum class Kind : uint8_t { TOGGLE, VALUE, TEXT, BIND };
+enum class Kind : uint8_t { TOGGLE, VALUE, TEXT, BIND, ACTION };
 enum class ConnPhase : uint8_t { LIST = 0, PASS = 1 };
 
 struct Item {
@@ -56,13 +56,26 @@ static const Item SYSTEM[] = {
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
-    {"HOP MS",   Kind::VALUE,  0,  50, 2000, 50},
-    {"LOCK MS",  Kind::VALUE,  1,  0, 15000, 500},
-    {"LOCK HS",  Kind::TOGGLE, 2,  0, 1, 1},
-    {"DEAUTH",   Kind::TOGGLE, 3,  0, 1, 1},
-    {"RND MAC",  Kind::TOGGLE, 4,  0, 1, 1},
-    {"ATK RSSI", Kind::VALUE,  5,  -90, -50, 5},
-    {"HOP SET",  Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
+    {"PACK",      Kind::VALUE,  18, 0, RADIO_PACK_COUNT - 1, 1},
+    {"HS METHOD", Kind::VALUE,  7,  0, HS_METHOD_COUNT - 1, 1},
+    {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
+    {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
+    {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
+    {"EAPOL TX",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"PMKID",     Kind::TOGGLE, 12, 0, 1, 1},
+    {"CSA",       Kind::TOGGLE, 13, 0, 1, 1},
+    {"AUTH FLOOD",Kind::TOGGLE, 14, 0, 1, 1},
+    {"REASON",    Kind::VALUE,  15, 1, 8, 1},
+    {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
+    {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    {"RESET",     Kind::ACTION, 19, 0, 0, 0},
+    {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
+    {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
+    {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
+    {"DEAUTH",    Kind::TOGGLE, 3,  0, 1, 1},
+    {"RND MAC",   Kind::TOGGLE, 4,  0, 1, 1},
+    {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
+    {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
 };
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
 
@@ -109,6 +122,19 @@ static const char* const H_SYSTEM[] = {
     "0 = SCREEN OFF WHEN DIM."
 };
 static const char* const H_RADIO[] = {
+    "STOCK / OURS / PAN. LOADS ALL.",
+    "AUTO TRIES OURS THEN PAN.",
+    "AUTO: SECONDS THEN OTHER METHOD.",
+    "DEAUTH ROUNDS PER AP.",
+    "KICK BOTH WAYS AP<->STA.",
+    "EAPOL-START / LOGOFF TX.",
+    "AUTH+ASSOC FOR PMKID.",
+    "SPOOF CSA BEACON TO HERD.",
+    "RANDOM AUTH IF NO CLIENTS.",
+    "802.11 DEAUTH REASON CODE.",
+    "LISTEN AFTER M1, NO KICK.",
+    "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "ENT = BACK TO STOCK RADIO.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
     "LOCK WHEN HANDSHAKE LANDS.",
@@ -212,6 +238,22 @@ static const char* hopSetName(uint8_t s) {
         default: return "?";
     }
 }
+static const char* hsMethodName(uint8_t s) {
+    switch ((HsMethod)s) {
+        case HsMethod::AUTO: return "AUTO";
+        case HsMethod::OURS: return "OURS";
+        case HsMethod::PAN:  return "PAN";
+        default: return "?";
+    }
+}
+static const char* radioPackName(uint8_t s) {
+    switch ((RadioPack)s) {
+        case RadioPack::STOCK: return "STOCK";
+        case RadioPack::OURS:  return "OURS";
+        case RadioPack::PAN:   return "PAN";
+        default: return "?";
+    }
+}
 
 static int getValue(const Item& it) {
     PersonalityConfig& p = Config::personality();
@@ -255,6 +297,18 @@ static int getValue(const Item& it) {
             case 4: return r.randomMac ? 1 : 0;
             case 5: return r.minRssi;
             case 6: return r.hopSet;
+            case 7: return r.hsMethod;
+            case 8: return r.fallbackSec;
+            case 9: return r.kickBurst;
+            case 10: return r.bidirKick ? 1 : 0;
+            case 11: return r.eapolTx ? 1 : 0;
+            case 12: return r.pmkidProbe ? 1 : 0;
+            case 13: return r.csaHerd ? 1 : 0;
+            case 14: return r.authFlood ? 1 : 0;
+            case 15: return r.deauthReason;
+            case 16: return r.pauseMs;
+            case 17: return r.fatPcap ? 1 : 0;
+            case 18: return r.pack;
             default: return 0;
         }
     }
@@ -281,6 +335,10 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         snprintf(out, len, "%c", k);
         return;
     }
+    if (it.kind == Kind::ACTION) {
+        snprintf(out, len, editing ? "[ENT]" : "ENT");
+        return;
+    }
     if (it.kind == Kind::TOGGLE) {
         snprintf(out, len, getValue(it) ? "YES" : "NO");
         return;
@@ -298,6 +356,12 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         else snprintf(raw, sizeof(raw), "%dS", v);
     } else if (s_page == SettingsPage::RADIO && it.id == 6) {
         strncpy(raw, hopSetName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::RADIO && it.id == 7) {
+        strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::RADIO && it.id == 18) {
+        strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::RADIO && it.id == 8) {
+        snprintf(raw, sizeof(raw), "%dS", getValue(it));
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -385,6 +449,21 @@ static bool setValue(const Item& it, int v) {
             case 4: r.randomMac = v != 0; break;
             case 5: r.minRssi = (int8_t)v; break;
             case 6: r.hopSet = (uint8_t)v; break;
+            case 7: r.hsMethod = (uint8_t)v; break;
+            case 8: r.fallbackSec = (uint8_t)v; break;
+            case 9: r.kickBurst = (uint8_t)v; break;
+            case 10: r.bidirKick = v != 0; break;
+            case 11: r.eapolTx = v != 0; break;
+            case 12: r.pmkidProbe = v != 0; break;
+            case 13: r.csaHerd = v != 0; break;
+            case 14: r.authFlood = v != 0; break;
+            case 15: r.deauthReason = (uint8_t)v; break;
+            case 16: r.pauseMs = (uint16_t)v; break;
+            case 17: r.fatPcap = v != 0; break;
+            case 18:
+                Config::applyRadioPack((uint8_t)v);
+                Display::showToast(radioPackName((uint8_t)v), 900);
+                return true;
             default: return false;
         }
         Config::save();
@@ -482,6 +561,7 @@ const char* bottomHint() {
     if (it && s_idx < n) {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
         if (it[s_idx].kind == Kind::TEXT) return "ENT type name";
+        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
         return "ENT edit  ;/.  ` back";
     }
     return ";/.  ENT  ` back";
@@ -705,6 +785,15 @@ void update() {
         s_bind = true;
         SFX::play(SFX::MENU_CLICK);
         Display::showToast("PRESS KEY", 700);
+        return;
+    }
+
+    if (cur.kind == Kind::ACTION) {
+        if (s_page == SettingsPage::RADIO && cur.id == 19) {
+            Config::resetRadio();
+            SFX::play(SFX::CONFIRM);
+            Display::showToast("RADIO RESET", 1000);
+        }
         return;
     }
 

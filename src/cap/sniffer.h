@@ -13,11 +13,13 @@ enum class RunMode : uint8_t {
     Off = 0,
     Light,
     Aggressive,
+    Pinned,
 };
 
 void begin();
 void startLight();
 void startAggressive();
+void startPinned(uint8_t ch, const uint8_t* bssid, const char* ssid = nullptr);
 void stop();
 bool isRunning();
 RunMode runMode();
@@ -37,6 +39,7 @@ struct Counters {
     char     currentBssid[18];
     char     currentSsid[33];
     char     lastHsSsid[33];
+    char     methodTag[8];
 };
 const Counters& counters();
 

@@ -18,4 +18,13 @@ bool sendDeauthFrame(const uint8_t* bssid, uint8_t channel, const uint8_t* staMa
 // Send a disassoc frame
 bool sendDisassocFrame(const uint8_t* bssid, uint8_t channel, const uint8_t* staMac, uint8_t reason);
 
+bool sendAuthentication(const uint8_t* bssid);
+bool sendAssociationRequest(const uint8_t* bssid, const char* ssid);
+bool sendEAPOLStart(const uint8_t* bssid, const uint8_t* clientMac);
+bool sendEAPOLLogoff(const uint8_t* bssid, const uint8_t* clientMac);
+bool sendCSABeacon(const uint8_t* bssid, const char* ssid,
+                   uint8_t currentChan, uint8_t targetChannel, uint8_t switchCount = 1);
+bool sendAuthFlood(const uint8_t* bssid, uint8_t count = 8);
+void sendBidirectionalKick(const uint8_t* bssid, const uint8_t* client, uint8_t reason, uint8_t rounds);
+
 }

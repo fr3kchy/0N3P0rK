@@ -1,5 +1,5 @@
 // cap/capture_name.h
-// OnePork-style capture names: SSID_BSSID + companion .txt
+// Capture names: SSID_BSSID.pcap / _hs.22000. No sidecar .txt.
 #pragma once
 
 #include <stddef.h>

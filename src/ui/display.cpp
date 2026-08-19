@@ -469,11 +469,19 @@ void Display::drawBottomBar() {
 
     char left[48];
     left[0] = '\0';
-    char rightName[24];
+    char rightName[32];
     rightName[0] = '\0';
     bool capLive = Cap::isRunning();
 
-    if (Cap::isRunning()) {
+    if (App::mode() == AppMode::SPECTRUM && SpectrumMode::isRunning()) {
+        SpectrumMode::getStatusLine(left, sizeof(left));
+        if (Cap::isRunning()) {
+            const Cap::Counters& c = Cap::counters();
+            snprintf(rightName, sizeof(rightName), "PIN HS:%02u CH:%02u",
+                     (unsigned)c.framesEapol,
+                     (unsigned)c.currentChannel);
+        }
+    } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
         const char* net = c.lastHsSsid[0] ? c.lastHsSsid
                          : (c.currentSsid[0] ? c.currentSsid : nullptr);
@@ -488,9 +496,13 @@ void Display::drawBottomBar() {
         } else {
             strncpy(left, "SCAN", sizeof(left) - 1);
         }
-        snprintf(rightName, sizeof(rightName), "%s%s HS:%02u CH:%02u",
-                 Cap::runMode() == Cap::RunMode::Aggressive ? "AGG" : "LITE",
+        const char* tag = "LITE";
+        if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "AGG";
+        else if (Cap::runMode() == Cap::RunMode::Pinned) tag = "PIN";
+        snprintf(rightName, sizeof(rightName), "%s%s/%s HS:%02u CH:%02u",
+                 tag,
                  Cap::isLocked() ? "*" : "",
+                 c.methodTag[0] ? c.methodTag : "OURS",
                  (unsigned)c.framesEapol,
                  (unsigned)c.currentChannel);
     } else if (bottomHint[0]) {

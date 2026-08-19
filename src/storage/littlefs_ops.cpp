@@ -383,6 +383,39 @@ static void splitCapturesOut(const char* from) {
     root.close();
 }
 
+static void wipeHsCompanionTxt() {
+    for (uint8_t pass = 0; pass < 8; pass++) {
+        File root = SD.open(DIR_HS);
+        if (!root || !root.isDirectory()) {
+            if (root) root.close();
+            return;
+        }
+        char names[24][48];
+        uint8_t n = 0;
+        File f = root.openNextFile();
+        while (f && n < 24) {
+            if (!f.isDirectory()) {
+                const char* name = baseName(f.name());
+                if (endsWithCI(name, ".txt")) {
+                    strncpy(names[n], name, 47);
+                    names[n][47] = '\0';
+                    n++;
+                }
+            }
+            f.close();
+            f = root.openNextFile();
+        }
+        if (f) f.close();
+        root.close();
+        if (n == 0) return;
+        for (uint8_t i = 0; i < n; i++) {
+            char path[96];
+            snprintf(path, sizeof(path), "%s/%s", DIR_HS, names[i]);
+            SD.remove(path);
+        }
+    }
+}
+
 void migrateLegacy() {
     if (!s_mounted) return;
     ensureDir(DIR_HS);
@@ -402,6 +435,7 @@ void migrateLegacy() {
         SD.rename("/0N3P0rK/wpa-sec/wpasec_results.txt", FILE_WPASEC_RESULTS);
     if (!SD.exists(FILE_WPASEC_UPLOADED) && SD.exists("/0N3P0rK/wpa-sec/wpasec_uploaded.txt"))
         SD.rename("/0N3P0rK/wpa-sec/wpasec_uploaded.txt", FILE_WPASEC_UPLOADED);
+    wipeHsCompanionTxt();
 }
 
 bool formatStorage() {
