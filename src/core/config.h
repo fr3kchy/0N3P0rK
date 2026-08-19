@@ -56,7 +56,7 @@ struct PersonalityConfig {
     uint8_t scrollSpeed = 9;
     bool fruitTreesAmbient = true;
     bool freeLife = true;  // pig walks/jumps/hides even during functions
-    bool wolfEatLoot = true;  // bite at 0 hearts deletes handshake files
+    bool wolfEatLoot = true;  // bite at 0 hearts stashes loot; hit/Am-off returns it
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

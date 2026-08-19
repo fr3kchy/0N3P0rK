@@ -5,6 +5,7 @@
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
+#include "../storage/littlefs_ops.h"
 #include "../audio/sfx.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
@@ -403,6 +404,15 @@ static bool setValue(const Item& it, int v) {
                 break;
             case 15:
                 p.wolfEatLoot = v != 0;
+                if (v == 0) {
+                    uint8_t n = Storage::restoreWolfLoot();
+                    if (n) {
+                        char msg[28];
+                        snprintf(msg, sizeof(msg), "WOLF GAVE %u FILE%s",
+                                 (unsigned)n, n == 1 ? "" : "S");
+                        Display::showToast(msg, 2200);
+                    }
+                }
                 break;
             case 8:
                 p.fruitTreesAmbient = v != 0;

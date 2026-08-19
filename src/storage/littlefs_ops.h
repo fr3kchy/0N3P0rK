@@ -51,6 +51,7 @@ const char* const DIR_EVILPIG    = "/0N3P0rK/evilpig";
 const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
 const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
 const char* const DIR_IR         = "/0N3P0rK/ir";
+const char* const DIR_WOLF       = "/0N3P0rK/wolf";
 
 const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/key.txt";
 const char* const FILE_WPASEC_RESULTS    = "/0N3P0rK/wpa-sec/results.txt";
@@ -71,8 +72,10 @@ void loadKeysIntoNet();
 void migrateLegacy();
 void brewHeap();
 
-// Wolf-eat: delete up to want random capture files (.pcap/.22000). Never keys.
+// Wolf-eat: move up to want random capture files into /0N3P0rK/wolf. Never keys.
 uint8_t eatRandomLoot(uint8_t want);
+// Spit belly back into handshakes (hit wolf / turn Am off).
+uint8_t restoreWolfLoot();
 
 // One capture per BSSID: drop HIDDEN_/MAC copies, keep named SSID + handshake.
 uint8_t compactLoot();

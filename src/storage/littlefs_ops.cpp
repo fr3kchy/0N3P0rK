@@ -124,6 +124,7 @@ bool begin() {
     SD.mkdir(DIR_PIGPASS);
     SD.mkdir(DIR_PASSWORLD);
     SD.mkdir(DIR_IR);
+    SD.mkdir(DIR_WOLF);
     migrateLegacy();
     unlockSd();
     return true;
@@ -510,8 +511,16 @@ void loadKeysIntoNet() {
     }
 }
 
+static bool moveLootFile(const char* from, const char* to) {
+    if (!from || !to || !from[0] || !to[0]) return false;
+    if (SD.exists(to)) SD.remove(to);
+    if (SD.rename(from, to)) return true;
+    return false;
+}
+
 uint8_t eatRandomLoot(uint8_t want) {
     if (!s_mounted || want == 0) return 0;
+    ensureDir(DIR_WOLF);
     struct Item { char path[80]; };
     Item list[32];
     uint8_t n = 0;
@@ -545,14 +554,59 @@ uint8_t eatRandomLoot(uint8_t want) {
     uint8_t eaten = 0;
     for (uint8_t k = 0; k < want && n > 0; k++) {
         uint8_t pick = (uint8_t)(esp_random() % n);
-        if (SD.remove(list[pick].path)) {
-            Serial.printf("[LOOT] wolf ate %s\n", list[pick].path);
+        const char* name = baseName(list[pick].path);
+        char dest[96];
+        snprintf(dest, sizeof(dest), "%s/%s", DIR_WOLF, name);
+        if (moveLootFile(list[pick].path, dest)) {
+            Serial.printf("[LOOT] wolf hid %s\n", dest);
             eaten++;
         }
         list[pick] = list[n - 1];
         n--;
     }
     return eaten;
+}
+
+uint8_t restoreWolfLoot() {
+    if (!s_mounted) return 0;
+    ensureDir(DIR_WOLF);
+    ensureDir(DIR_HS);
+    File root = SD.open(DIR_WOLF);
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return 0;
+    }
+    struct Item { char name[FILE_NAME_MAX]; };
+    Item list[32];
+    uint8_t n = 0;
+    File f = root.openNextFile();
+    while (f && n < 32) {
+        if (!f.isDirectory()) {
+            copyName(baseName(f.name()), list[n].name, FILE_NAME_MAX);
+            n++;
+        }
+        f.close();
+        f = root.openNextFile();
+    }
+    if (f) f.close();
+    root.close();
+
+    uint8_t given = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        char src[96];
+        char dest[96];
+        snprintf(src, sizeof(src), "%s/%s", DIR_WOLF, list[i].name);
+        snprintf(dest, sizeof(dest), "%s/%s", DIR_HS, list[i].name);
+        if (SD.exists(dest)) {
+            SD.remove(src);
+            continue;
+        }
+        if (moveLootFile(src, dest)) {
+            Serial.printf("[LOOT] wolf gave back %s\n", dest);
+            given++;
+        }
+    }
+    return given;
 }
 
 static bool isProtectedName(const char* name) {

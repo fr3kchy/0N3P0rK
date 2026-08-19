@@ -9,6 +9,7 @@
 #include "../audio/sfx.h"
 #include "../core/config.h"
 #include "../core/xp.h"
+#include "../storage/littlefs_ops.h"
 #include <esp_random.h>
 #include <math.h>
 
@@ -172,6 +173,15 @@ bool spawnSecond() {
     return false;
 }
 
+static void spitEatenLoot() {
+    uint8_t n = Storage::restoreWolfLoot();
+    if (!n) return;
+    char msg[28];
+    snprintf(msg, sizeof(msg), "WOLF GAVE %u FILE%s",
+             (unsigned)n, n == 1 ? "" : "S");
+    Display::showToast(msg, 2200);
+}
+
 void scareAway() {
     // Scare nearest active wolf to pig
     int pigFeet = Avatar::getCurrentX() + 14 * PX;
@@ -198,6 +208,7 @@ void scareAway() {
     w.howled = true;
     SFX::play(SFX::WOLF_HIT);
     XP::addXP(XPEvent::WOLF_SCARE);
+    spitEatenLoot();
 }
 
 void scareNear(int feetX, int radius) {
@@ -224,6 +235,7 @@ void scareNear(int feetX, int radius) {
     if (any) {
         SFX::play(SFX::WOLF_HIT);
         XP::addXP(XPEvent::WOLF_SCARE);
+        spitEatenLoot();
     }
 }
 
