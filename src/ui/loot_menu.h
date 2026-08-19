@@ -30,5 +30,6 @@ private:
     static void scan();
     static void handleInput();
     static void startSync();
+    static void startPull();
     static void runDiag();
 };

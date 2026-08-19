@@ -55,6 +55,100 @@ uint8_t EvilPigMode::lootScroll = 0;
 static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static uint8_t s_prevSoftApClients = 0;
 
+static const uint8_t EP_STA_MAX = 8;
+static const uint8_t EP_NET_MAX = 24;
+static uint8_t s_epBssid[EP_NET_MAX][6];
+static uint8_t s_epCh[EP_NET_MAX];
+static uint8_t s_epNets = 0;
+static uint8_t s_epSta[EP_NET_MAX][EP_STA_MAX][6];
+static uint8_t s_epStaN[EP_NET_MAX];
+static volatile bool s_epSniff = false;
+static uint8_t s_epHopI = 0;
+static uint32_t s_epHopMs = 0;
+
+static int epFindIdx(const uint8_t* bssid) {
+    if (!bssid) return -1;
+    for (uint8_t i = 0; i < s_epNets; i++) {
+        if (memcmp(s_epBssid[i], bssid, 6) == 0) return (int)i;
+    }
+    return -1;
+}
+
+static void epCliClear() {
+    memset(s_epStaN, 0, sizeof(s_epStaN));
+    memset(s_epSta, 0, sizeof(s_epSta));
+}
+
+static void epCliAdd(const uint8_t* bssid, const uint8_t* sta) {
+    if (!bssid || !sta) return;
+    if (sta[0] & 1) return;
+    if (memcmp(sta, bssid, 6) == 0) return;
+    int idx = epFindIdx(bssid);
+    if (idx < 0) return;
+    uint8_t n = s_epStaN[idx];
+    for (uint8_t i = 0; i < n; i++) {
+        if (memcmp(s_epSta[idx][i], sta, 6) == 0) return;
+    }
+    if (n >= EP_STA_MAX) return;
+    memcpy(s_epSta[idx][n], sta, 6);
+    s_epStaN[idx] = (uint8_t)(n + 1);
+}
+
+static void epOnRx(void* buf, wifi_promiscuous_pkt_type_t type) {
+    if (!s_epSniff || type != WIFI_PKT_DATA) return;
+    const wifi_promiscuous_pkt_t* pkt = (const wifi_promiscuous_pkt_t*)buf;
+    if (!pkt || !pkt->payload) return;
+    const uint8_t* p = pkt->payload;
+    if (pkt->rx_ctrl.sig_len < 24) return;
+    uint8_t toDs = (p[1] & 0x01) != 0;
+    uint8_t fromDs = (p[1] & 0x02) != 0;
+    const uint8_t* bssid = nullptr;
+    const uint8_t* sta = nullptr;
+    if (toDs && !fromDs) { bssid = p + 4; sta = p + 10; }
+    else if (!toDs && fromDs) { bssid = p + 10; sta = p + 4; }
+    else { bssid = p + 16; sta = p + 10; }
+    epCliAdd(bssid, sta);
+}
+
+static void epCliStop() {
+    s_epSniff = false;
+    WiFiUtils::stopPromiscuous();
+}
+
+static void epCliArm(uint8_t n, const uint8_t bssid[][6], const uint8_t* ch) {
+    s_epNets = n > EP_NET_MAX ? EP_NET_MAX : n;
+    for (uint8_t i = 0; i < s_epNets; i++) {
+        memcpy(s_epBssid[i], bssid[i], 6);
+        s_epCh[i] = ch[i];
+    }
+    epCliClear();
+    s_epHopI = 0;
+    s_epHopMs = millis();
+    wifi_promiscuous_filter_t filt{};
+    filt.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA;
+    esp_wifi_set_promiscuous_filter(&filt);
+    esp_wifi_set_promiscuous_rx_cb(&epOnRx);
+    esp_wifi_set_promiscuous(true);
+    s_epSniff = true;
+    if (s_epNets && s_epCh[0] >= 1 && s_epCh[0] <= 13)
+        esp_wifi_set_channel(s_epCh[0], WIFI_SECOND_CHAN_NONE);
+}
+
+static void epCliTick(uint8_t n, uint8_t* clientsOut) {
+    if (!s_epSniff) return;
+    uint32_t now = millis();
+    if (now - s_epHopMs >= 280 && s_epNets) {
+        s_epHopMs = now;
+        s_epHopI = (uint8_t)((s_epHopI + 1) % s_epNets);
+        uint8_t ch = s_epCh[s_epHopI];
+        if (ch >= 1 && ch <= 13) esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    }
+    uint8_t lim = n < s_epNets ? n : s_epNets;
+    for (uint8_t i = 0; i < lim; i++) clientsOut[i] = s_epStaN[i];
+}
+
+
+
 static const char PORTAL_HTML[] PROGMEM = R"HTML(
 <!DOCTYPE html><html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -178,6 +272,7 @@ void EvilPigMode::sortListByRssi() {
 // promiscuous + scan don't fight (that path used to fail / look like "error").
 uint8_t EvilPigMode::staScanIntoList() {
     listCount = 0;
+    epCliStop();
     bool reconWas = NetworkRecon::isRunning() || NetworkRecon::isPaused();
     if (reconWas) {
         NetworkRecon::stop();
@@ -218,10 +313,15 @@ uint8_t EvilPigMode::staScanIntoList() {
     }
     WiFi.scanDelete();
     sortListByRssi();
-
-    // Restart recon for live client estimates (optional enrichment)
-    if (reconWas) {
-        NetworkRecon::start();
+    {
+        uint8_t b[EP_NET_MAX][6];
+        uint8_t ch[EP_NET_MAX];
+        uint8_t n = listCount > EP_NET_MAX ? EP_NET_MAX : listCount;
+        for (uint8_t i = 0; i < n; i++) {
+            memcpy(b[i], list[i].bssid, 6);
+            ch[i] = list[i].channel;
+        }
+        epCliArm(n, b, ch);
     }
     return listCount;
 }
@@ -505,6 +605,7 @@ void EvilPigMode::servicePortalNet() {
 
 bool EvilPigMode::startPortal() {
     applySelection();
+    epCliStop();
 
     // Own the radio cleanly — do not depend on OINK having run first
     NetworkRecon::stop();
@@ -697,6 +798,7 @@ void EvilPigMode::stop() {
     phase = Phase::SELECT;
     setStatus("STOP");
 
+    epCliStop();
     stopServers();
     NetworkRecon::stop();
     WiFiUtils::shutdown();
@@ -867,7 +969,11 @@ void EvilPigMode::update() {
     }
 
     if (phase == Phase::SELECT) {
-        if ((millis() - lastListRefresh) > 8000) refreshNetworkList();
+        uint8_t cl[EP_NET_MAX];
+        memset(cl, 0, sizeof(cl));
+        epCliTick(listCount, cl);
+        for (uint8_t i = 0; i < listCount && i < EP_NET_MAX; i++)
+            list[i].clients = cl[i];
         if (!App::windowHidden()) handleInputSelect();
         return;
     }

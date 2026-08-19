@@ -4,6 +4,7 @@
 #include "../ui/display.h"
 #include "../ui/keys.h"
 #include "../cap/sniffer.h"
+#include "../cap/hc22000.h"
 #include "../core/wsl_bypasser.h"
 #include "../core/config.h"
 #include "../piglet/avatar.h"
@@ -22,11 +23,13 @@ static const int L = 20;
 static const int R = 236;
 static const int W = R - L;
 static const int TOP = 2;
-static const int BOT = 44;
-static const int WF_TOP = 46;
-static const int WF_ROWS = 10;
-static const int CH_Y = 58;
-static const int SEL_Y = 72;
+static const int BOT = 46;
+static const int WF_TOP = 48;
+static const int WF_ROWS = 12;
+static const int CH_Y = 62;
+static const int INFO_Y = 72;
+static const int LIST_Y = 82;
+static const int HINT_Y = MAIN_H - 10;
 
 static const int8_t RSSI_MIN = -95;
 static const int8_t RSSI_MAX = -30;
@@ -302,6 +305,7 @@ static void onBeacon(const uint8_t* bssid, uint8_t rxCh, uint8_t ds, int8_t rssi
     n.auth = auth;
     n.pmf = pmf;
     n.freq = chToFreq(n.ch);
+    if (!s_hasSel && passFilt(n)) setSel(idx);
     if (ssid && ssid[0]) {
         strncpy(n.ssid, ssid, 32);
         n.ssid[32] = 0;
@@ -632,6 +636,21 @@ static void drawLobe(M5Canvas& c, float freq, int8_t rssi, bool filled, uint16_t
     }
 }
 
+static void upName(const char* in, char* out, size_t n) {
+    size_t i = 0;
+    if (!in || !in[0]) {
+        strncpy(out, "<HIDDEN>", n);
+        out[n - 1] = 0;
+        return;
+    }
+    while (in[i] && i + 1 < n) {
+        char ch = in[i];
+        if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+        out[i++] = ch;
+    }
+    out[i] = 0;
+}
+
 static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextWrap(false);
     c.drawFastVLine(L - 2, TOP, BOT - TOP, fg);
@@ -646,6 +665,12 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.drawString(lb, L - 5, y < 6 ? 6 : y);
     }
     c.drawFastHLine(L, BOT, R - L, fg);
+
+    for (int x = L; x < R; x++) {
+        uint8_t n = noise7();
+        int up = n / 3;
+        if (up) c.drawFastVLine(x, BOT - up, up, fg);
+    }
 
     for (uint8_t i = 0; i < s_nNet; i++) {
         if (!passFilt(s_net[i])) continue;
@@ -677,41 +702,61 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         int x = freqToX(chToFreq(ch));
         if (x < L || x > R) continue;
         bool hop = (ch == s_ch);
-        c.drawFastVLine(x, BOT, 2, fg);
+        c.drawFastVLine(x, BOT, 3, fg);
+        if (hop) c.fillRect(x - 5, CH_Y - 1, 11, 9, fg);
         char lb[4];
         snprintf(lb, sizeof(lb), "%u", ch);
-        c.setTextColor(hop ? UiStyle::GOLD : fg);
+        c.setTextColor(hop ? bg : fg);
         c.drawString(lb, x, CH_Y);
         c.setTextColor(fg);
     }
 
+    uint8_t tot = 0;
+    for (uint8_t i = 0; i < s_nNet; i++) if (passFilt(s_net[i])) tot++;
     const char* fn = "ALL";
     if (s_filt == F_VULN) fn = "VULN";
     else if (s_filt == F_SOFT) fn = "SOFT";
     else if (s_filt == F_HIDDEN) fn = "HID";
+    char info[40];
+    snprintf(info, sizeof(info), "[F] %s  %u AP  %upps  CH%u",
+             fn, tot, (unsigned)s_pps, s_ch);
     c.setTextDatum(top_left);
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString(info, 2, INFO_Y);
+
+    uint8_t shown = 0;
+    int y = LIST_Y;
     if (s_sel >= 0 && s_sel < s_nNet && passFilt(s_net[s_sel])) {
         const Net& n = s_net[s_sel];
-        char name[16];
-        if (n.ssid[0]) {
-            strncpy(name, n.ssid, 15);
-            name[15] = 0;
-        } else {
-            strncpy(name, "<HIDDEN>", sizeof(name));
-        }
-        for (char* p = name; *p; p++) *p = (char)toupper((unsigned char)*p);
+        char name[14];
+        upName(n.ssid, name, sizeof(name));
         char line[40];
-        snprintf(line, sizeof(line), "%s  %s CH%u %+d",
-                 name, authStr(n.auth), n.ch, n.rssi);
-        c.setTextColor(n.pmf ? UiStyle::DIM : UiStyle::PINK);
-        c.drawString(line, 2, SEL_Y);
-        c.setTextColor(UiStyle::DIM);
-        c.drawString(fn, DISPLAY_W - 28, SEL_Y);
-    } else {
-        c.setTextColor(UiStyle::DIM);
-        c.drawString("NO NET", 2, SEL_Y);
-        c.drawString(fn, DISPLAY_W - 28, SEL_Y);
+        snprintf(line, sizeof(line), "> %s  CH%u %s %+d",
+                 name, n.ch, authStr(n.auth), n.rssi);
+        c.setTextColor(UiStyle::PINK);
+        c.drawString(line, 2, y);
+        shown++;
+        y += 9;
     }
+    for (uint8_t i = 0; i < s_nNet && shown < 2; i++) {
+        if (!passFilt(s_net[i])) continue;
+        if ((int)i == s_sel) continue;
+        char name[14];
+        upName(s_net[i].ssid, name, sizeof(name));
+        char line[40];
+        snprintf(line, sizeof(line), "  %s  CH%u %+d", name, s_net[i].ch, s_net[i].rssi);
+        c.setTextColor(fg);
+        c.drawString(line, 2, y);
+        shown++;
+        y += 9;
+    }
+    if (!shown) {
+        c.setTextColor(UiStyle::DIM);
+        c.drawString("scanning 1-13...", 2, LIST_Y);
+    }
+
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString(";/. sel  ENT lock  A hunt  F filt  ` exit", 2, HINT_Y);
 }
 
 static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
@@ -721,34 +766,36 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextDatum(top_left);
     if (idx < 0) {
         c.setTextColor(UiStyle::GOLD);
-        c.drawString("LOST", 4, 4);
+        c.drawString("NETWORK LOST", 4, 8);
+        c.setTextColor(UiStyle::DIM);
+        c.drawString("` back to scan", 4, HINT_Y);
         return;
     }
     const Net& n = s_net[idx];
     char name[16];
-    if (n.ssid[0]) {
-        strncpy(name, n.ssid, 15);
-        name[15] = 0;
-    } else {
-        strncpy(name, "<HIDDEN>", sizeof(name));
-    }
-    for (char* p = name; *p; p++) *p = (char)toupper((unsigned char)*p);
+    upName(n.ssid, name, sizeof(name));
+    char head[40];
+    snprintf(head, sizeof(head), "LOCK  %s", name);
     c.setTextColor(UiStyle::GOLD);
-    c.drawString(name, 4, 2);
-    char meta[28];
-    snprintf(meta, sizeof(meta), "CH%u %s  %u STA", n.ch, authStr(n.auth), n.nCli);
+    c.drawString(head, 4, 2);
+    char meta[40];
+    snprintf(meta, sizeof(meta), "CH%u %s  %upps  %u STA%s",
+             n.ch, authStr(n.auth), (unsigned)s_pps, n.nCli,
+             n.pmf ? "  PMF" : "");
     c.setTextColor(fg);
     c.drawString(meta, 4, 14);
 
     if (n.nCli == 0) {
         c.setTextColor(UiStyle::DIM);
-        c.drawString("NO CLIENTS", 4, 36);
+        c.drawString("no clients yet", 4, 36);
+        c.drawString("W = wake / deauth room", 4, 48);
     } else {
         const int lh = 12;
+        uint8_t vis = 4;
         if (s_cliSel < s_cliScroll) s_cliScroll = (uint8_t)s_cliSel;
-        if (s_cliSel >= s_cliScroll + VIS_CLI)
-            s_cliScroll = (uint8_t)(s_cliSel - VIS_CLI + 1);
-        for (uint8_t i = 0; i < VIS_CLI; i++) {
+        if (s_cliSel >= s_cliScroll + vis)
+            s_cliScroll = (uint8_t)(s_cliSel - vis + 1);
+        for (uint8_t i = 0; i < vis; i++) {
             int ci = s_cliScroll + i;
             if (ci >= n.nCli) break;
             const Client& cl = n.cli[ci];
@@ -759,19 +806,21 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
             } else {
                 c.setTextColor(fg);
             }
-            char line[28];
-            snprintf(line, sizeof(line), "%u  %02X%02X%02X  %+d",
+            char line[36];
+            snprintf(line, sizeof(line), "%u  %02X:%02X:%02X  %+ddB  %u",
                      (unsigned)(ci + 1),
                      cl.mac[3], cl.mac[4], cl.mac[5],
-                     cl.rssi);
+                     cl.rssi, (unsigned)cl.pkts);
             c.drawString(line, 6, y);
         }
     }
 
     if (s_reveal) {
         c.setTextColor(UiStyle::GOLD);
-        c.drawString("WAKE...", 4, MAIN_H - 12);
+        c.drawString("WAKING CLIENTS...", 4, 80);
     }
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString("ENT hunt  SPC kick  W wake  ` back", 2, HINT_Y);
 }
 
 static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
@@ -781,28 +830,51 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     const Cap::Counters& cap = Cap::counters();
     c.setTextSize(1);
     c.setTextDatum(top_left);
-    const char* name = (idx >= 0 && s_net[idx].ssid[0]) ? s_net[idx].ssid : "HIDDEN";
-    char up[16];
-    strncpy(up, name, 15);
-    up[15] = 0;
-    for (char* p = up; *p; p++) *p = (char)toupper((unsigned char)*p);
+
+    char name[16];
+    upName((idx >= 0 && s_net[idx].ssid[0]) ? s_net[idx].ssid : "HIDDEN", name, sizeof(name));
+    char head[36];
+    snprintf(head, sizeof(head), "HUNT  %s", name);
     c.setTextColor(UiStyle::GOLD);
-    c.drawString(up, 4, 4);
-    c.setTextColor(fg);
-    char line[28];
-    snprintf(line, sizeof(line), "CH%u  %s",
+    c.drawString(head, 4, 2);
+
+    char line[40];
+    snprintf(line, sizeof(line), "CH%u  %s  %s",
              s_monCh,
-             idx >= 0 ? authStr(s_net[idx].auth) : "?");
-    c.drawString(line, 4, 18);
-    snprintf(line, sizeof(line), "HS %u   WR %u",
-             (unsigned)cap.framesEapol,
-             (unsigned)cap.framesWritten);
+             idx >= 0 ? authStr(s_net[idx].auth) : "?",
+             cap.methodTag[0] ? cap.methodTag : "OURS");
+    c.setTextColor(fg);
+    c.drawString(line, 4, 14);
+
+    snprintf(line, sizeof(line), "kick %u   eapol %u",
+             (unsigned)cap.framesDeauth, (unsigned)cap.framesEapol);
     c.setTextColor(UiStyle::PINK);
-    c.drawString(line, 4, 36);
+    c.drawString(line, 4, 28);
+
+    snprintf(line, sizeof(line), "write %u   files %u",
+             (unsigned)cap.framesWritten, (unsigned)cap.filesOpened);
+    c.setTextColor(fg);
+    c.drawString(line, 4, 40);
+
+    bool pair = Hc22000::hasPair(s_monBssid);
+    c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
+    c.drawString(pair ? "PAIR  YES  saved" : "PAIR  no  waiting", 4, 54);
+
     if (cap.lastHsSsid[0]) {
+        char got[36];
+        snprintf(got, sizeof(got), "GOT  %s", cap.lastHsSsid);
         c.setTextColor(UiStyle::GOLD);
-        c.drawString("GOT IT", 4, 54);
+        c.drawString(got, 4, 66);
     }
+
+    c.setTextColor(UiStyle::CYAN);
+    const char* st = "listening";
+    if (Cap::isLocked()) st = "hold after M1";
+    else if (cap.framesDeauth) st = "kicking + sniff";
+    c.drawString(st, 4, 80);
+
+    c.setTextColor(UiStyle::GOLD);
+    c.drawString("SPC extra kick    ` stop hunt", 2, HINT_Y);
 }
 
 void start() {
@@ -853,12 +925,18 @@ bool isRunning() { return s_run; }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
-    if (s_phase == HUNT)
-        snprintf(out, n, "SPC kick   ` stop");
-    else if (s_phase == LOCK)
-        snprintf(out, n, "ENT hunt  SPC kick  W  `");
-    else
-        snprintf(out, n, ";/.  ENT lock  A hunt  F  `");
+    if (s_phase == HUNT) {
+        const Cap::Counters& cap = Cap::counters();
+        snprintf(out, n, "HUNT HS:%u  %s",
+                 (unsigned)cap.framesEapol,
+                 Hc22000::hasPair(s_monBssid) ? "PAIR" : "wait");
+    } else if (s_phase == LOCK) {
+        int idx = findNet(s_monBssid);
+        snprintf(out, n, "LOCK CH%u  %u STA",
+                 s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
+    } else {
+        snprintf(out, n, "SPEC  %u AP  CH%u", s_nNet, s_ch);
+    }
 }
 
 static void handleSweep() {
