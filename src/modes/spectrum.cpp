@@ -29,7 +29,7 @@ static const int WF_ROWS = 12;
 static const int CH_Y = 62;
 static const int INFO_Y = 72;
 static const int LIST_Y = 82;
-static const int HINT_Y = MAIN_H - 10;
+static const uint32_t BAR_FLIP_MS = 2200;
 
 static const int8_t RSSI_MIN = -95;
 static const int8_t RSSI_MAX = -30;
@@ -754,9 +754,6 @@ static void drawSweep(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.setTextColor(UiStyle::DIM);
         c.drawString("scanning 1-13...", 2, LIST_Y);
     }
-
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString(";/. sel  ENT lock  A hunt  F filt  ` exit", 2, HINT_Y);
 }
 
 static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
@@ -767,8 +764,6 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
     if (idx < 0) {
         c.setTextColor(UiStyle::GOLD);
         c.drawString("NETWORK LOST", 4, 8);
-        c.setTextColor(UiStyle::DIM);
-        c.drawString("` back to scan", 4, HINT_Y);
         return;
     }
     const Net& n = s_net[idx];
@@ -788,7 +783,6 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
     if (n.nCli == 0) {
         c.setTextColor(UiStyle::DIM);
         c.drawString("no clients yet", 4, 36);
-        c.drawString("W = wake / deauth room", 4, 48);
     } else {
         const int lh = 12;
         uint8_t vis = 4;
@@ -819,8 +813,6 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
         c.setTextColor(UiStyle::GOLD);
         c.drawString("WAKING CLIENTS...", 4, 80);
     }
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString("ENT hunt  SPC kick  W wake  ` back", 2, HINT_Y);
 }
 
 static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
@@ -872,9 +864,6 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     if (Cap::isLocked()) st = "hold after M1";
     else if (cap.framesDeauth) st = "kicking + sniff";
     c.drawString(st, 4, 80);
-
-    c.setTextColor(UiStyle::GOLD);
-    c.drawString("SPC extra kick    ` stop hunt", 2, HINT_Y);
 }
 
 void start() {
@@ -925,17 +914,28 @@ bool isRunning() { return s_run; }
 
 void getStatusLine(char* out, size_t n) {
     if (!out || !n) return;
+    bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
     if (s_phase == HUNT) {
-        const Cap::Counters& cap = Cap::counters();
-        snprintf(out, n, "HUNT HS:%u  %s",
-                 (unsigned)cap.framesEapol,
-                 Hc22000::hasPair(s_monBssid) ? "PAIR" : "wait");
+        if (keys) {
+            snprintf(out, n, "SPC kick   ` stop");
+        } else {
+            const Cap::Counters& cap = Cap::counters();
+            snprintf(out, n, "HUNT HS:%u  %s",
+                     (unsigned)cap.framesEapol,
+                     Hc22000::hasPair(s_monBssid) ? "PAIR" : "wait");
+        }
     } else if (s_phase == LOCK) {
-        int idx = findNet(s_monBssid);
-        snprintf(out, n, "LOCK CH%u  %u STA",
-                 s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
+        if (keys) {
+            snprintf(out, n, "ENT hunt  SPC kick  W  ` back");
+        } else {
+            int idx = findNet(s_monBssid);
+            snprintf(out, n, "LOCK CH%u  %u STA",
+                     s_monCh, idx >= 0 ? s_net[idx].nCli : 0);
+        }
+    } else if (keys) {
+        snprintf(out, n, ";/. sel  ENT lock  A hunt  F  `");
     } else {
-        snprintf(out, n, "SPEC  %u AP  CH%u", s_nNet, s_ch);
+        snprintf(out, n, "SPEC  %u AP  CH%u  %upps", s_nNet, s_ch, (unsigned)s_pps);
     }
 }
 
