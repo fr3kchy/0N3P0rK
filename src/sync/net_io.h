@@ -10,19 +10,15 @@
 
 inline bool ioTlsOpen(WiFiClientSecure& c, const char* host, uint16_t port = 443) {
     if (!host) return false;
-    IPAddress ip;
-    bool haveIp = Net::resolveHost(host, ip, 3);
     c.setInsecure();
-    c.setTimeout(20000);
+    c.setTimeout(15000);
     Storage::brewHeap();
-    for (uint8_t i = 0; i < 3; i++) {
-        if (haveIp && c.connect(ip, port, 12000)) return true;
-        if (c.connect(host, port, 12000)) return true;
-        c.stop();
-        delay(250);
-        yield();
-    }
-    return false;
+    // One hostname connect like M5PORKCHOP. IP-first + 3x12s is what hung the UI.
+    if (c.connect(host, port, 10000)) return true;
+    c.stop();
+    delay(250);
+    yield();
+    return c.connect(host, port, 8000);
 }
 
 // Prefer cheap HTTP; if 80 is dead or the host wants TLS, use 443.

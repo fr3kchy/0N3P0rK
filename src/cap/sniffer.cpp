@@ -46,7 +46,7 @@ static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
-static const char* const PREFIX = "/0N3P0rK/hs/";
+static const char* const PREFIX = "/0N3P0rK/handshakes/";
 
 static const uint8_t BEACON_SLOTS = 16;
 struct BeaconSlot {

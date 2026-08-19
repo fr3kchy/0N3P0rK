@@ -42,8 +42,8 @@ uint16_t listResults(char out[][FILE_NAME_MAX], uint16_t max);
 // /0N3P0rK — one bag of captures, service folders hold only keys + logs
 const char* const DIR_ROOT       = "/0N3P0rK";
 const char* const DIR_LOOT       = "/0N3P0rK";
-const char* const DIR_HS         = "/0N3P0rK/hs";
-const char* const DIR_HANDSHAKES = "/0N3P0rK/hs";
+const char* const DIR_HS         = "/0N3P0rK/handshakes";
+const char* const DIR_HANDSHAKES = "/0N3P0rK/handshakes";
 const char* const DIR_WPASEC     = "/0N3P0rK/wpa-sec";
 const char* const DIR_PWNCRACK   = "/0N3P0rK/pwncrack";
 const char* const DIR_RESULTS    = "/0N3P0rK/wpa-sec";

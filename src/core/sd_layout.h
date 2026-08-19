@@ -7,7 +7,7 @@ inline bool usingNewLayout() { return true; }
 inline void setUseNewLayout(bool) {}
 
 inline const char* rootDir() { return "/0N3P0rK"; }
-inline const char* handshakesDir() { return "/0N3P0rK/hs"; }
+inline const char* handshakesDir() { return "/0N3P0rK/handshakes"; }
 inline const char* passworldDir() { return "/0N3P0rK/Passworld"; }
 inline const char* pigpassDir() { return "/0N3P0rK/pigpass"; }
 inline const char* pigpassResultsPath() { return "/0N3P0rK/pigpass/cracked.txt"; }
@@ -18,7 +18,7 @@ inline const char* evilpigCredsPath() { return "/0N3P0rK/evilpig/creds.csv"; }
 
 inline void ensureDirs() {
     SD.mkdir("/0N3P0rK");
-    SD.mkdir("/0N3P0rK/hs");
+    SD.mkdir("/0N3P0rK/handshakes");
     SD.mkdir("/0N3P0rK/wpa-sec");
     SD.mkdir("/0N3P0rK/pwncrack");
     SD.mkdir("/0N3P0rK/pigpass");

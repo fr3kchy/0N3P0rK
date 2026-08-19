@@ -116,7 +116,7 @@ static const char* const H_EVIL[] = {
 };
 static const char* const H_PASS[] = {
     "OFFLINE WPA LAB. WORDLIST/MASK.",
-    "HS /0N3P0rK/  LISTS /0N3P0rK/Passworld/"
+    "HS /handshakes/  LISTS /Passworld/"
 };
 static const char* const H_HASHES[] = {
     "FEED YO HASHCAT.",
@@ -124,7 +124,7 @@ static const char* const H_HASHES[] = {
 };
 static const char* const H_PWN[] = {
     "PWNCRACK.ORG — NOT WPA-SEC.",
-    "KEY IN /0N3P0rK/pwncrack/  HS /hs/"
+    "KEY IN /0N3P0rK/pwncrack/  HS /handshakes/"
 };
 static const char* const H_LIFE[] = {
     "SHE WALKS, JUMPS, HIDES.",

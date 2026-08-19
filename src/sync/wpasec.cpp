@@ -5,6 +5,7 @@
 #include "pot_parse.h"
 #include "../net/ap_sta.h"
 #include "net_io.h"
+#include "tls.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <SD.h>
@@ -89,7 +90,7 @@ bool WPASec::hasApiKey() {
 bool WPASec::canSync() {
     uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     uint32_t freeH = ESP.getFreeHeap();
-    if (largest < 20000 || freeH < 30000) {
+    if (largest < 14000 || freeH < 22000) {
         snprintf(lastError, sizeof(lastError), "low heap %u/%uK",
                  (unsigned)(largest / 1024), (unsigned)(freeH / 1024));
         return false;
@@ -261,9 +262,9 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     Serial.printf("[WPASEC] upload %s (%u B)\n", filename, (unsigned)fileSize);
 
     WiFiClientSecure client;
-    if (!ioTlsOpen(client, WPASEC_HOST, WPASEC_PORT)) {
+    client.setInsecure();
+    if (!client.connect(WPASEC_HOST, WPASEC_PORT, 10000)) {
         capFile.close();
-        client.stop();
         snprintf(lastError, sizeof(lastError), "tls connect");
         return false;
     }
@@ -280,57 +281,29 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
                            fileSize +
                            2 + 2 + strlen(boundary) + 4;
 
-    char hdr[384];
-    snprintf(hdr, sizeof(hdr),
-             "POST %s HTTP/1.1\r\nHost: %s\r\nCookie: key=%s\r\n"
-             "User-Agent: 0N3P0rK/0.1\r\n"
-             "Content-Type: multipart/form-data; boundary=%s\r\n"
-             "Content-Length: %u\r\nConnection: close\r\n\r\n",
-             WPASEC_UPLOAD_PATH, WPASEC_HOST, apiKey, boundary, (unsigned)contentLength);
-    if (!writeStr(client, hdr)) {
-        capFile.close();
-        client.stop();
-        snprintf(lastError, sizeof(lastError), "send hdr");
+    client.printf("POST %s HTTP/1.1\r\n", WPASEC_UPLOAD_PATH);
+    client.printf("Host: %s\r\n", WPASEC_HOST);
+    client.printf("Cookie: key=%s\r\n", apiKey);
+    client.printf("User-Agent: 0N3P0rK/0.1\r\n");
+    client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
+    client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
+    client.print("Connection: close\r\n\r\n");
+    client.printf("--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
+                  boundary, disposition);
+
+    client.setTimeout(30000);
+    if (!Tls::streamFile(client, capFile, fileSize, lastError, sizeof(lastError)))
+        return false;
+
+    if (!client.connected()) {
+        snprintf(lastError, sizeof(lastError), "lost after body");
         return false;
     }
-
-    char part[192];
-    snprintf(part, sizeof(part),
-             "--%s\r\n%s\r\nContent-Type: application/octet-stream\r\n\r\n",
-             boundary, disposition);
-    if (!writeStr(client, part)) {
-        capFile.close();
-        client.stop();
-        snprintf(lastError, sizeof(lastError), "send part");
-        return false;
-    }
-
-    uint8_t buf[512];
-    size_t left = fileSize;
-    while (left > 0) {
-        size_t chunk = left > sizeof(buf) ? sizeof(buf) : left;
-        size_t rd = capFile.read(buf, chunk);
-        if (rd == 0) break;
-        if (!writeAll(client, buf, rd)) {
-            capFile.close();
-            client.stop();
-            snprintf(lastError, sizeof(lastError), "send body");
-            return false;
-        }
-        left -= rd;
-        yield();
-    }
-    capFile.close();
-
-    snprintf(part, sizeof(part), "\r\n--%s--\r\n", boundary);
-    if (!writeStr(client, part)) {
-        client.stop();
-        snprintf(lastError, sizeof(lastError), "send tail");
-        return false;
-    }
+    client.flush();
+    client.printf("\r\n--%s--\r\n", boundary);
 
     unsigned long t0 = millis();
-    while (client.connected() && !client.available() && millis() - t0 < 15000) {
+    while (client.connected() && !client.available() && millis() - t0 < 10000) {
         delay(10);
         yield();
     }
@@ -495,18 +468,10 @@ static void wpaIdFromName(const char* name, char bssid[13]) {
     bssid[12] = '\0';
 }
 
-static bool isWpaUploadName(const char* name) {
-    if (isPcapName(name)) return true;
-    size_t n = strlen(name);
-    if (n > 6 && strcasecmp(name + n - 6, ".22000") == 0) return true;
-    if (n > 8 && strcasecmp(name + n - 8, ".hc22000") == 0) return true;
-    return false;
-}
-
 static void wpaCollect(const char* name, size_t size, void* raw) {
     WpaScanCtx* ctx = (WpaScanCtx*)raw;
     if (ctx->count >= WPASEC_MAX_PENDING) return;
-    if (size == 0 || !isWpaUploadName(name)) return;
+    if (size == 0 || !isPcapName(name)) return;
     char bssid[13];
     wpaIdFromName(name, bssid);
     if ((bssid[0] && WPASec::isUploaded(bssid)) || WPASec::isUploaded(name)) {

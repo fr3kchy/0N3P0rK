@@ -2,6 +2,7 @@
 #include "weather.h"
 #include "wolf.h"
 #include "../core/config.h"
+#include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <Preferences.h>
 #include <string.h>
@@ -164,30 +165,44 @@ void Mood::setStatusMessage(const char* msg) {
     s_statusUntil = millis() + 4000;
 }
 
+int Mood::addFood(int amount) {
+    int gained = 0;
+    if (amount < 1) return 0;
+    hunger += amount;
+    while (hunger >= 100 && life < 5) {
+        hunger -= 100;
+        life += 1;
+        gained++;
+    }
+    if (life >= 5 && hunger > 100) hunger = 100;
+    if (hunger < 0) hunger = 0;
+    return gained;
+}
+
 void Mood::feed() {
-    hunger += 30;
+    int gained = addFood(30);
     happiness += 6;
-    clampStat(hunger);
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
     say(PICK(PH_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
+    if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
     saveMood();
     updateAvatarState();
 }
 
 void Mood::eatWorld() {
-    hunger += 14;
+    int gained = addFood(20);
     happiness += 2;
-    clampStat(hunger);
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
     say(PICK(PH_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
+    if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
     saveMood();
     updateAvatarState();
 }

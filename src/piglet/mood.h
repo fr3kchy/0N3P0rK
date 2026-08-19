@@ -46,4 +46,5 @@ private:
     static void pickPhrase();
     static void updateAvatarState();
     static void say(const char* phrase);
+    static int addFood(int amount);
 };

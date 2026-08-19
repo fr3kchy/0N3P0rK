@@ -2827,14 +2827,14 @@ void Avatar::onWolfBitten() {
     setManualWalk(false);
     setPlayDead(true);
     setState(AvatarState::SAD);
-    int heartsBefore = Mood::getHearts();
     Mood::hurt(1);
     s_hiding = false;
     s_sitAfterWalk = false;
     s_strollDir = 0;
     SFX::play(SFX::OINK_GRUNT);
-    if (heartsBefore > 0 && Mood::getHearts() <= 0 &&
-        Config::personality().wolfEatLoot && Config::isSDAvailable()) {
+    // 0 hearts: this bite (and every later one) eats handshake loot.
+    if (Mood::getHearts() <= 0 && Config::isSDAvailable() &&
+        Config::personality().wolfEatLoot) {
         uint8_t n = 1 + (uint8_t)(esp_random() % 3);
         uint8_t ate = Storage::eatRandomLoot(n);
         if (ate) {

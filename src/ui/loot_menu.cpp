@@ -11,6 +11,7 @@
 #include "../cap/sniffer.h"
 #include "../cap/capture_name.h"
 #include "../sync/net_io.h"
+#include "../sync/tls.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -48,6 +49,8 @@ static char s_syncText[48] = "";
 static char s_diag[10][32];
 static uint8_t s_diagN = 0;
 static const uint8_t VISIBLE = 4;
+enum class SyncGo : uint8_t { Off, Wifi, Work };
+static SyncGo s_syncGo = SyncGo::Off;
 
 static bool endsWith(const char* name, const char* suf) {
     size_t n = strlen(name), s = strlen(suf);
@@ -245,6 +248,11 @@ void LootMenu::hide() {
     detailView = false;
     syncModal = false;
     diagModal = false;
+    if (s_syncGo != SyncGo::Off) {
+        dropWifi();
+        Avatar::resumeScene();
+        s_syncGo = SyncGo::Off;
+    }
 }
 
 const char* LootMenu::getBottomHint() {
@@ -423,44 +431,7 @@ void LootMenu::startSync() {
     SFX::stop();
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
-    Display::update();
-    Storage::brewHeap();
-
-    if (!connectHome()) {
-        strncpy(s_syncText, "WIFI FAIL", sizeof(s_syncText) - 1);
-        dropWifi();
-        Avatar::resumeScene();
-        return;
-    }
-
-    auto onProg = [](const char* st, uint8_t p, uint8_t t) {
-        if (t)
-            snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u", st, p, t);
-        else
-            strncpy(s_syncText, st ? st : "...", sizeof(s_syncText) - 1);
-        // Do not redraw during TLS/HTTP — farm draw + WiFi stack reboots the S3.
-    };
-    strncpy(s_syncText, "SYNC...", sizeof(s_syncText) - 1);
-    Display::update();
-    Storage::brewHeap();
-    if (tab == Tab::WPASEC) {
-        WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
-        if (r.success)
-            snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
-                     r.uploaded, r.skipped, r.cracked);
-        else
-            snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
-    } else {
-        PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey, onProg);
-        if (r.success)
-            snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
-                     r.uploaded, r.skipped, r.cracked);
-        else
-            snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
-    }
-    dropWifi();
-    Avatar::resumeScene();
-    scan();
+    s_syncGo = SyncGo::Wifi;
 }
 
 void LootMenu::handleInput() {
@@ -516,6 +487,53 @@ void LootMenu::handleInput() {
 
 void LootMenu::update() {
     if (!active) return;
+
+    if (s_syncGo == SyncGo::Wifi) {
+        Storage::brewHeap();
+        if (!connectHome()) {
+            strncpy(s_syncText, "WIFI FAIL", sizeof(s_syncText) - 1);
+            dropWifi();
+            Avatar::resumeScene();
+            s_syncGo = SyncGo::Off;
+            return;
+        }
+        strncpy(s_syncText, "TLS...", sizeof(s_syncText) - 1);
+        s_syncGo = SyncGo::Work;
+        return;
+    }
+
+    if (s_syncGo == SyncGo::Work) {
+        auto onProg = [](const char* st, uint8_t p, uint8_t t) {
+            if (t)
+                snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u", st, p, t);
+            else
+                strncpy(s_syncText, st ? st : "...", sizeof(s_syncText) - 1);
+        };
+        Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
+        Storage::brewHeap();
+        if (tab == Tab::WPASEC) {
+            WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
+            if (r.success)
+                snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
+                         r.uploaded, r.skipped, r.cracked);
+            else
+                snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
+        } else {
+            PwncrackSyncResult r = Pwncrack::syncCaptures(Net::cfg().pwncrackKey, onProg);
+            if (r.success)
+                snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
+                         r.uploaded, r.skipped, r.cracked);
+            else
+                snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
+        }
+        Tls::arenaEnd();
+        dropWifi();
+        Avatar::resumeScene();
+        scan();
+        s_syncGo = SyncGo::Off;
+        return;
+    }
+
     if (App::windowHidden()) return;
     handleInput();
 }
@@ -589,7 +607,7 @@ void LootMenu::draw(M5Canvas& canvas) {
         canvas.print(tab == Tab::WPASEC ? "NO PCAP IN LOOT" : "NO 22000 IN LOOT");
         canvas.setTextColor(UiStyle::TEXT);
         canvas.setCursor(4, 52);
-        canvas.print("/0N3P0rK/hs/");
+        canvas.print("/0N3P0rK/handshakes/");
         return;
     }
 

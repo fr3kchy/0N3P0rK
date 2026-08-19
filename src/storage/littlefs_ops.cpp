@@ -388,6 +388,7 @@ void migrateLegacy() {
     ensureDir(DIR_HS);
     ensureDir(DIR_WPASEC);
     ensureDir(DIR_PWNCRACK);
+    migrateAll("/0N3P0rK/hs", DIR_HS);
     migrateAll("/loot/wpa-sec", DIR_WPASEC);
     migrateAll("/loot/pwncrack", DIR_PWNCRACK);
     migrateAll("/loot/evilpig", DIR_EVILPIG);
