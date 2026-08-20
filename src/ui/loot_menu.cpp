@@ -46,11 +46,14 @@ struct Row {
 
 static Row s_rows[48];
 static char s_syncText[48] = "";
-static char s_diag[10][32];
+static char s_diag[16][42];
 static uint8_t s_diagN = 0;
+static uint8_t s_diagScroll = 0;
 static const uint8_t VISIBLE = 4;
+static const uint8_t DIAG_VIS = 7;
 enum class SyncGo : uint8_t { Off, Wifi, Work };
 static SyncGo s_syncGo = SyncGo::Off;
+static uint8_t s_oneIdx = 0xFF;  // 0xFF = sync all pending
 
 static bool endsWith(const char* name, const char* suf) {
     size_t n = strlen(name), s = strlen(suf);
@@ -256,7 +259,19 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    return "S SYNC  T TEST  ,/ TAB";
+    uint8_t page = (uint8_t)((millis() / 2200u) % 3u);
+    if (syncModal) return "ENT close";
+    if (diagModal) {
+        if (page == 0) return ";/. scroll  ENT close";
+        return "T test log";
+    }
+    if (detailView) {
+        if (page == 0) return "U send this file";
+        return "ENT / ` close";
+    }
+    if (page == 0) return "S all  U one file";
+    if (page == 1) return "T test  ENT card";
+    return ",/ tab  ` back";
 }
 
 static void paintLoot() {
@@ -264,13 +279,15 @@ static void paintLoot() {
 }
 
 static void addDiag(const char* s) {
-    if (s_diagN >= 10) {
-        for (uint8_t i = 0; i < 9; i++) memcpy(s_diag[i], s_diag[i + 1], 32);
-        s_diagN = 9;
+    if (s_diagN >= 16) {
+        for (uint8_t i = 0; i < 15; i++) memcpy(s_diag[i], s_diag[i + 1], 42);
+        s_diagN = 15;
     }
-    strncpy(s_diag[s_diagN], s ? s : "", 31);
-    s_diag[s_diagN][31] = '\0';
+    strncpy(s_diag[s_diagN], s ? s : "", 41);
+    s_diag[s_diagN][41] = '\0';
     s_diagN++;
+    if (s_diagN > DIAG_VIS)
+        s_diagScroll = (uint8_t)(s_diagN - DIAG_VIS);
     paintLoot();
 }
 
@@ -292,6 +309,7 @@ static bool httpHeadLine(WiFiClient& c, char* out, size_t n) {
 
 void LootMenu::runDiag() {
     s_diagN = 0;
+    s_diagScroll = 0;
     diagModal = true;
     const bool wpa = (tab == Tab::WPASEC);
     addDiag(wpa ? "WPA-SEC LIVE TEST" : "PWNCRACK LIVE TEST");
@@ -302,17 +320,23 @@ void LootMenu::runDiag() {
     Storage::loadKeysIntoNet();
     Storage::brewHeap();
 
-    char line[32];
+    char line[42];
     if (wpa) {
-        addDiag(WPASec::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
+        addDiag(WPASec::hasApiKey() ? "KEY ok 32 hex" : "KEY missing key.txt");
     } else {
         addDiag(Pwncrack::hasApiKey() ? "KEY ok" : "KEY missing key.txt");
     }
-    snprintf(line, sizeof(line), "SD %s  FILES %u",
+    snprintf(line, sizeof(line), "SD %s  LOOT %u",
              Storage::available() ? "ok" : "NO", (unsigned)count);
     addDiag(line);
-    snprintf(line, sizeof(line), "HEAP %uK", (unsigned)(ESP.getFreeHeap() / 1024));
+    snprintf(line, sizeof(line), "HEAP %uK  BIG %uK",
+             (unsigned)(ESP.getFreeHeap() / 1024),
+             (unsigned)(ESP.getMaxAllocHeap() / 1024));
     addDiag(line);
+    if (count && selected < count) {
+        snprintf(line, sizeof(line), "SEL %s", s_rows[selected].filename);
+        addDiag(line);
+    }
 
     if (!Net::hasStaCreds()) {
         addDiag("WIFI no home in SET");
@@ -329,7 +353,10 @@ void LootMenu::runDiag() {
         Avatar::resumeScene();
         return;
     }
-    snprintf(line, sizeof(line), "WIFI %s", WiFi.localIP().toString().c_str());
+    snprintf(line, sizeof(line), "IP %s", WiFi.localIP().toString().c_str());
+    addDiag(line);
+    snprintf(line, sizeof(line), "RSSI %d  CH %u",
+             (int)WiFi.RSSI(), (unsigned)WiFi.channel());
     addDiag(line);
 
     const char* host = wpa ? "wpa-sec.stanev.org" : "pwncrack.org";
@@ -406,11 +433,20 @@ void LootMenu::runDiag() {
     Avatar::resumeScene();
 }
 
-void LootMenu::startSync() {
+void LootMenu::startSync(bool oneFile) {
     if (Cap::isRunning()) Cap::stop();
     if (!Storage::available()) {
         Display::showToast("NO SD", 1500);
         return;
+    }
+    if (oneFile) {
+        if (!count || selected >= count) {
+            Display::showToast("NO FILE", 1500);
+            return;
+        }
+        s_oneIdx = selected;
+    } else {
+        s_oneIdx = 0xFF;
     }
     Storage::loadKeysIntoNet();
     if (tab == Tab::WPASEC && !WPASec::hasApiKey()) {
@@ -426,7 +462,7 @@ void LootMenu::startSync() {
         return;
     }
     syncModal = true;
-    strncpy(s_syncText, "CONNECTING...", sizeof(s_syncText) - 1);
+    strncpy(s_syncText, oneFile ? "ONE FILE..." : "CONNECTING...", sizeof(s_syncText) - 1);
     Avatar::suspendScene();
     SFX::stop();
     WPASec::freeCacheMemory();
@@ -448,6 +484,14 @@ void LootMenu::handleInput() {
     }
 
     if (syncModal || diagModal) {
+        if (diagModal) {
+            if (M5Cardputer.Keyboard.isKeyPressed(';') && s_diagScroll > 0)
+                s_diagScroll--;
+            if (M5Cardputer.Keyboard.isKeyPressed('.') &&
+                s_diagN > DIAG_VIS &&
+                s_diagScroll + DIAG_VIS < s_diagN)
+                s_diagScroll++;
+        }
         if (M5Cardputer.Keyboard.keysState().enter) {
             syncModal = false;
             diagModal = false;
@@ -455,6 +499,11 @@ void LootMenu::handleInput() {
         return;
     }
     if (detailView) {
+        if (M5Cardputer.Keyboard.isKeyPressed('u') ||
+            M5Cardputer.Keyboard.isKeyPressed('U')) {
+            startSync(true);
+            return;
+        }
         if (M5Cardputer.Keyboard.keysState().enter) detailView = false;
         return;
     }
@@ -481,7 +530,10 @@ void LootMenu::handleInput() {
         SFX::play(SFX::MENU_CLICK);
     }
     if (M5Cardputer.Keyboard.keysState().enter && count) detailView = true;
-    if (M5Cardputer.Keyboard.isKeyPressed('s') || M5Cardputer.Keyboard.isKeyPressed('S')) startSync();
+    if (M5Cardputer.Keyboard.isKeyPressed('s') || M5Cardputer.Keyboard.isKeyPressed('S'))
+        startSync(false);
+    if (M5Cardputer.Keyboard.isKeyPressed('u') || M5Cardputer.Keyboard.isKeyPressed('U'))
+        startSync(true);
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
 }
 
@@ -511,7 +563,23 @@ void LootMenu::update() {
         };
         Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
         Storage::brewHeap();
-        if (tab == Tab::WPASEC) {
+        if (s_oneIdx != 0xFF && s_oneIdx < count) {
+            char path[80];
+            snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, s_rows[s_oneIdx].filename);
+            onProg("Upload 1", 1, 1);
+            bool ok = false;
+            if (tab == Tab::WPASEC) {
+                const char* id = s_rows[s_oneIdx].hex[0] ? s_rows[s_oneIdx].hex
+                                                        : s_rows[s_oneIdx].filename;
+                ok = WPASec::uploadOneFile(path, id, Net::cfg().wpaSecKey);
+                snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
+                         ok ? "" : (WPASec::getLastError()[0] ? WPASec::getLastError() : "?"));
+            } else {
+                ok = Pwncrack::uploadOneFile(path, Net::cfg().pwncrackKey);
+                snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
+                         ok ? "" : (Pwncrack::getLastError()[0] ? Pwncrack::getLastError() : "?"));
+            }
+        } else if (tab == Tab::WPASEC) {
             WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
             if (r.success)
                 snprintf(s_syncText, sizeof(s_syncText), "OK up%u skip%u crk%u",
@@ -542,6 +610,7 @@ void LootMenu::draw(M5Canvas& canvas) {
     uiListBackground(canvas);
     canvas.setTextSize(1);
 
+    canvas.setTextWrap(false);
     canvas.fillRect(4, 2, 112, 13, tab == Tab::WPASEC ? UiStyle::PINK : UiStyle::PANEL);
     canvas.fillRect(124, 2, 112, 13, tab == Tab::PWNCRACK ? UiStyle::PINK : UiStyle::PANEL);
     canvas.setTextDatum(top_center);
@@ -569,11 +638,19 @@ void LootMenu::draw(M5Canvas& canvas) {
         return;
     }
     if (diagModal) {
+        canvas.setTextWrap(false);
         canvas.setTextColor(UiStyle::CYAN);
-        for (uint8_t i = 0; i < s_diagN; i++) {
-            canvas.setCursor(6, 18 + i * 12);
-            canvas.print(s_diag[i]);
+        if (s_diagScroll > s_diagN) s_diagScroll = 0;
+        uint8_t vis = DIAG_VIS;
+        for (uint8_t i = 0; i < vis; i++) {
+            uint8_t idx = (uint8_t)(s_diagScroll + i);
+            if (idx >= s_diagN) break;
+            uiDrawMarquee(canvas, s_diag[idx], 6, 18 + (int)i * 12, DISPLAY_W - 14);
         }
+        canvas.setTextColor(UiStyle::DIM);
+        if (s_diagScroll > 0) canvas.drawString("^", DISPLAY_W - 10, 18);
+        if (s_diagN > vis && s_diagScroll + vis < s_diagN)
+            canvas.drawString("v", DISPLAY_W - 10, 18 + (int)(vis - 1) * 12);
         return;
     }
     if (detailView && selected < count) {

@@ -29,6 +29,6 @@ private:
 
     static void scan();
     static void handleInput();
-    static void startSync();
+    static void startSync(bool oneFile = false);
     static void runDiag();
 };

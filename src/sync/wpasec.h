@@ -25,6 +25,7 @@ public:
     static bool hasApiKey(const char* key);
     static bool canSync();
     static WPASecSyncResult syncCaptures(const char* apiKey, WPASecProgressCallback cb = nullptr);
+    static bool uploadOneFile(const char* filepath, const char* bssidHint, const char* apiKey);
     static bool pullPotfile(const char* apiKey, uint16_t& lines);
 
     static bool loadCache();

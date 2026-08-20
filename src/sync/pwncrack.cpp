@@ -636,3 +636,27 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
                   result.uploaded, result.failed, result.skipped, result.cracked);
     return result;
 }
+
+bool Pwncrack::uploadOneFile(const char* filepath, const char* apiKey) {
+    if (busy) {
+        strncpy(lastError, "busy", sizeof(lastError) - 1);
+        return false;
+    }
+    if (!hasApiKey(apiKey)) {
+        strncpy(lastError, "invalid API key", sizeof(lastError) - 1);
+        return false;
+    }
+    if (!filepath || !filepath[0]) {
+        strncpy(lastError, "no file", sizeof(lastError) - 1);
+        return false;
+    }
+    busy = true;
+    bool ok = uploadFile(filepath, apiKey);
+    if (ok) {
+        markAsUploaded(Storage::baseName(filepath));
+        saveUploadedList();
+        lastError[0] = '\0';
+    }
+    busy = false;
+    return ok;
+}

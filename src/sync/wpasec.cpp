@@ -572,6 +572,35 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     return result;
 }
 
+bool WPASec::uploadOneFile(const char* filepath, const char* bssidHint, const char* apiKey) {
+    if (busy) {
+        strncpy(lastError, "busy", sizeof(lastError) - 1);
+        return false;
+    }
+    if (!hasApiKey(apiKey)) {
+        strncpy(lastError, "invalid API key", sizeof(lastError) - 1);
+        return false;
+    }
+    char bssid[13] = {0};
+    if (bssidHint && bssidHint[0]) normalizeBSSID(bssidHint, bssid, sizeof(bssid));
+    if (!bssid[0] && filepath) bssidFromFilename(Storage::baseName(filepath), bssid);
+    if (!bssid[0]) {
+        strncpy(lastError, "no bssid", sizeof(lastError) - 1);
+        return false;
+    }
+    busy = true;
+    bool ok = uploadSingleCapture(filepath, bssid, apiKey);
+    if (ok) {
+        loadCache();
+        markAsUploaded(bssid);
+        saveUploadedList();
+        freeCacheMemory();
+        lastError[0] = '\0';
+    }
+    busy = false;
+    return ok;
+}
+
 bool WPASec::pullPotfile(const char* apiKey, uint16_t& lines) {
     lines = 0;
     if (!hasApiKey(apiKey)) {
