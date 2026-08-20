@@ -14,6 +14,9 @@ static uint32_t s_xp = 0;
 static bool s_all = false;
 static Preferences s_prefs;
 static bool s_ready = false;
+static bool s_dirty = false;
+static uint32_t s_lastPersist = 0;
+static bool s_allOnDisk = false;
 
 // Growing ladder: 100, 250, 500, 1000, 2500, 5000, 7500, then +2500 each level.
 static uint32_t xpNeed(uint8_t fromLevel) {
@@ -39,10 +42,17 @@ static uint32_t xpToReach(uint8_t level) {
     return t;
 }
 
-static void persist() {
+// Preferences::put* commits NVS flash on every call — never do that per apple.
+static void persist(bool force) {
     if (!s_ready) return;
+    if (!force && !s_dirty) return;
     s_prefs.putUInt("xp", s_xp);
-    s_prefs.putBool("all", s_all);
+    if (s_all != s_allOnDisk) {
+        s_prefs.putBool("all", s_all);
+        s_allOnDisk = s_all;
+    }
+    s_dirty = false;
+    s_lastPersist = millis();
 }
 
 uint8_t XP::getLevel() {
@@ -90,7 +100,8 @@ void XP::unlockAll() {
     s_xp = xpToReach(XP_MAX_LEVEL);
     Config::personality().zombieSkinUnlocked = true;
     Config::save();
-    persist();
+    s_dirty = true;
+    persist(true);
 }
 
 bool XP::isSkinLocked(uint8_t skin) {
@@ -114,7 +125,9 @@ bool XP::isSeasonLocked(uint8_t seasonMode) {
 
 static void celebrate(uint8_t newLvl) {
     SFX::play(SFX::LEVEL_UP);
-    Avatar::spin();
+    // Spin cancels an in-air jump — skip it so a level-up mid-hop does not yank her.
+    if (!Avatar::isJumping())
+        Avatar::spin();
     Avatar::triggerSparkles(8);
     Avatar::triggerTailWiggle();
     Mood::setStatusMessage("LVL UP");
@@ -140,8 +153,13 @@ void XP::begin() {
     s_prefs.begin("pigxp", false);
     s_xp = s_prefs.getUInt("xp", 0);
     s_all = s_prefs.getBool("all", false);
-    auto bump = [](uint32_t need) {
-        if (s_xp < need) s_xp = need;
+    s_allOnDisk = s_all;
+    bool bumped = false;
+    auto bump = [&](uint32_t need) {
+        if (s_xp < need) {
+            s_xp = need;
+            bumped = true;
+        }
     };
     uint8_t sk = Config::personality().pigSkin;
     uint8_t sm = Config::personality().seasonMode;
@@ -152,7 +170,16 @@ void XP::begin() {
     if (sm == (uint8_t)SeasonMode::NOIR) bump(xpToReach(18));
     if (sk == (uint8_t)PigSkin::GOLD)   bump(xpToReach(20));
     s_ready = true;
-    persist();
+    if (bumped) {
+        s_dirty = true;
+        persist(true);
+    }
+}
+
+void XP::tick() {
+    if (!s_dirty) return;
+    if ((uint32_t)(millis() - s_lastPersist) < 2000) return;
+    persist(true);
 }
 
 void XP::addXP(XPEvent event) {
@@ -187,7 +214,10 @@ void XP::addXP(uint16_t amount) {
     uint32_t next = s_xp + amount;
     if (next > cap) next = cap;
     s_xp = next;
-    persist();
+    s_dirty = true;
     uint8_t after = getLevel();
-    if (after > before) celebrate(after);
+    if (after > before) {
+        persist(true);  // keep the new level if power drops
+        celebrate(after);
+    }
 }

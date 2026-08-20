@@ -25,6 +25,8 @@ int Mood::lastEffective = 70;
 static Preferences s_moodPrefs;
 static char s_status[40] = "";
 static uint32_t s_statusUntil = 0;
+static bool s_moodDirty = false;
+static uint32_t s_moodSavedAt = 0;
 
 // 0n3 barn voice. Short enough for the snout bubble.
 static const char* PH_IDLE[] = {
@@ -284,6 +286,8 @@ void Mood::saveMood() {
     s_moodPrefs.putInt("hap", happiness);
     s_moodPrefs.putInt("hun", hunger);
     s_moodPrefs.putInt("life", life);
+    s_moodDirty = false;
+    s_moodSavedAt = millis();
 }
 
 void Mood::adjustHappiness(int delta) {
@@ -369,14 +373,22 @@ void Mood::eatWorld() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
-    SFX::play(SFX::OINK_HAPPY);
-    Avatar::sniff();
+    // A pile of fruit can land 4 picks in one frame — one oink/sniff, not four.
+    static uint32_t lastFx = 0;
+    uint32_t now = millis();
+    if ((uint32_t)(now - lastFx) >= 280) {
+        lastFx = now;
+        say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
+        SFX::play(SFX::OINK_HAPPY);
+        Avatar::sniff();
+    }
     if (gained) {
         Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
         maybeCureZombie();
+        saveMood();
+    } else {
+        s_moodDirty = true;
     }
-    saveMood();
     updateAvatarState();
 }
 
@@ -488,6 +500,9 @@ void Mood::update() {
         lastEffective = happiness;
         saveMood();
     }
+
+    if (s_moodDirty && (uint32_t)(now - s_moodSavedAt) >= 2000)
+        saveMood();
 
     if (now - lastPhraseChange >= 12000) {
         pickPhrase();

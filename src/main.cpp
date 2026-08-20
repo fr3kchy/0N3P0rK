@@ -93,6 +93,7 @@ void loop() {
     App::loop();
     Display::update();
     SFX::update();
+    XP::tick();
     Cap::loop();
 
     if (millis() - s_lastHeapLog > 30000) {

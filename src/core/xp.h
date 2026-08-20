@@ -17,6 +17,7 @@ enum class XPEvent : uint8_t {
 class XP {
 public:
     static void begin();
+    static void tick();  // flush deferred NVS (not on every apple)
     static void addXP(XPEvent event);
     static void addXP(uint16_t amount);
     static uint8_t getLevel();

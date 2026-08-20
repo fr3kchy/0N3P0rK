@@ -1749,10 +1749,14 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         uint8_t ate = Trees::updateAmbient(feet, feetY, currentX, onRightSide);
         if (ate) {
             for (uint8_t i = 0; i < ate; i++) Mood::eatWorld();
-            triggerSparkles(5);
-            triggerTailWiggle();
-            if (currentState != AvatarState::HUNTING)
-                setState(AvatarState::HAPPY);
+            static uint32_t lastAteFx = 0;
+            if ((uint32_t)(now - lastAteFx) >= 280) {
+                lastAteFx = now;
+                triggerSparkles(5);
+                triggerTailWiggle();
+                if (currentState != AvatarState::HUNTING)
+                    setState(AvatarState::HAPPY);
+            }
         }
         // Trees in front of back grass, behind pig
         drawTree(canvas);
