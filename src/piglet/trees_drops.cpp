@@ -17,9 +17,9 @@ static inline int16_t snapPx(int16_t v) {
 }
 
 // Match tree screenX wrap band so drops stay in the same world loop
-static constexpr int16_t WRAP_HI = 260;
-static constexpr int16_t WRAP_LO = -60;
-static constexpr int16_t WRAP_SPAN = 300;
+static constexpr int16_t WRAP_HI = WORLD_WRAP_HI;
+static constexpr int16_t WRAP_LO = WORLD_WRAP_LO;
+static constexpr int16_t WRAP_SPAN = WORLD_SPAN;
 
 static bool thunder() { return Avatar::isThunderFlashing(); }
 static uint16_t fl(uint16_t c) {

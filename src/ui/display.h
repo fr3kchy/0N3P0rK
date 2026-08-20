@@ -48,6 +48,8 @@ uint16_t getColorBG();
 
 void uiListBackground(M5Canvas& canvas);
 void uiListRow(M5Canvas& canvas, int y, int lineH, bool selected, uint16_t accent = UiStyle::PINK);
+// Font0 ticker: if the string is wider than maxPx, it rolls. charW=6 at size 1.
+void uiDrawMarquee(M5Canvas& canvas, const char* s, int x, int y, int maxPx, int charW = 6);
 
 class Display {
 public:

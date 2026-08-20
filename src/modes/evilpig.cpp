@@ -935,7 +935,7 @@ void EvilPigMode::handleInputLoot() {
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
-        if (!keyWas && catchCount > 0 && lootScroll + 3 < catchCount) {
+        if (!keyWas && catchCount > 0 && lootScroll + 4 < catchCount) {
             keyWas = true;
             lootScroll++;
         }
@@ -1001,6 +1001,24 @@ void EvilPigMode::update() {
     else Avatar::setState(deauthOn ? AvatarState::HUNTING : AvatarState::NEUTRAL);
 }
 
+const char* EvilPigMode::getBottomHint() {
+    static char buf[40];
+    uint8_t page = (uint8_t)((millis() / 2200u) & 3u);
+    if (phase == Phase::PORTAL) {
+        if (page & 1) {
+            snprintf(buf, sizeof(buf), "HIT %u  ON %u  K %lu",
+                     (unsigned)hitCount, (unsigned)getClientCount(),
+                     (unsigned long)deauthCount);
+            return buf;
+        }
+        return "K kick  V loot  ` exit";
+    }
+    if (phase == Phase::LOOT) return ";/.  V/ENT back";
+    if (page == 0) return ";/.  ENT clone";
+    if (page == 1) return "R rescan  V loot";
+    return "` exit";
+}
+
 // Clip helper: write at most maxLen chars into out (null-terminated)
 static void clipStr(char* out, size_t outSz, const char* in, size_t maxLen) {
     if (!out || outSz == 0) return;
@@ -1017,13 +1035,12 @@ static void clipStr(char* out, size_t outSz, const char* in, size_t maxLen) {
 }
 
 void EvilPigMode::drawSelect(M5Canvas& canvas) {
-    // List + key legend. Bottom bar repeats short hints.
     canvas.fillSprite(UiStyle::BG);
     canvas.setTextSize(1);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font0);
+    canvas.setTextWrap(false);
 
-    // Header: count + scroll window so user sees position in long lists
     canvas.setTextColor(UiStyle::DIM);
     char hdr[32];
     if (listCount > 0) {
@@ -1035,12 +1052,6 @@ void EvilPigMode::drawSelect(M5Canvas& canvas) {
     canvas.drawString(hdr, 4, 2);
     canvas.drawString("CL  dB CH", 150, 2);
 
-    // Key legend pinned to bottom of main canvas
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. scroll  ENT clone", 4, MAIN_H - 20);
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.drawString("R rescan  V loot  ` exit", 4, MAIN_H - 10);
-
     if (listCount == 0) {
         canvas.setTextColor(UiStyle::GOLD);
         canvas.drawString("scan...", 4, 36);
@@ -1049,12 +1060,11 @@ void EvilPigMode::drawSelect(M5Canvas& canvas) {
         return;
     }
 
-    // Safety: selection must always be on-screen
     ensureListVisible();
 
-    // VISIBLE rows + key legend (MAIN_H ~107)
     const int rowH = 16;
     const int y0 = 14;
+    const int nameMax = 140;
     for (uint8_t i = 0; i < VISIBLE && (listScroll + i) < listCount; i++) {
         uint8_t idx = listScroll + i;
         const NetPick& p = list[idx];
@@ -1068,9 +1078,13 @@ void EvilPigMode::drawSelect(M5Canvas& canvas) {
             canvas.setTextColor(UiStyle::TEXT);
         }
 
-        char name[16];
-        clipStr(name, sizeof(name), p.ssid, 13);
-        canvas.drawString(name, 4, y + 4);
+        const char* ss = p.ssid[0] ? p.ssid : "(hidden)";
+        if (sel) uiDrawMarquee(canvas, ss, 4, y + 4, nameMax);
+        else {
+            char name[24];
+            clipStr(name, sizeof(name), ss, 22);
+            canvas.drawString(name, 4, y + 4);
+        }
 
         char meta[20];
         snprintf(meta, sizeof(meta), "%2u %4d %2u",
@@ -1102,12 +1116,10 @@ void EvilPigMode::drawPortal(M5Canvas& canvas) {
     canvas.setTextColor(deauthOn ? UiStyle::RED : UiStyle::DIM);
     canvas.drawString(deauthOn ? "KICK" : "idle", DISPLAY_W - 36, 2);
 
-    // SSID (big)
+    canvas.setTextWrap(false);
     canvas.setTextColor(UiStyle::TITLE);
     canvas.setTextSize(2);
-    char ss[14];
-    clipStr(ss, sizeof(ss), apSsid, 11);
-    canvas.drawString(ss, 4, 10);
+    uiDrawMarquee(canvas, apSsid[0] ? apSsid : "-", 4, 10, DISPLAY_W - 48, 12);
     canvas.setTextSize(1);
 
     // Live client connection line — green when someone is on softAP
@@ -1150,10 +1162,6 @@ void EvilPigMode::drawPortal(M5Canvas& canvas) {
     snprintf(ipLine, sizeof(ipLine), "ch%u  %s",
              (unsigned)apChannel, WiFi.softAPIP().toString().c_str());
     canvas.drawString(ipLine, 4, 86);
-
-    // Keys
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString("K kick on/off  V loot  ` exit", 4, MAIN_H - 10);
 }
 
 void EvilPigMode::drawLoot(M5Canvas& canvas) {
@@ -1167,9 +1175,7 @@ void EvilPigMode::drawLoot(M5Canvas& canvas) {
     char title[20];
     snprintf(title, sizeof(title), "LOOT  %u", (unsigned)catchCount);
     canvas.drawString(title, 4, 2);
-
-    canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. scroll  V/ENT back", 4, MAIN_H - 10);
+    canvas.setTextWrap(false);
 
     if (catchCount == 0) {
         canvas.setTextColor(UiStyle::GOLD);
@@ -1181,7 +1187,7 @@ void EvilPigMode::drawLoot(M5Canvas& canvas) {
 
     const int rowH = 20;
     const int y0 = 16;
-    const uint8_t visible = 3;  // room for key legend
+    const uint8_t visible = 4;
     for (uint8_t i = 0; i < visible && (lootScroll + i) < catchCount; i++) {
         uint8_t idx = catchCount - 1 - (lootScroll + i);
         const Catch& c = catches[idx];
@@ -1189,17 +1195,11 @@ void EvilPigMode::drawLoot(M5Canvas& canvas) {
 
         canvas.fillRect(2, y, DISPLAY_W - 4, rowH - 2, UiStyle::PANEL);
 
-        // Line 1: SSID
         canvas.setTextColor(UiStyle::CYAN);
-        char sn[22];
-        clipStr(sn, sizeof(sn), c.ssid, 18);
-        canvas.drawString(sn, 6, y + 1);
+        uiDrawMarquee(canvas, c.ssid[0] ? c.ssid : "-", 6, y + 1, DISPLAY_W - 16);
 
-        // Line 2: password (lab view)
         canvas.setTextColor(UiStyle::TEXT);
-        char pw[28];
-        clipStr(pw, sizeof(pw), c.pwShow, 24);
-        canvas.drawString(pw, 6, y + 10);
+        uiDrawMarquee(canvas, c.pwShow[0] ? c.pwShow : "-", 6, y + 10, DISPLAY_W - 16);
     }
 }
 

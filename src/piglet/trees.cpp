@@ -221,8 +221,8 @@ static int16_t lcos(uint8_t i) {
 
 static int16_t screenX(const Slot& t) {
     int16_t bx = t.baseX + t.scroll;
-    while (bx > 260) bx -= 300;
-    while (bx < -60) bx += 300;
+    while (bx > WORLD_WRAP_HI) bx -= WORLD_SPAN;
+    while (bx < WORLD_WRAP_LO) bx += WORLD_SPAN;
     return bx;
 }
 
@@ -576,8 +576,9 @@ void reset() {
     globalStompArmed = true;
 }
 
-// World lanes — one kind per post, shared scroll so walking never stacks them.
-static constexpr int16_t kLaneX[3] = {28, 120, 212};
+// Scatter across the 600px loop. Respawn prefers off-screen so a smash
+// here grows "over the hill" while you are not looking.
+static constexpr int16_t FLORA_MIN_GAP = 56;
 
 static int16_t sharedScroll() {
     for (int i = 0; i < 3; i++) {
@@ -586,9 +587,73 @@ static int16_t sharedScroll() {
     return 0;
 }
 
-static void placeOnLane(Slot& t) {
+static bool floraLive(const Slot& t) {
+    return t.phase != Phase::HIDDEN && t.phase != Phase::COLLAPSING;
+}
+
+static bool anyFloraLive() {
+    for (int i = 0; i < 3; i++) {
+        if (floraLive(slots[i])) return true;
+    }
+    return false;
+}
+
+static int16_t wrapDistWorld(int16_t a, int16_t b) {
+    int16_t d = (int16_t)(a - b);
+    while (d > WORLD_SPAN / 2) d = (int16_t)(d - WORLD_SPAN);
+    while (d < -(WORLD_SPAN / 2)) d = (int16_t)(d + WORLD_SPAN);
+    if (d < 0) d = (int16_t)-d;
+    return d;
+}
+
+static int16_t floraWorldX(const Slot& t) {
+    int16_t w = (int16_t)(t.baseX + t.scroll);
+    while (w < 0) w = (int16_t)(w + WORLD_SPAN);
+    while (w >= WORLD_SPAN) w = (int16_t)(w - WORLD_SPAN);
+    return w;
+}
+
+static int16_t worldToScreen(int16_t wx) {
+    while (wx > WORLD_WRAP_HI) wx = (int16_t)(wx - WORLD_SPAN);
+    while (wx < WORLD_WRAP_LO) wx = (int16_t)(wx + WORLD_SPAN);
+    return wx;
+}
+
+static bool worldFits(int16_t wx, Kind self) {
+    for (int i = 0; i < 3; i++) {
+        if (slots[i].kind == self) continue;
+        if (!floraLive(slots[i])) continue;
+        if (wrapDistWorld(wx, floraWorldX(slots[i])) < FLORA_MIN_GAP) return false;
+    }
+    return true;
+}
+
+static bool isOffscreenWorld(int16_t wx) {
+    int16_t sx = worldToScreen(wx);
+    return (sx < -8 || sx > 248);
+}
+
+static int16_t pickWorldX(Kind self, bool preferOffscreen) {
+    if (!anyFloraLive()) {
+        // First plant of a fresh farm — land on the visible field.
+        return (int16_t)(28 + (esp_random() % 185));
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        bool needOff = preferOffscreen && (pass == 0);
+        for (int tries = 0; tries < 28; tries++) {
+            int16_t wx = (int16_t)(esp_random() % (uint32_t)WORLD_SPAN);
+            if (!worldFits(wx, self)) continue;
+            if (needOff && !isOffscreenWorld(wx)) continue;
+            return wx;
+        }
+    }
+    return (int16_t)(esp_random() % (uint32_t)WORLD_SPAN);
+}
+
+static void placeInWorld(Slot& t, bool preferOffscreen) {
     t.scroll = sharedScroll();
-    t.baseX = kLaneX[(int)t.kind];
+    int16_t wx = pickWorldX(t.kind, preferOffscreen);
+    t.baseX = (int16_t)(wx - t.scroll);
 }
 
 static uint8_t produceWant(const Slot& t) {
@@ -652,7 +717,7 @@ void showFruit(uint8_t fruitCount) {
         return;
     }
     genClassicTree(t, fruitCount, 100);
-    placeOnLane(t);
+    placeInWorld(t, anyFloraLive());
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -664,7 +729,7 @@ void showDecor() {
     t.kind = Kind::DECOR;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 3, 100);  // full classic tree, no produce
-    placeOnLane(t);
+    placeInWorld(t, anyFloraLive());
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -675,7 +740,7 @@ void showBerry() {
     t.kind = Kind::BERRY;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 6, 70);  // taller bush, denser branches, purple berries
-    placeOnLane(t);
+    placeInWorld(t, anyFloraLive());
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -747,7 +812,7 @@ static void updateSlot(Slot& t) {
                     genClassicTree(t, 3, 100);
                 else
                     genClassicTree(t, 6, 70);
-                placeOnLane(t);
+                placeInWorld(t, true);  // smashed here → grow off-screen
                 t.phase = Phase::GROWING;
                 t.animStart = now;
                 t.stompHits = 0;
@@ -918,10 +983,7 @@ bool tryStompFruitTree(int pigFeetX, bool airborne) {
     if (t.stompHits >= 3) {
         dumpAllProduce(t);
         forceCollapse(t);
-        // Scenery re-grows after collapse; fruit waits for showFruit()
-        if (t.kind == Kind::DECOR || t.kind == Kind::BERRY) {
-            t.pendingShow = true;
-        }
+        t.pendingShow = true;  // grow again, off-screen, elsewhere on the map
         SFX::play(SFX::OINK_HAPPY);
     }
     return true;
@@ -938,10 +1000,10 @@ void scroll(int dir) {
         if (slots[i].phase == Phase::HIDDEN) continue;
         if (dir > 0) {
             slots[i].scroll++;
-            if (slots[i].scroll > 300) slots[i].scroll -= 300;
+            if (slots[i].scroll > WORLD_SPAN) slots[i].scroll -= WORLD_SPAN;
         } else {
             slots[i].scroll--;
-            if (slots[i].scroll < -300) slots[i].scroll += 300;
+            if (slots[i].scroll < -WORLD_SPAN) slots[i].scroll += WORLD_SPAN;
         }
     }
     // Critical: fallen fruit must ride the same treadmill as trees/grass.

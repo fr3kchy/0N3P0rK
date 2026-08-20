@@ -34,11 +34,12 @@ public:
     static const char* getStatus() { return statusMsg; }
     static const char* getLastEvent() { return lastEvent; }
     static bool isDeauthOn() { return deauthOn; }
+    static const char* getBottomHint();
 
 private:
     enum : uint16_t { DNS_PORT = 53, HTTP_PORT = 80 };
     enum : size_t { kMinFreeHeap = 34000, kMinLargest = 22000 };
-    enum : uint8_t { MAX_LIST = 24, VISIBLE = 4, MAX_CATCH = 12 };  // 4 rows + key legend
+    enum : uint8_t { MAX_LIST = 24, VISIBLE = 5, MAX_CATCH = 12 };
 
     struct NetPick {
         uint8_t bssid[6];

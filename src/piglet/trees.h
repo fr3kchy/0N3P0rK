@@ -23,6 +23,11 @@ enum class Kind : uint8_t {
     BERRY = 2   // (3) berry bush
 };
 
+// Looping farm width (px). Screen is 240; old loop was 300 (~125%).
+static constexpr int16_t WORLD_SPAN = 600;
+static constexpr int16_t WORLD_WRAP_HI = 540;  // SPAN - 60
+static constexpr int16_t WORLD_WRAP_LO = -60;
+
 void init();
 void reset();
 

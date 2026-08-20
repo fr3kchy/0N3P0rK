@@ -1713,6 +1713,7 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
         return;
     }
 
+    canvas.setTextWrap(false);
     canvas.setTextColor(UiStyle::TITLE);
     canvas.drawString(title ? title : "SELECT FILE", 4, 2);
 
@@ -1737,16 +1738,12 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
     }
 
     const int lineHeight = 13;
+    const int nameMaxPx = DISPLAY_W - 18;
     int y = 28;
 
     for (uint8_t i = scrollOffset;
          i < files.size() && i < scrollOffset + VISIBLE_ITEMS;
          i++) {
-        char nameBuf[36];
-        strncpy(nameBuf, files[i].name, sizeof(nameBuf) - 1);
-        nameBuf[sizeof(nameBuf) - 1] = '\0';
-        truncateName(nameBuf, 28);
-
         bool sel = (i == selectedIndex);
         if (sel) {
             canvas.fillRect(0, y - 1, DISPLAY_W, lineHeight, UiStyle::PINK);
@@ -1757,7 +1754,16 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
             canvas.setTextColor(UiStyle::TEXT);
         }
 
-        canvas.drawString(nameBuf, 4, y + 2);
+        const char* nm = files[i].name[0] ? files[i].name : "-";
+        if (sel) {
+            uiDrawMarquee(canvas, nm, 4, y + 2, nameMaxPx);
+        } else {
+            char nameBuf[40];
+            strncpy(nameBuf, nm, sizeof(nameBuf) - 1);
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            truncateName(nameBuf, (size_t)(nameMaxPx / 6));
+            canvas.drawString(nameBuf, 4, y + 2);
+        }
         y += lineHeight;
     }
 
@@ -1842,6 +1848,7 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
     canvas.setTextSize(1);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font0);
+    canvas.setTextWrap(false);
 
     // Header row: title + state badge
     canvas.setTextColor(UiStyle::TITLE);
@@ -1870,11 +1877,7 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
     canvas.drawString("SSID", 4, 16);
     canvas.setTextColor(UiStyle::TEXT);
     char buf[64];
-    char sn[22];
-    strncpy(sn, ssid[0] ? ssid : "-", sizeof(sn) - 1);
-    sn[sizeof(sn) - 1] = '\0';
-    truncateName(sn, 20);
-    canvas.drawString(sn, 36, 16);
+    uiDrawMarquee(canvas, ssid[0] ? ssid : "-", 36, 16, DISPLAY_W - 44);
 
     // Big "currently testing" panel
     canvas.fillRect(2, 30, DISPLAY_W - 4, 28, UiStyle::PANEL);
@@ -1883,17 +1886,9 @@ void PigpassMode::drawUI(M5Canvas& canvas) {
     canvas.setTextColor(foundPassword ? UiStyle::GREEN : UiStyle::CYAN);
     canvas.setTextSize(2);
     if (foundPassword && foundPw[0]) {
-        char show[14];
-        strncpy(show, foundPw, sizeof(show) - 1);
-        show[sizeof(show) - 1] = '\0';
-        truncateName(show, 12);
-        canvas.drawString(show, 6, 42);
+        uiDrawMarquee(canvas, foundPw, 6, 42, DISPLAY_W - 16, 12);
     } else if (s_currentTry[0]) {
-        char show[14];
-        strncpy(show, s_currentTry, sizeof(show) - 1);
-        show[sizeof(show) - 1] = '\0';
-        truncateName(show, 12);
-        canvas.drawString(show, 6, 42);
+        uiDrawMarquee(canvas, s_currentTry, 6, 42, DISPLAY_W - 16, 12);
     } else {
         canvas.setTextSize(1);
         canvas.setTextColor(UiStyle::DIM);

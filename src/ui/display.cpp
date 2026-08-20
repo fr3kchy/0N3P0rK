@@ -49,6 +49,40 @@ void uiListRow(M5Canvas& canvas, int y, int lineH, bool selected, uint16_t accen
     }
 }
 
+void uiDrawMarquee(M5Canvas& canvas, const char* s, int x, int y, int maxPx, int charW) {
+    if (!s) s = "";
+    if (charW < 1) charW = 6;
+    if (maxPx < charW) maxPx = charW;
+    canvas.setTextWrap(false);
+    size_t len = strlen(s);
+    int textPx = (int)len * charW;
+    if (textPx <= maxPx) {
+        canvas.drawString(s, x, y);
+        return;
+    }
+    int extra = textPx - maxPx;
+    const uint32_t hold = 900;
+    const uint32_t slide = (uint32_t)extra * 70u + 400u;
+    uint32_t cycle = hold + slide + hold + 500u;
+    uint32_t t = millis() % cycle;
+    int off = 0;
+    if (t > hold && t < hold + slide)
+        off = (int)(((t - hold) * (uint32_t)extra) / slide);
+    else if (t >= hold + slide)
+        off = extra;
+    int startCh = off / charW;
+    int pix = off % charW;
+    int visCh = (maxPx / charW) + 2;
+    char tmp[48];
+    size_t n = 0;
+    while (n + 1 < sizeof(tmp) && n < (size_t)visCh && s[startCh + n]) {
+        tmp[n] = s[startCh + n];
+        n++;
+    }
+    tmp[n] = '\0';
+    canvas.drawString(tmp, x - pix, y);
+}
+
 M5Canvas Display::topBar(&M5.Display);
 M5Canvas Display::mainCanvas(&M5.Display);
 M5Canvas Display::bottomBar(&M5.Display);
@@ -560,25 +594,16 @@ void Display::drawBottomBar() {
                 strncpy(left, Menu::selectedHint(), sizeof(left) - 1);
                 break;
             case AppMode::EVILPIG:
+                strncpy(left, EvilPigMode::getBottomHint(), sizeof(left) - 1);
                 if (EvilPigMode::getPhase() == EvilPigMode::Phase::PORTAL) {
-                    snprintf(left, sizeof(left), "EP HIT:%u ON:%u K:%lu",
-                             (unsigned)EvilPigMode::getHitCount(),
-                             (unsigned)EvilPigMode::getClientCount(),
-                             (unsigned long)EvilPigMode::getDeauthCount());
-                    {
-                        const char* ss = EvilPigMode::getApSsid();
-                        size_t n = 0;
-                        while (ss && ss[n] && n < 13) {
-                            char ch = ss[n];
-                            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
-                            rightName[n++] = ch;
-                        }
-                        rightName[n] = '\0';
+                    const char* ss = EvilPigMode::getApSsid();
+                    size_t n = 0;
+                    while (ss && ss[n] && n < 10) {
+                        char ch = ss[n];
+                        if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                        rightName[n++] = ch;
                     }
-                } else if (EvilPigMode::getPhase() == EvilPigMode::Phase::LOOT) {
-                    strncpy(left, "EP LOOT  V/ENT back", sizeof(left) - 1);
-                } else {
-                    snprintf(left, sizeof(left), "EP %s", EvilPigMode::getStatus());
+                    rightName[n] = '\0';
                 }
                 break;
             case AppMode::BLE:
@@ -624,7 +649,10 @@ void Display::drawBottomBar() {
         left[0] && strcmp(left, "SCAN") != 0)
         bottomBar.setTextColor(0xFE60);
     bottomBar.setTextWrap(false);
-    bottomBar.drawString(left, 2, 3);
+    int rightPx = rightName[0] ? ((int)strlen(rightName) * 6 + 8) : 0;
+    int leftMax = DISPLAY_W - 6 - rightPx;
+    if (leftMax < 48) leftMax = 48;
+    uiDrawMarquee(bottomBar, left, 2, 3, leftMax);
     bottomBar.setTextColor(TEXT_COL);
     if (rightName[0]) {
         bottomBar.setTextDatum(top_right);

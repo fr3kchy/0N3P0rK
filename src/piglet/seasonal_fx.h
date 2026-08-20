@@ -32,6 +32,6 @@ void reset();
 // Spring  — lightning bolts (backdrop) + thunder storms
 // Summer  — butterflies + golden pollen motes (unique heat shimmer)
 // Autumn  — dense falling leaves + rolling tumbleweed
-// Winter  — tall snow banks; pig walk tramples a path through drifts
+// Winter  — snow banks grow only while snowing; trampling carves a lasting path
 
 }  // namespace SeasonalFx

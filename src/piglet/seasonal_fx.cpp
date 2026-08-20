@@ -3,6 +3,7 @@
 
 #include "seasonal_fx.h"
 #include "weather.h"
+#include "trees.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include <esp_random.h>
@@ -19,11 +20,19 @@ struct SnowBank {
     uint8_t w;  // width px
     uint8_t h;  // fat rows 1..MAX
 };
-static constexpr int SNOW_BANK_COUNT = 12;
+struct SnowScar {
+    int16_t x;
+    uint8_t w;
+    bool active;
+};
+static constexpr int SNOW_BANK_COUNT = 18;
+static constexpr int SNOW_SCAR_COUNT = 16;
 static constexpr uint8_t SNOW_BANK_MAX_H = 8;  // tall drifts
 static SnowBank snowBanks[SNOW_BANK_COUNT] = {};
+static SnowScar snowScars[SNOW_SCAR_COUNT] = {};
 static uint32_t lastBankGrowMs = 0;
 static bool snowBanksInited = false;
+static bool snowingWas = false;
 static uint32_t lastRainSfxMs = 0;
 
 // ---------------------------------------------------------------------------
@@ -132,7 +141,8 @@ static void updateMoths(uint32_t now) {
 }
 
 static void drawMoths(M5Canvas& canvas, bool flash) {
-    const int16_t cx = 120;
+    int16_t cx = Trees::nearestFloraScreenX(120);
+    if (cx < 0) cx = 120;
     const int16_t cy = 42;
     uint16_t c = flash ? 0xFFFF : 0xFE60;
     for (int i = 0; i < 3; i++) {
@@ -146,88 +156,183 @@ static void drawMoths(M5Canvas& canvas, bool flash) {
 // ---------------------------------------------------------------------------
 // Winter banks
 // ---------------------------------------------------------------------------
+static void wrapWorldX(int16_t& x) {
+    while (x > Trees::WORLD_WRAP_HI) x = (int16_t)(x - Trees::WORLD_SPAN);
+    while (x < Trees::WORLD_WRAP_LO) x = (int16_t)(x + Trees::WORLD_SPAN);
+}
+
+static bool rangesOverlap(int16_t ax, int16_t aw, int16_t bx, int16_t bw) {
+    return ax < (int16_t)(bx + bw) && bx < (int16_t)(ax + aw);
+}
+
+static void addScar(int16_t x, uint8_t w) {
+    if (w < 8) w = 8;
+    wrapWorldX(x);
+    for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
+        if (snowScars[i].active) continue;
+        snowScars[i].x = x;
+        snowScars[i].w = w;
+        snowScars[i].active = true;
+        return;
+    }
+}
+
+static bool hitsScar(int16_t x, uint8_t w) {
+    wrapWorldX(x);
+    for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
+        if (!snowScars[i].active) continue;
+        int16_t sx = snowScars[i].x;
+        wrapWorldX(sx);
+        if (rangesOverlap(x, (int16_t)w, sx, (int16_t)snowScars[i].w)) return true;
+    }
+    return false;
+}
+
+static bool hitsLiveBank(int16_t x, uint8_t w, int skip) {
+    wrapWorldX(x);
+    for (int i = 0; i < SNOW_BANK_COUNT; i++) {
+        if (i == skip || snowBanks[i].h < 1) continue;
+        int16_t bx = snowBanks[i].x;
+        wrapWorldX(bx);
+        if (rangesOverlap(x, (int16_t)w, bx, (int16_t)snowBanks[i].w)) return true;
+    }
+    return false;
+}
+
+static int freeBankSlot() {
+    for (int i = 0; i < SNOW_BANK_COUNT; i++) {
+        if (snowBanks[i].h < 1) return i;
+    }
+    return -1;
+}
+
+static bool trySpawnBank(bool preferOffscreen) {
+    int slot = freeBankSlot();
+    if (slot < 0) return false;
+    for (int tries = 0; tries < 22; tries++) {
+        uint8_t w = (uint8_t)(20 + (esp_random() % 22));  // 20..41
+        int16_t x = (int16_t)(esp_random() % (uint32_t)Trees::WORLD_SPAN);
+        wrapWorldX(x);
+        int16_t sx = x;
+        wrapWorldX(sx);
+        bool onScreen = (sx >= -8 && sx <= 248);
+        if (preferOffscreen && onScreen) continue;
+        if (hitsScar(x, w)) continue;
+        if (hitsLiveBank(x, w, slot)) continue;
+        snowBanks[slot].x = x;
+        snowBanks[slot].w = w;
+        snowBanks[slot].h = 1 + (uint8_t)(esp_random() % 2);
+        return true;
+    }
+    return false;
+}
+
 static void initSnowBanks() {
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
-        snowBanks[i].x = (int16_t)(i * 20 + random(0, 10));
-        snowBanks[i].w = (uint8_t)random(18, 34);
-        // Some already tall — winter should feel deep right away
-        snowBanks[i].h = (uint8_t)random(3, 7);
+        snowBanks[i].x = 0;
+        snowBanks[i].w = 0;
+        snowBanks[i].h = 0;
     }
+    for (int i = 0; i < SNOW_SCAR_COUNT; i++) snowScars[i].active = false;
     snowBanksInited = true;
+    snowingWas = false;
     lastBankGrowMs = millis();
 }
 
 static void updateSnowBanks(uint32_t now) {
     if (!isWinter()) {
         snowBanksInited = false;
+        snowingWas = false;
         for (int i = 0; i < SNOW_BANK_COUNT; i++) snowBanks[i].h = 0;
+        for (int i = 0; i < SNOW_SCAR_COUNT; i++) snowScars[i].active = false;
         return;
     }
     if (!snowBanksInited) initSnowBanks();
 
-    int alive = 0;
-    for (int i = 0; i < SNOW_BANK_COUNT; i++)
-        if (snowBanks[i].h > 0) alive++;
-    if (alive == 0) {
-        initSnowBanks();
+    const bool snowing = Weather::isSnowing();
+    if (!snowing) {
+        snowingWas = false;
         return;
     }
 
-    if (now - lastBankGrowMs < 400) return;
+    int live = 0;
+    for (int i = 0; i < SNOW_BANK_COUNT; i++)
+        if (snowBanks[i].h > 0) live++;
+
+    // First flakes this storm: dump a handful off-screen so walking finds snow
+    if (!snowingWas) {
+        snowingWas = true;
+        for (int n = 0; n < 6; n++) trySpawnBank(true);
+        for (int n = 0; n < 2; n++) trySpawnBank(false);
+        lastBankGrowMs = now;
+        return;
+    }
+
+    if (now - lastBankGrowMs < 180) return;
     lastBankGrowMs = now;
 
-    if (Weather::isSnowing()) {
-        // Grow tall drifts (up to SNOW_BANK_MAX_H) — can become walls of snow
-        for (int n = 0; n < 4; n++) {
-            int i = random(0, SNOW_BANK_COUNT);
-            if (snowBanks[i].h == 0) {
-                // Rebuild a trampled gap
-                snowBanks[i].x = (int16_t)random(0, DISPLAY_W - 24);
-                snowBanks[i].w = (uint8_t)random(14, 28);
-                snowBanks[i].h = (uint8_t)random(2, 4);
-            } else if (snowBanks[i].h < SNOW_BANK_MAX_H) {
-                snowBanks[i].h++;
-            } else if (random(0, 100) < 15) {
-                snowBanks[i].x = (int16_t)random(0, DISPLAY_W - 24);
-                snowBanks[i].w = (uint8_t)random(18, 34);
-                snowBanks[i].h = (uint8_t)random(4, 7);
-            }
-            if (snowBanks[i].h > 0 && snowBanks[i].w < 36 && random(0, 100) < 50)
-                snowBanks[i].w += 2;
-        }
-    } else {
-        // Very slow natural melt, never wipe banks in winter
-        int i = random(0, SNOW_BANK_COUNT);
-        if (snowBanks[i].h > 2) snowBanks[i].h--;
+    // Raise existing drifts (do not widen — that would fill a stamped path)
+    live = 0;
+    for (int i = 0; i < SNOW_BANK_COUNT; i++) {
+        if (snowBanks[i].h < 1) continue;
+        live++;
+        if (snowBanks[i].h < SNOW_BANK_MAX_H && (esp_random() % 100) < 70)
+            snowBanks[i].h++;
     }
+
+    if (live >= SNOW_BANK_COUNT - 2) return;  // keep 2 slots free for splits
+    int burst = (live < 6) ? 3 : 1;
+    for (int n = 0; n < burst; n++) {
+        if (!trySpawnBank((esp_random() % 100) < 45)) break;
+    }
+}
+
+// Same stepped puff as clouds — rounded mound, not a triangle of bars
+static void drawSnowPuff(M5Canvas& canvas, int cx, int cy, int r, uint16_t color) {
+    if (r <= 1) {
+        canvas.fillRect(cx - 1, cy - 1, 3, 3, color);
+        return;
+    }
+    int inset = (r + 1) / 2;
+    canvas.fillRect(cx - r, cy - r + inset, r * 2, r * 2 - inset * 2, color);
+    canvas.fillRect(cx - r + inset, cy - r, (r - inset) * 2, inset, color);
+    canvas.fillRect(cx - r + inset, cy + r - inset, (r - inset) * 2, inset, color);
 }
 
 static void drawSnowBanks(M5Canvas& canvas, bool flash) {
     if (!isWinter() || !snowBanksInited) return;
-    const int S = 3;
+    const int16_t ground = 107;
+    const uint16_t C_TOP   = flash ? 0xFFFF : 0xFFFF;
+    const uint16_t C_MID   = flash ? 0xFFFF : 0xEF7D;
+    const uint16_t C_SHADE = flash ? 0xFFFF : 0xC618;
+    const uint16_t C_RIM   = flash ? 0xFFFF : 0xDEFB;
+
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         int rows = (int)snowBanks[i].h;
         if (rows < 1) continue;
         if (rows > (int)SNOW_BANK_MAX_H) rows = SNOW_BANK_MAX_H;
         int16_t bx = snowBanks[i].x;
-        while (bx > 260) bx -= 300;
-        while (bx < -60) bx += 300;
-        int wBlocks = (int)snowBanks[i].w / S;
-        if (wBlocks < 2) wBlocks = 2;
-        if (wBlocks > 11) wBlocks = 11;
+        wrapWorldX(bx);
+        int w = (int)snowBanks[i].w;
+        if (w < 12) w = 12;
 
-        for (int r = 0; r < rows; r++) {
-            int inset = r / 2;  // steeper tall banks
-            int bw = wBlocks - inset * 2;
-            if (bw < 1) break;
-            int16_t top = (int16_t)(107 - S * (r + 1));
-            if (top < 78) break;  // allow taller drifts
-            int16_t left = (int16_t)(bx + inset * S);
-            uint16_t col = flash ? 0xFFFF
-                                 : ((r == rows - 1) ? 0xFFFF : ((r & 1) ? 0xDEFB : 0xEF7D));
-            canvas.fillRect(left, top, bw * S, S, col);
-            if (r == 0)
-                canvas.fillRect(left, top + S - 1, bw * S, 1, flash ? 0xFFFF : 0xC618);
+        int maxR = 4 + rows;  // h=1 → 5px, h=8 → 12px (~same cap as old stacks)
+        if (maxR > 12) maxR = 12;
+
+        int nPuff = 2 + w / 16;
+        if (nPuff > 5) nPuff = 5;
+
+        for (int p = 0; p < nPuff; p++) {
+            int cx = bx + (nPuff == 1 ? w / 2 : (p * w) / (nPuff - 1));
+            int r = maxR;
+            if (p == 0 || p == nPuff - 1) r = (maxR * 3) / 4;
+            if (r < 3) r = 3;
+            int cy = ground - r + 2;
+            if (cx + r < -4 || cx - r > DISPLAY_W + 4) continue;
+            drawSnowPuff(canvas, cx, cy + 2, r + 1, C_SHADE);
+            drawSnowPuff(canvas, cx, cy, r, C_MID);
+            drawSnowPuff(canvas, cx - 1, cy - 1, (r > 3) ? r - 2 : r - 1, C_TOP);
+            drawSnowPuff(canvas, cx + r / 3, cy + 1, 2, C_RIM);
         }
     }
 }
@@ -238,39 +343,63 @@ void scroll(int dir) {
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         if (snowBanks[i].h < 1) continue;
         snowBanks[i].x = (int16_t)(snowBanks[i].x + d);
-        if (snowBanks[i].x > 260) snowBanks[i].x -= 300;
-        if (snowBanks[i].x < -60) snowBanks[i].x += 300;
+        wrapWorldX(snowBanks[i].x);
+    }
+    for (int i = 0; i < SNOW_SCAR_COUNT; i++) {
+        if (!snowScars[i].active) continue;
+        snowScars[i].x = (int16_t)(snowScars[i].x + d);
+        wrapWorldX(snowScars[i].x);
     }
 }
 
 void trampleSnow(int pigFeetX) {
     if (!isWinter() || !snowBanksInited) return;
-    // Throttle so tall drifts don't vanish in one frame burst
     static uint32_t lastTrampleMs = 0;
     uint32_t now = millis();
-    if (now - lastTrampleMs < 120) return;
+    if (now - lastTrampleMs < 80) return;
     lastTrampleMs = now;
 
-    // Melt path under pig (trampled road / протоптанная тропинка)
-    const int R = 18;
+    const int PATH = 14;  // stamped road under hooves
+    const int16_t pathL = (int16_t)(pigFeetX - PATH);
+    const int16_t pathR = (int16_t)(pigFeetX + PATH);
+    const uint8_t pathW = (uint8_t)(PATH * 2);
+
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         if (snowBanks[i].h < 1) continue;
         int16_t bx = snowBanks[i].x;
-        while (bx > 260) bx -= 300;
-        while (bx < -60) bx += 300;
+        wrapWorldX(bx);
         int16_t left = bx;
-        int16_t right = bx + (int16_t)snowBanks[i].w;
-        // Feet near bank body?
-        if (pigFeetX < left - R || pigFeetX > right + R) continue;
-        if (snowBanks[i].h > 0) snowBanks[i].h--;
-        // Carve a notch: shrink width from the side the pig is on
-        if (snowBanks[i].w > 8 && (esp_random() & 1)) {
-            snowBanks[i].w -= 2;
-            if (pigFeetX < (left + right) / 2)
-                snowBanks[i].x = (int16_t)(snowBanks[i].x + 1);  // eat from left
+        int16_t right = (int16_t)(bx + snowBanks[i].w);
+        if (pathR <= left || pathL >= right) continue;
+
+        int16_t leftW = (int16_t)(pathL - left);
+        int16_t rightW = (int16_t)(right - pathR);
+        addScar(pathL, pathW);
+
+        if (leftW >= 10 && rightW >= 10) {
+            // Walked the middle: keep both edges, hole in the center
+            int extra = freeBankSlot();
+            snowBanks[i].x = left;
+            snowBanks[i].w = (uint8_t)leftW;
+            if (extra >= 0) {
+                snowBanks[extra].x = pathR;
+                wrapWorldX(snowBanks[extra].x);
+                snowBanks[extra].w = (uint8_t)rightW;
+                snowBanks[extra].h = snowBanks[i].h;
+            }
+        } else if (leftW >= 10 && rightW < 10) {
+            snowBanks[i].x = left;
+            snowBanks[i].w = (uint8_t)leftW;  // ate the right
+        } else if (rightW >= 10 && leftW < 10) {
+            snowBanks[i].x = pathR;
+            wrapWorldX(snowBanks[i].x);
+            snowBanks[i].w = (uint8_t)rightW;
+        } else {
+            snowBanks[i].h = 0;  // whole drift stomped
+            snowBanks[i].w = 0;
         }
-        // Fully flattened → leave a gap (path) until snow rebuilds
-        if (snowBanks[i].h == 0) {
+        if (snowBanks[i].w < 8) {
+            snowBanks[i].h = 0;
             snowBanks[i].w = 0;
         }
     }
@@ -653,7 +782,9 @@ void init() {
 
 void reset() {
     snowBanksInited = false;
+    snowingWas = false;
     for (int i = 0; i < SNOW_BANK_COUNT; i++) snowBanks[i].h = 0;
+    for (int i = 0; i < SNOW_SCAR_COUNT; i++) snowScars[i].active = false;
     for (int i = 0; i < LEAF_COUNT; i++) leaves[i].active = false;
     tumble = {};
     lastTumbleSpawnMs = 0;
