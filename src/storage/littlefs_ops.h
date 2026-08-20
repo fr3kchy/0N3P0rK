@@ -14,8 +14,6 @@ bool begin();
 void end();
 bool remount();
 bool available();
-void sdLock();
-void sdUnlock();
 
 uint32_t sectorSize();
 uint32_t numSectors();
@@ -54,7 +52,6 @@ const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
 const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
 const char* const DIR_IR         = "/0N3P0rK/ir";
 const char* const DIR_WOLF       = "/0N3P0rK/wolf";
-const char* const DIR_SHOTS      = "/0N3P0rK/screenshots";
 
 const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/key.txt";
 const char* const FILE_WPASEC_RESULTS    = "/0N3P0rK/wpa-sec/results.txt";

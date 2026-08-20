@@ -22,7 +22,7 @@ const char* chip();
 // Runtime: "Cardputer" or "Cardputer ADV"
 const char* modelLabel();
 bool isAdv();
-// Pick IO-matrix or TCA8418 after M5 + SD (Launcher can leave pins dirty).
+// After SD: ADV keeps GPIO 5 as CS; original puts GPIO 5 back as a key row.
 void startKeyboard();
 uint8_t defaultButtonGpio();
 bool gpioAllowed(int gpio);

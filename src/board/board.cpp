@@ -48,8 +48,20 @@ uint32_t flashBytes() {
 }
 
 void startKeyboard() {
+    // Trust M5.begin() only. Never probe GPIO 8/9 (original 74HC138 / ADV I2C).
     s_adv = (M5.getBoard() == m5::board_t::board_M5CardputerADV);
     Serial.printf("[KB] %s\n", s_adv ? "ADV" : "Cardputer");
+
+    if (s_adv) {
+        // ADV keys are TCA8418 on 8/9. GPIO 5 is free — hold HIGH like 1.2 SD CS.
+        pinMode(5, OUTPUT);
+        digitalWrite(5, HIGH);
+        return;
+    }
+
+    // Original: GPIO 5 is matrix row {13,15,3,4,5,6,7}. SD.begin() stole it.
+    // Re-claim the 74HC138 keyboard only. Do not run this on ADV.
+    M5Cardputer.Keyboard.begin();
 }
 
 } // namespace Board

@@ -82,9 +82,6 @@ public:
     static uint8_t* mainCanvasBuffer();
     static size_t   mainCanvasBufferSize();
 
-    static bool takeScreenshot();
-    static bool isSnapping() { return snapping; }
-
     static void setBottomHint(const char* message);
     static void setBottomOverlay(const char* message);
     static void clearBottomOverlay();
@@ -114,7 +111,6 @@ private:
     static uint32_t topBarMessageDuration;
 
     static char bottomHint[96];
-    static bool snapping;
 
     static void drawTopBar();
     static void drawBottomBar();

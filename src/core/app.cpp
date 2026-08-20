@@ -243,15 +243,6 @@ void loop() {
     if (M5Cardputer.Keyboard.isPressed() || M5Cardputer.Keyboard.isChange())
         Display::resetDimTimer();
 
-    // Snap on 0 — edge only, do not call isChange() (that ate menu/hotkeys in 1.4)
-    {
-        static bool snapWas = false;
-        bool snap = M5Cardputer.Keyboard.isKeyPressed('0');
-        if (snap && !snapWas && !SettingsMenu::isTyping() && !Display::isSnapping())
-            Display::takeScreenshot();
-        snapWas = snap;
-    }
-
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
     if (overlayMode() && !SettingsMenu::isTyping()) {

@@ -22,13 +22,9 @@
 #include "../modes/usbsd.h"
 #include "../build_info.h"
 #include "../board/board.h"
-#include "../storage/littlefs_ops.h"
 #include <M5Cardputer.h>
-#include <SD.h>
-#include <Preferences.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 uint16_t getColorFG() {
     if (Weather::getActiveSeason() == Season::RETRO) return 0xE73C;
@@ -75,7 +71,6 @@ char Display::topBarMessage[96] = {0};
 uint32_t Display::topBarMessageStart = 0;
 uint32_t Display::topBarMessageDuration = 0;
 char Display::bottomHint[96] = {0};
-bool Display::snapping = false;
 
 uint8_t* Display::mainCanvasBuffer() { return s_mainCanvasBuf; }
 size_t Display::mainCanvasBufferSize() { return kMainCanvasBytes; }
@@ -655,74 +650,6 @@ void Display::pushAll() {
     topBar.pushSprite(ox, oy);
     mainCanvas.pushSprite(ox, TOP_BAR_H + oy);
     bottomBar.pushSprite(ox, TOP_BAR_H + MAIN_H + oy);
-}
-
-static uint16_t nextShotNumber() {
-    Preferences p;
-    if (!p.begin("shots", false)) return (uint16_t)((millis() % 900) + 1);
-    uint16_t n = p.getUShort("n", 0);
-    n++;
-    if (n > 999) n = 1;
-    p.putUShort("n", n);
-    p.end();
-    return n;
-}
-
-bool Display::takeScreenshot() {
-    if (snapping) return false;
-    if (!Storage::available()) {
-        setTopBarMessage("NO SD CARD", 2000);
-        return false;
-    }
-    snapping = true;
-    pushAll();
-    Storage::sdLock();
-    Storage::ensureDir(Storage::DIR_SHOTS);
-    uint16_t num = nextShotNumber();
-    char path[64];
-    snprintf(path, sizeof(path), "%s/screenshot%03d.bmp", Storage::DIR_SHOTS, num);
-    File file = SD.open(path, FILE_WRITE);
-    if (!file) {
-        Storage::sdUnlock();
-        setTopBarMessage("SD WRITE FAILED", 2500);
-        snapping = false;
-        return false;
-    }
-    const int w = DISPLAY_W;
-    const int h = DISPLAY_H;
-    const uint32_t pad = (4 - (3 * w) % 4) % 4;
-    const uint32_t filesize = 54 + (3 * w + pad) * h;
-    uint8_t header[54] = {
-        'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0,
-        40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 24, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0
-    };
-    for (uint32_t i = 0; i < 4; i++) {
-        header[2 + i] = (uint8_t)((filesize >> (8 * i)) & 0xFF);
-        header[18 + i] = (uint8_t)((w >> (8 * i)) & 0xFF);
-        header[22 + i] = (uint8_t)((h >> (8 * i)) & 0xFF);
-    }
-    file.write(header, 54);
-    uint8_t line[DISPLAY_W * 3 + 4];
-    memset(line + w * 3, 0, pad);
-    for (int y = h - 1; y >= 0; y--) {
-        M5.Display.readRectRGB(0, y, w, 1, line);
-        for (int x = 0; x < w; x++) {
-            uint8_t t = line[x * 3];
-            line[x * 3] = line[x * 3 + 2];
-            line[x * 3 + 2] = t;
-        }
-        file.write(line, w * 3 + pad);
-        if ((y & 15) == 0) yield();
-    }
-    file.close();
-    Storage::sdUnlock();
-    char msg[28];
-    snprintf(msg, sizeof(msg), "SNAP! #%u", (unsigned)num);
-    setTopBarMessage(msg, 2000);
-    snapping = false;
-    return true;
 }
 
 void Display::update() {
