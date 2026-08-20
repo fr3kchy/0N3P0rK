@@ -45,6 +45,7 @@ public:
     static bool isOnRightSide();  // Get screen position (for bubble placement)
     static bool isTransitioning();  // True during walk transition (hide bubble)
     static int getCurrentX();  // Get current animated X position
+    static void setX(int x);   // Place pig (boot splash / tests)
 
     // Phase 8: Intensity-based animation modifiers
     static void setMoodIntensity(int intensity);  // -100 to 100, affects blink/flip rates

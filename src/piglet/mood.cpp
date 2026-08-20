@@ -5,14 +5,17 @@
 #include "../core/app.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
+#include "../storage/littlefs_ops.h"
 #include <Preferences.h>
+#include <SD.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 int Mood::happiness = 70;
 int Mood::hunger = 70;
 int Mood::life = 5;  // discrete hearts 0–5
-char Mood::currentPhrase[32] = "привет";
+char Mood::currentPhrase[40] = "hello";
 uint32_t Mood::lastPhraseChange = 0;
 uint32_t Mood::lastActivityTime = 0;
 uint32_t Mood::lastDecayMs = 0;
@@ -22,82 +25,223 @@ static Preferences s_moodPrefs;
 static char s_status[40] = "";
 static uint32_t s_statusUntil = 0;
 
-// Readable first. One rare leet line per pile so 0n3 style stays a wink.
+// 0n3 barn voice. Short enough for the snout bubble.
 static const char* PH_IDLE[] = {
-    "привет",
     "hello friend",
-    "я не трогал",
-    "это фича",
-    "dns виноват",
-    "логи молчат",
-    "prod вроде жив",
-    "оно компилится",
+    "i did not touch it",
+    "it is a feature",
+    "dns did it",
+    "logs are quiet",
+    "prod seems up",
+    "it compiles",
     "sudo oink",
     "wifi go brrr",
     "nothing is real",
-    "0n3 прив3т"
+    "snout online",
+    "beacon soup",
+    "ssid? maybe",
+    "heap still here",
+    "barn structural ok",
+    "oink.exe idle",
+    "rf is spicy mud",
+    "pig persists",
+    "0N3P0rK vibes"
 };
 static const char* PH_HAPPY[] = {
-    "я в системе",
     "access granted",
     "it works!!",
-    "бог админ",
-    "легенда",
     "gg wp",
     "hack the planet",
-    "this guy oinks"
+    "this guy oinks",
+    "PWNED EM",
+    "truffle bagged",
+    "snout high five",
+    "main character",
+    "200 ok mood",
+    "root dance",
+    "gg bacon",
+    "oink++",
+    "sorted proper"
 };
 static const char* PH_HUNGRY[] = {
-    "404 яблоко",
-    "диск полный :(",
-    "нужен sudo еда",
-    "нет пакетов",
-    "тумми empty",
-    "low hp tum"
+    "404 apple",
+    "disk full :(",
+    "need sudo food",
+    "no packets",
+    "tummy empty",
+    "low hp tum",
+    "feed the snout",
+    "trough bone dry",
+    "malloc food pls",
+    "empty sector",
+    "need fruit irq"
 };
 static const char* PH_SAD[] = {
     "deploy failed",
-    "prod лежит",
-    "это не я",
+    "prod is down",
+    "was not me",
     "blame dns",
     "ticket #404",
-    "conn refused"
+    "conn refused",
+    "segfault in heart",
+    "mood: unloaded",
+    "handshake ghosted me",
+    "barn too quiet",
+    "status dire"
 };
 static const char* PH_SLEEPY[] = {
-    "админ спит",
+    "admin sleeps",
     "cron at 3am",
-    "zzz ещё 5 мин",
+    "zzz 5 more min",
     "standby...",
-    "screen saver"
+    "screen saver",
+    "low power snout",
+    "idle process",
+    "dreaming of hs",
+    "radio silence"
 };
 static const char* PH_FED[] = {
     "nom nom",
     "200 ok yum",
-    "сыр это жизнь",
     "cache warm",
-    "crunch!"
+    "crunch!",
+    "hp++",
+    "trough blessed",
+    "yum sector"
 };
 static const char* PH_PET[] = {
     "hehehe",
     "more pets",
     "best haxor",
-    "purr-oink"
+    "purr-oink",
+    "scratch ++",
+    "good human",
+    "snout approved"
 };
 static const char* PH_PLAY[] = {
     "zoom!",
     "catch me",
     "hack the planet",
     "again!",
-    "ping flood"
+    "ping flood",
+    "hop hop",
+    "oscar mike"
 };
 static const char* PH_BIRD[] = {
     "gotcha!",
     "nice shot",
     "pkt dropped",
-    "oink boom"
+    "oink boom",
+    "bird down",
+    "no fly zone",
+    "feathers: deleted",
+    "PULL!"
 };
 
-#define PICK(arr) (arr[random(0, (int)(sizeof(arr) / sizeof(arr[0])))])
+#define COUNT(arr) ((int)(sizeof(arr) / sizeof((arr)[0])))
+#define PICK(arr) (arr[random(0, COUNT(arr))])
+
+enum TalkKind : uint8_t {
+    TK_IDLE = 0, TK_HAPPY, TK_HUNGRY, TK_SAD, TK_SLEEPY,
+    TK_FED, TK_PET, TK_PLAY, TK_BIRD, TK_COUNT
+};
+
+static constexpr uint8_t TALK_MAX = 16;
+static constexpr uint8_t TALK_LEN = 28;
+static char s_talk[TK_COUNT][TALK_MAX][TALK_LEN];
+static uint8_t s_talkN[TK_COUNT];
+
+static const char* talkFile(TalkKind k) {
+    switch (k) {
+        case TK_IDLE:   return "idle.txt";
+        case TK_HAPPY:  return "happy.txt";
+        case TK_HUNGRY: return "hungry.txt";
+        case TK_SAD:    return "sad.txt";
+        case TK_SLEEPY: return "sleepy.txt";
+        case TK_FED:    return "fed.txt";
+        case TK_PET:    return "pet.txt";
+        case TK_PLAY:   return "play.txt";
+        case TK_BIRD:   return "bird.txt";
+        default:        return "idle.txt";
+    }
+}
+
+static void talkAdd(TalkKind k, const char* line) {
+    if (!line || !line[0] || s_talkN[k] >= TALK_MAX) return;
+    if (line[0] == '#') return;
+    uint8_t n = s_talkN[k];
+    strncpy(s_talk[k][n], line, TALK_LEN - 1);
+    s_talk[k][n][TALK_LEN - 1] = '\0';
+    s_talkN[k] = (uint8_t)(n + 1);
+}
+
+static void writeTalkSeed(const char* path, const char* body) {
+    if (SD.exists(path)) return;
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) return;
+    f.print(body);
+    f.close();
+}
+
+static void loadTalkFile(TalkKind k) {
+    char path[48];
+    snprintf(path, sizeof(path), "%s/%s", Storage::DIR_TALK, talkFile(k));
+    File f = SD.open(path, FILE_READ);
+    if (!f) return;
+    char buf[TALK_LEN];
+    uint8_t n = 0;
+    while (f.available()) {
+        int c = f.read();
+        if (c < 0) break;
+        if (c == '\r') continue;
+        if (c == '\n') {
+            buf[n] = '\0';
+            if (n) talkAdd(k, buf);
+            n = 0;
+            continue;
+        }
+        if (n < TALK_LEN - 1) buf[n++] = (char)c;
+    }
+    if (n) {
+        buf[n] = '\0';
+        talkAdd(k, buf);
+    }
+    f.close();
+}
+
+static void loadTalkFromSd() {
+    memset(s_talkN, 0, sizeof(s_talkN));
+    if (!Storage::available()) return;
+    Storage::ensureDir(Storage::DIR_TALK);
+    writeTalkSeed("/0N3P0rK/talk/idle.txt",
+        "# 0N3P0rK talk — one line = one bubble\n"
+        "# max 24 chars. # starts a comment.\n"
+        "# drop more lines in happy.txt hungry.txt\n"
+        "# sad.txt sleepy.txt fed.txt pet.txt\n"
+        "# play.txt bird.txt\n"
+        "sudo oink\n"
+        "my own line\n");
+    writeTalkSeed("/0N3P0rK/talk/happy.txt", "gg wp\naccess granted\n");
+    writeTalkSeed("/0N3P0rK/talk/hungry.txt", "404 apple\ntummy empty\n");
+    writeTalkSeed("/0N3P0rK/talk/sad.txt", "deploy failed\n");
+    writeTalkSeed("/0N3P0rK/talk/sleepy.txt", "zzz 5 more min\n");
+    writeTalkSeed("/0N3P0rK/talk/fed.txt", "nom nom\n");
+    writeTalkSeed("/0N3P0rK/talk/pet.txt", "hehehe\n");
+    writeTalkSeed("/0N3P0rK/talk/play.txt", "zoom!\n");
+    writeTalkSeed("/0N3P0rK/talk/bird.txt", "bird down\n");
+    for (uint8_t k = 0; k < TK_COUNT; k++) loadTalkFile((TalkKind)k);
+    Serial.printf("[TALK] sd lines idle=%u happy=%u\n",
+                  (unsigned)s_talkN[TK_IDLE], (unsigned)s_talkN[TK_HAPPY]);
+}
+
+static const char* pickMix(const char** built, int bn, TalkKind k) {
+    int extra = (int)s_talkN[k];
+    int total = bn + extra;
+    if (total < 1) return "";
+    int i = random(0, total);
+    if (i < bn) return built[i];
+    return s_talk[k][i - bn];
+}
 
 static void clampStat(int& v) {
     if (v < 0) v = 0;
@@ -128,7 +272,8 @@ void Mood::init() {
         if (life > 5) life = 5;
     }
     lastEffective = happiness;
-    say("привет");
+    loadTalkFromSd();
+    say("hello");
     maybeCureZombie();
     updateAvatarState();
 }
@@ -205,7 +350,7 @@ void Mood::feed() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    say(PICK(PH_FED));
+    say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
     if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
@@ -220,7 +365,7 @@ void Mood::eatWorld() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    say(PICK(PH_FED));
+    say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
     if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
@@ -248,7 +393,7 @@ void Mood::pet() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    say(PICK(PH_PET));
+    say(pickMix(PH_PET, COUNT(PH_PET), TK_PET));
     SFX::play(SFX::OINK_CURIOUS);
     Avatar::wiggleEars();
     Avatar::triggerTailWiggle();
@@ -263,7 +408,8 @@ void Mood::play() {
     clampStat(hunger);
     lastActivityTime = millis();
     lastEffective = happiness;
-    if ((millis() - lastPhraseChange) > 2500) say(PICK(PH_PLAY));
+    if ((millis() - lastPhraseChange) > 2500)
+        say(pickMix(PH_PLAY, COUNT(PH_PLAY), TK_PLAY));
     updateAvatarState();
 }
 
@@ -272,7 +418,7 @@ void Mood::onBirdKill() {
     clampStat(happiness);
     lastActivityTime = millis();
     lastEffective = happiness;
-    say(PICK(PH_BIRD));
+    say(pickMix(PH_BIRD, COUNT(PH_BIRD), TK_BIRD));
     Avatar::cuteJump();
     Avatar::triggerSparkles(5);
 }
@@ -299,15 +445,15 @@ void Mood::updateAvatarState() {
 
 void Mood::pickPhrase() {
     if (hunger < 25) {
-        say(PICK(PH_HUNGRY));
+        say(pickMix(PH_HUNGRY, COUNT(PH_HUNGRY), TK_HUNGRY));
     } else if (happiness < 25) {
-        say(PICK(PH_SAD));
+        say(pickMix(PH_SAD, COUNT(PH_SAD), TK_SAD));
     } else if (Avatar::isNightTime() && (millis() - lastActivityTime) > 25000) {
-        say(PICK(PH_SLEEPY));
+        say(pickMix(PH_SLEEPY, COUNT(PH_SLEEPY), TK_SLEEPY));
     } else if (happiness > 75) {
-        say(PICK(PH_HAPPY));
+        say(pickMix(PH_HAPPY, COUNT(PH_HAPPY), TK_HAPPY));
     } else {
-        say(PICK(PH_IDLE));
+        say(pickMix(PH_IDLE, COUNT(PH_IDLE), TK_IDLE));
     }
 }
 
@@ -320,7 +466,7 @@ void Mood::update() {
         clampStat(hunger);
         if (hunger == 0 && life > 0) {
             life -= 1;
-            say("тумми empty");
+            say("tummy empty");
         }
         if ((now - lastActivityTime) > 90000) happiness -= 2;
         clampStat(happiness);
@@ -328,7 +474,7 @@ void Mood::update() {
         saveMood();
     }
 
-    if (now - lastPhraseChange >= 18000) {
+    if (now - lastPhraseChange >= 12000) {
         pickPhrase();
     }
 
@@ -378,6 +524,7 @@ void Mood::draw(M5Canvas& canvas) {
     canvas.fillTriangle(bubbleX + 12, bubbleY + bubbleH,
                         bubbleX + 20, bubbleY + bubbleH,
                         bubbleX + 16, bubbleY + bubbleH + 5, fg);
+    canvas.setFont(&fonts::Font0);
     canvas.setTextColor(bg);
     canvas.setTextSize(1);
     canvas.setTextDatum(TL_DATUM);

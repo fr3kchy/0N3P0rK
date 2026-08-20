@@ -52,6 +52,7 @@ const char* const DIR_PIGPASS    = "/0N3P0rK/pigpass";
 const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
 const char* const DIR_IR         = "/0N3P0rK/ir";
 const char* const DIR_WOLF       = "/0N3P0rK/wolf";
+const char* const DIR_TALK       = "/0N3P0rK/talk";
 
 const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/key.txt";
 const char* const FILE_WPASEC_RESULTS    = "/0N3P0rK/wpa-sec/results.txt";

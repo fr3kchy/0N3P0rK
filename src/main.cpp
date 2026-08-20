@@ -1,4 +1,4 @@
-// OneLPig - Tamagotchi pig + Stamp barn on M5Cardputer
+// 0N3P0rK - Tamagotchi pig + barn on M5Cardputer / Cardputer ADV
 
 #include <M5Cardputer.h>
 #include <M5Unified.h>
@@ -65,9 +65,8 @@ void setup() {
 
     Display::init();
     SFX::init();
-    Display::showBootSplash();
-
     Avatar::init();
+    Display::showBootSplash();
     Display::refreshBrightness();
     Mood::init();
     Menu::begin();

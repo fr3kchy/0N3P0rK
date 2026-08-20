@@ -2652,6 +2652,11 @@ void Avatar::nudgeX(int dx) {
     notifyPlayerControl();
 }
 
+void Avatar::setX(int x) {
+    currentX = x;
+    onRightSide = (x > 60);
+}
+
 void Avatar::setManualWalk(bool walking) {
     s_manualWalk = walking;
     if (walking) s_manualWalkUntil = millis() + 160;

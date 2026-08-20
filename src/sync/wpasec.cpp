@@ -284,7 +284,7 @@ bool WPASec::uploadSingleCapture(const char* filepath, const char* bssid, const 
     client.printf("POST %s HTTP/1.1\r\n", WPASEC_UPLOAD_PATH);
     client.printf("Host: %s\r\n", WPASEC_HOST);
     client.printf("Cookie: key=%s\r\n", apiKey);
-    client.printf("User-Agent: 0N3P0rK/0.1\r\n");
+    client.printf("User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\n");
     client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
     client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
     client.print("Connection: close\r\n\r\n");
@@ -338,7 +338,7 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     char req[192];
     snprintf(req, sizeof(req),
              "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: key=%s\r\n"
-             "User-Agent: 0N3P0rK/0.1\r\nConnection: close\r\n\r\n",
+             "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\nConnection: close\r\n\r\n",
              WPASEC_POTFILE_PATH, WPASEC_HOST, apiKey);
     if (!writeStr(client, req)) {
         client.stop();

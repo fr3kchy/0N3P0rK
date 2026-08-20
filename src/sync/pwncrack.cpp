@@ -336,7 +336,7 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
     char hdr[320];
     snprintf(hdr, sizeof(hdr),
              "POST %s HTTP/1.1\r\nHost: %s\r\n"
-             "User-Agent: 0N3P0rK/0.1\r\n"
+             "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\n"
              "Content-Type: multipart/form-data; boundary=%s\r\n"
              "Content-Length: %u\r\nConnection: close\r\n\r\n",
              PWN_UPLOAD_PATH, PWN_HOST, boundary, (unsigned)contentLength);
@@ -428,7 +428,7 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     char req[280];
     snprintf(req, sizeof(req),
              "GET %s?key=%s HTTP/1.1\r\nHost: %s\r\n"
-             "User-Agent: 0N3P0rK/0.1\r\nConnection: close\r\n\r\n",
+             "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\nConnection: close\r\n\r\n",
              PWN_POTFILE_PATH, apiKey, PWN_HOST);
     size_t reqN = strlen(req);
     size_t off = 0;

@@ -109,17 +109,20 @@ void Display::init() {
 
 void Display::showBootSplash() {
     M5.Display.fillScreen(UiStyle::BG);
+    M5.Display.setFont(&fonts::Font0);
     M5.Display.setTextColor(UiStyle::PINK);
     M5.Display.setTextSize(2);
     M5.Display.setTextDatum(middle_center);
-    M5.Display.drawString("OneLPig", DISPLAY_W / 2, 48);
+    M5.Display.drawString(ON3PORK_NAME, DISPLAY_W / 2, 52);
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(UiStyle::TEXT);
-    M5.Display.drawString(Config::personality().name, DISPLAY_W / 2, 78);
+    char ver[24];
+    snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
+    M5.Display.drawString(ver, DISPLAY_W / 2, 80);
     M5.Display.setTextColor(UiStyle::DIM);
-    M5.Display.drawString(Board::modelLabel(), DISPLAY_W / 2, 98);
+    M5.Display.drawString(Board::modelLabel(), DISPLAY_W / 2, 100);
     M5.Display.setTextDatum(TL_DATUM);
-    delay(900);
+    delay(1600);
 }
 
 // Night: setting-20 (floor 10). Day: setting+20 (cap 100). Never 0.
