@@ -405,6 +405,7 @@ static uint16_t nightAmountFromSynthetic(uint32_t secInCycle, Season season) {
 }
 
 static uint16_t computeNightTarget(uint32_t now) {
+    if (Weather::getActiveSeason() == Season::NOIR) return 256;
     uint8_t sky = Config::personality().skyMode;
     if (sky == (uint8_t)SkyMode::DAY) return 0;
     if (sky == (uint8_t)SkyMode::NIGHT) return 256;
@@ -529,6 +530,13 @@ static void drawSkyBackdrop(M5Canvas& canvas) {
             S0 = 0x10A2; S1 = 0x2104; S2 = 0x39C7; S3 = 0x52AA;
         }
     }
+    // NOIR: alley night — ink sky, sodium glow at the horizon
+    if (Weather::getActiveSeason() == Season::NOIR) {
+        S0 = 0x0842; S1 = 0x1063; S2 = 0x1884; S3 = 0x3120;
+        if (wd > 0) {
+            S0 = 0x0021; S1 = 0x0842; S2 = 0x1063; S3 = 0x20C0;
+        }
+    }
     s_skyTop = S0;
 
     static const uint8_t bayer4[16] = {
@@ -621,6 +629,24 @@ static void drawSkyBackdrop(M5Canvas& canvas) {
             canvas.drawLine(40 + t, 12 + t / 4, 50 + t, 15 + t / 4, maybeFlash(0xFFFF));
         }
     }
+
+    // Night / noir stars (twinkle, fat 2px — inspired by a city-night farm)
+    const bool noirSky = (Weather::getActiveSeason() == Season::NOIR);
+    if ((nb > 160 || noirSky) && wd < 80 && !raining) {
+        static const uint8_t SX[18] = {
+            12, 28, 47, 63, 81, 99, 118, 134, 152, 171, 189, 206, 221, 38, 74, 143, 198, 16
+        };
+        static const uint8_t SY[18] = {
+            8, 18, 6, 24, 11, 20, 7, 16, 10, 22, 9, 19, 14, 28, 5, 13, 27, 21
+        };
+        for (int i = 0; i < 18; i++) {
+            uint32_t tw = (now / (180u + (uint32_t)i * 17u) + (uint32_t)i);
+            if ((tw & 3u) == 3u) continue;
+            uint16_t sc = noirSky ? ((tw & 1u) ? (uint16_t)0xFE60 : (uint16_t)0xDEFB)
+                                  : ((tw & 1u) ? (uint16_t)0xFFFF : (uint16_t)0xC618);
+            canvas.fillRect((int)SX[i], (int)SY[i], 2, 2, maybeFlash(sc));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -651,6 +677,12 @@ static const PigPalette kPigPalettes[PIG_SKIN_COUNT] = {
     { 0x3A08, 0x6B8C, 0x9D34, 0x4A69, 0x7BF0, 0x5AEB, 0x2DE4, 0xF800, 0x5FEA, 0x3205, 0x6B4D, 0x4A8A },
     // RETRO — silver-screen grayscale (old film pig)
     { 0x3186, 0xAD55, 0xC618, 0x7BEF, 0x9CF3, 0x8410, 0x632C, 0x0000, 0xFFFF, 0x4208, 0x2104, 0xBDF7 },
+    // SHADOW — soot / night hog
+    { 0x2104, 0x4A49, 0x7BCF, 0x3186, 0x5AEB, 0x4208, 0x9CF3, 0x0000, 0xC618, 0x18C3, 0x1082, 0x62CB },
+    // CANDY — hot pink
+    { 0xC00A, 0xFB16, 0xFD9F, 0xD00C, 0xFCB0, 0xF80F, 0x7A12, 0x5809, 0xFFFF, 0xC00A, 0xE00D, 0xFCB8 },
+    // GOLD — barn treasure
+    { 0x9B20, 0xFE60, 0xFFF1, 0xC480, 0xFDC0, 0xD4A0, 0x8200, 0x4100, 0xFFFF, 0xAB40, 0x9360, 0xFCC0 },
 };
 static const PigPalette& activePigPalette() {
     uint8_t s = Config::personality().pigSkin;
@@ -2147,12 +2179,13 @@ void Avatar::drawGrass(M5Canvas& canvas, bool frontLayer) {
     const bool isAutumn = (season == Season::AUTUMN);
     const bool isWinter = (season == Season::WINTER);
     const bool isRetro  = (season == Season::RETRO);
+    const bool isNoir   = (season == Season::NOIR);
     // SUMMER = classic summer greens
 
     const bool wetGrass = Weather::isRaining();
-    const uint16_t dirtMid  = maybeFlash(isRetro ? 0x4208 : 0x8A40);
-    const uint16_t dirtDark = maybeFlash(isRetro ? 0x2104 : (isWinter ? 0x6B6D : 0x5140));
-    const uint16_t dirtLite = maybeFlash(isRetro ? 0x8410 : (isWinter ? 0xC618 : 0xA3E0));
+    const uint16_t dirtMid  = maybeFlash(isNoir ? 0x2104 : (isRetro ? 0x4208 : 0x8A40));
+    const uint16_t dirtDark = maybeFlash(isNoir ? 0x1082 : (isRetro ? 0x2104 : (isWinter ? 0x6B6D : 0x5140)));
+    const uint16_t dirtLite = maybeFlash(isNoir ? 0x5A00 : (isRetro ? 0x8410 : (isWinter ? 0xC618 : 0xA3E0)));
 
     // Seasonal fat-blade palettes (same geometry as classic)
     // SUMMER = deep classic green; SPRING = fresh yellow-lime + flower carpet
@@ -2213,6 +2246,16 @@ void Avatar::drawGrass(M5Canvas& canvas, bool frontLayer) {
         turf1 = maybeFlash(0x4208);
         turf2 = maybeFlash(0x6B6D);
         FLOWER_COLS = FLOWER_RETRO;
+    } else if (isNoir) {
+        static const uint16_t PAL_NOIR_BASE[4] = { 0x1082, 0x2104, 0x3186, 0x4A00 };
+        static const uint16_t PAL_NOIR_TIP[4]  = { 0x5A00, 0x8200, 0xC480, 0xFE60 };
+        static const uint16_t FLOWER_NOIR[4]   = { 0xFE60, 0xC480, 0x8200, 0xF800 };
+        GRASS_BASE = PAL_NOIR_BASE;
+        GRASS_TIP  = PAL_NOIR_TIP;
+        turf0 = maybeFlash(0x0841);
+        turf1 = maybeFlash(0x18C3);
+        turf2 = maybeFlash(0x3120);
+        FLOWER_COLS = FLOWER_NOIR;
     }
 
     // === BACK LAYER ONLY: soil + turf carpet ===

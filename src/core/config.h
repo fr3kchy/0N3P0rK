@@ -17,9 +17,12 @@ enum class PigSkin : uint8_t {
     BLUSH   = 1,
     HOG     = 2,
     ZOMBIE  = 3,
-    RETRO   = 4
+    RETRO   = 4,
+    SHADOW  = 5,
+    CANDY   = 6,
+    GOLD    = 7
 };
-static const uint8_t PIG_SKIN_COUNT = 5;
+static const uint8_t PIG_SKIN_COUNT = 8;
 
 enum class SeasonMode : uint8_t {
     AUTO   = 0,
@@ -27,16 +30,18 @@ enum class SeasonMode : uint8_t {
     SUMMER = 2,
     AUTUMN = 3,
     WINTER = 4,
-    RETRO  = 5
+    RETRO  = 5,
+    NOIR   = 6
 };
-static const uint8_t SEASON_MODE_COUNT = 6;
+static const uint8_t SEASON_MODE_COUNT = 7;
 
 enum class Season : uint8_t {
     SPRING = 0,
     SUMMER = 1,
     AUTUMN = 2,
     WINTER = 3,
-    RETRO  = 4
+    RETRO  = 4,
+    NOIR   = 5
 };
 static const uint8_t SEASON_COUNT = 4;
 

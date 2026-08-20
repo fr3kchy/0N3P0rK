@@ -16,7 +16,8 @@ enum class Produce : uint8_t {
     GREEN_APPLE,   // autumn old apple tree — soft green apples
     CHERRY,        // spring cherry tree — paired red cherries
     ACORN,
-    CONE
+    CONE,
+    GOLD_APPLE     // secret, XP level 10+
 };
 
 // Ground line for landed fruit (pig feet sit at ~106)

@@ -3,6 +3,7 @@
 #include "keys.h"
 #include "../core/app.h"
 #include "../core/config.h"
+#include "../core/xp.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../piglet/weather.h"
@@ -406,6 +407,7 @@ void Display::drawTopBar() {
         case Season::AUTUMN: appleOn = 0xFD20; stemOn = 0x8200; break;
         case Season::WINTER: appleOn = 0xC618; stemOn = 0x7BEF; break;
         case Season::RETRO:  appleOn = 0xC618; stemOn = 0x8410; break;
+        case Season::NOIR:   appleOn = 0xFE60; stemOn = 0xC480; break;
     }
     if (retro) { appleOn = 0xC618; stemOn = 0x8410; }
     auto fat = [&](int px, int py, uint16_t c) {
@@ -430,6 +432,9 @@ void Display::drawTopBar() {
         drawHeart(x, (i < hearts) ? heartOn : heartOff);
         x += 12;
     }
+    char lv[8];
+    snprintf(lv, sizeof(lv), "L%u", (unsigned)XP::getLevel());
+    topBar.drawString(lv, x + 2, 4);
 
     char sky[22];
     Avatar::getSkyHud(sky, sizeof(sky));
@@ -492,6 +497,7 @@ void Display::drawBottomBar() {
         case Season::AUTUMN: fringeTop = 0x8AC0; break;
         case Season::WINTER: fringeTop = 0xDEFB; DIRT_MID = 0x6B6D; break;
         case Season::RETRO:  fringeTop = 0x9CF3; DIRT_MID = 0x4208; TEXT_COL = 0xE73C; break;
+        case Season::NOIR:   fringeTop = 0xFE60; DIRT_MID = 0x2104; TEXT_COL = 0xFE60; break;
     }
 
     bottomBar.fillSprite(DIRT_MID);
@@ -625,6 +631,12 @@ void Display::drawBottomBar() {
         bottomBar.drawString(rightName, DISPLAY_W - 2, 3);
         bottomBar.setTextDatum(top_left);
     }
+}
+
+void Display::blitFrame() {
+    drawTopBar();
+    drawBottomBar();
+    pushAll();
 }
 
 void Display::pushAll() {

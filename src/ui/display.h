@@ -54,6 +54,7 @@ public:
     static void init();
     static void update();
     static void pushAll();
+    static void blitFrame();  // top + bottom + push, same chrome as farm
     static void showBootSplash();
 
     static M5Canvas& getTopBar() { return topBar; }

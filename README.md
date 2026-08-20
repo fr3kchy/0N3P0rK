@@ -1,128 +1,278 @@
 # 0N3P0rK
 
-Tamagotchi pig + barn for **M5Cardputer** and **M5Cardputer ADV**.  
-One binary for both boards. The model is read from `M5.getBoard()` — GPIO 8/9 are never probed.
+Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardputer** and **M5Cardputer ADV**.
 
-Author: [lexilexiko](https://github.com/lexilexiko)  
-License: MIT
+One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-> Radio modes are for **your own / explicitly authorized** networks only. Lab tool, not other people's Wi‑Fi.
+**v1.0** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+
+The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
+
+> Radio modes are a **lab tool for networks you own or are explicitly authorized to test**. Capabilities are not permission.
 
 ---
 
-## Features
+## What it is
 
-### Farm
-- The pig walks, eats fruit, hides, scratches
-- Hunger, mood, hearts. **5 wolf bites** → zombie; **5 fruit hearts** cure her. A heart is added when hunger hits 100%
-- Seasons, sky, grass, trees, weather, birds
-- Wolf visitor. **WOLF EAT** moves a random handshake into `/0N3P0rK/wolf` (never keys). Hit the wolf / turn Am off to get loot back
-- Battery in the top bar
-- Speech bubble (Font0, ASCII). Custom lines: drop files in `/0N3P0rK/talk/`
-- Boot splash: **0N3P0rK**
+Plug in the Cardputer, put an SD card in the slot, and you get a pig on a scrolling farm. She walks, eats, talks, levels up, and can turn into a zombie if you let her starve (or a wolf gets her). Behind the farm is a barn menu: sniff, capture, offline crack, BLE toys, IR, spectrum, loot sync.
 
-### Menu
+Think Tamagotchi first. The radio is in the barn.
 
-**ATTACK**
-| Item | What it does |
+---
+
+## Hardware we run on
+
+| | |
 | --- | --- |
-| LIGHT | Quiet sniff on the current channel |
-| AGGRO | Hop 1–13, kick, catch EAPOL / PMKID |
-| EVILPIG | Lab portal: clone your own net, loot, kick |
-| PIGPASS | Offline WPA from a wordlist / mask on SD |
-| BLE | Apple / Win / Android frames (own devices) |
-| IR PORT | IR at the TV. `SPC` fire, `R` NA/EU, `E` file from `/0N3P0rK/ir` |
-| SPECTRUM | 2.4 sweep, lobes, waterfall. `ENT` lock, `SPC` kick |
-| STOP | Radio sleep. Loot on the card stays |
+| Boards | **M5Cardputer** (original) and **M5Cardputer ADV** |
+| MCU | ESP32-S3 (StampS3), 240 MHz |
+| Flash | 8 MB (this image) |
+| Screen | 240 × 135 ST7789, farm uses a top bar + main field + bottom bar |
+| Keyboard | Original: 74HC138 matrix. ADV: TCA8418 |
+| USB | CDC serial (`ARDUINO_USB_MODE=0`, CDC on boot). Pick the COM yourself (VID `303A`) |
+| SD | dedicated SPI: CS 12, MOSI 14, MISO 39, SCK 40. GPIO 5 is held HIGH only while the card mounts (1.2-style fix), then keys are restored |
 
-**LOOT** — one bag: WPA-SEC and pwncrack.org. `S` sync, `T` test.
+**Original Cardputer:** after SD, the keyboard matrix is started again with `Keyboard.begin()`.
 
-**PIG** — name, skin, season, sky, scene layers, LIFE (she walks herself) / manual control, ANIM TEST (`-` / `=` on the farm).
+**Cardputer ADV:** GPIO 5 stays HIGH after mount. The firmware does **not** re-init the TCA8418 I2C keyboard.
 
-**SET**
-1. **SYSTEM** — brightness, sound, dim
-2. **RADIO** — pack, hop, deauth, PMKID, CSA, pcap…
-3. **BLE** — burst / adv time
-4. **CONNECT** — home Wi‑Fi for sync (scan, type pass)
-5. **KEYS** — farm hotkeys
-6. **USB SD** — card as a disk on the PC. Eject, then `` ` ``
+Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / Cardputer only.
 
 ---
 
-## Keys
+## How to flash
+
+1. USB into the Cardputer. In Device Manager (Windows) pick **your** COM port (VID `303A`). The firmware does not hard-code a port.
+2. Put a FAT32 SD card in the slot **before** you boot, if you want loot / talk / wordlists.
+3. Flash with any of:
+
+```text
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.0_m5cardputer.bin
+```
+
+or PlatformIO:
+
+```text
+pio run -t upload --upload-port COMx
+```
+
+or M5Launcher / the usual Cardputer launcher, pointing at the release `.bin`.
+
+Build from source (PlatformIO, `espressif32@6.12.0`, Arduino):
+
+```text
+pio run
+```
+
+Artifact: `.pio/build/m5cardputer/firmware.bin`  
+Release name: `0N3P0rK_v1.0_m5cardputer.bin`
+
+---
+
+## First minutes (how to use)
+
+1. Power on. A short splash: the pig runs, speech bubble **0N3P0rK**. Any key skips it.
+2. You land on the **farm**. She walks if **LIFE** is on (default).
+3. `` ` `` / `~` / Esc opens the **barn menu**. Same key goes back. **Backspace minimizes**, it does not exit.
+4. `;` / `.` move up / down in lists. **Enter** selects.
+5. Hotkeys from the farm (defaults, remappable in **SET → KEYS**):
+
+| Key | Opens |
+| --- | --- |
+| `R` | RADIO (last radio page) |
+| `A` | AGGRO |
+| `L` | LIGHT |
+| `P` | PIGPASS |
+| `E` | EVILPIG |
+| `B` | BLE |
+| `I` | IR PORT |
+| `S` | SPECTRUM |
+| `H` | LOOT |
+
+---
+
+## Farm
+
+The pig lives here. Top bar: hearts, food apple, level, sky/season, battery. Bottom bar: dirt fringe + name.
+
+### Move her
 
 | Key | Action |
 | --- | --- |
-| `` ` `` / `~` / Esc | Back / leave the mode |
-| Backspace | Minimize the window, **not** exit |
-| `;` / `.` | Up / down in lists |
-| Enter | Select |
-| `R` | RADIO (default; remappable) |
-| `A` `L` `P` `E` `B` `I` `S` `H` | AGGRO / LIGHT / PIGPASS / EVILPIG / BLE / IR / SPECTRUM / LOOT |
+| `,` hold | walk left |
+| `/` hold | walk right |
+| `;` | jump (airborne stomp on a tree/bush) |
+| Space | attack hop |
+| `.` hold | sit |
 
-Change binds in **SET → KEYS**. `ENT` to set, Backspace to clear.
+**LIFE ON** (PIG settings): she walks, jumps, hides on her own. **LIFE OFF**: you steer.
+
+**ANIM TEST** (PIG): `-` / `=` cycles demo poses on the farm.
+
+### Hunger, hearts, zombie
+
+- Hunger ticks down. When it hits empty, she loses a **heart**.
+- Eat fruit / berries from the farm to fill hunger. A full stomach can add a heart (up to 5).
+- **0 hearts** (wolf **or** hunger) → she becomes a **zombie**. No countdown toast — it is a surprise.
+- **5 hearts** again → she turns back into a normal pig by herself ("PIG AGAIN").
+- You may change skin by hand only if she has **at least 1 heart**. Locked skins are skipped in the cycle.
+
+A leftover empty stomach used to eat the new heart instantly. After a zombify / a new heart, hunger is buffered so she does not flop straight back.
+
+### Wolf
+
+A night visitor. If **WOLF EAT** is on, a bite at 0 hearts can stash a random handshake into `/0N3P0rK/wolf/` (never keys). Hit the wolf or turn Am off to get loot back.
+
+### Trees and bushes
+
+Always three plants, each on its own lane so they do not grow out of one spot:
+
+| Lane | What | Drops |
+| --- | --- | --- |
+| Left | fruit tree (changes with the season) | apples / cherries / cones |
+| Center | decorative (willow in spring, street lamp in NOIR, snowy tree in winter — never a second fir) | none |
+| Right | berry bush | berries, every season |
+
+They scroll with the grass. Jump on one three times to knock it down; decor and the bush grow back. The bush does **not** collapse by itself — only a kick. Berries (and fruit) fall, then grow again, then fall again.
+
+### Seasons and sky
+
+**PIG → SEASON** or AUTO (AUTO rotates spring → summer → autumn → winter every 15 minutes; RETRO and NOIR stay manual).
+
+| Season | Farm look |
+| --- | --- |
+| SPRING | sakura (left), weeping willow (center), bush (right), fresh grass |
+| SUMMER | apple tree, classic tree, bush |
+| AUTUMN | old apple tree, fall colors, leaves |
+| WINTER | fir (left), snowy classic (center), frost |
+| RETRO | silver-screen black and white (unlock) |
+| NOIR | night alley, stars, sodium lamp, moths (unlock) |
+
+**SKY:** AUTO (clock / a living cycle), DAY, or NIGHT. NOIR is always night.
+
+### XP and secrets
+
+XP is a Tamagotchi grind. Each level costs more than the last:
+
+| Level-up | XP needed |
+| ---: | ---: |
+| 1 → 2 | 100 |
+| 2 → 3 | 250 |
+| 3 → 4 | 500 |
+| 4 → 5 | 1000 |
+| 5 → 6 | 2500 |
+| 6 → 7 | 5000 |
+| 7 → 8 | 7500 |
+| after that | +2500 each time |
+
+You earn XP by picking fruit, scaring the wolf, care (pet / feed, rate-limited), handshakes, PIGPASS, EVILPIG, night survive, and so on.
+
+| Unlock | At |
+| --- | --- |
+| BLUSH skin | lv 5 |
+| SHADOW skin | lv 8 |
+| Gold apples on the fruit tree | lv 10 |
+| CANDY skin | lv 12 |
+| RETRO skin + RETRO season | lv 15 |
+| NOIR season | lv 18 |
+| GOLD skin | lv 20 |
+
+**PIG → CODE** — type `l3xik0` to unlock every skin and season at once.
+
+Skins: CLASSIC, BLUSH, HOG, ZOMBIE, RETRO, SHADOW, CANDY, GOLD.
+
+She talks in a bubble (Font0). Drop your own lines in `/0N3P0rK/talk/` (see SD below).
+
+---
+
+## Barn menu
+
+`` ` `` from the farm. Four roots: **ATTACK**, **LOOT**, **PIG**, **SET**.
+
+### ATTACK
+
+| Item | What it does |
+| --- | --- |
+| LIGHT | Quiet sniff on the **current** channel. Incoming rings on the snout. UI stays calm. |
+| AGGRO | Hop channels 1–13, kick, catch EAPOL / PMKID. Outgoing rings. SSID hunt. |
+| EVILPIG | Lab portal: clone **your own** net, loot, kick. `ENT` clone, `V` loot, `D` kick. |
+| PIGPASS | Offline WPA from a wordlist or mask on the SD. Handshakes in `/handshakes/`, lists in `/Passworld/`. |
+| BLE | Apple / Win / Android frames. Own devices. `;` / `.` family. |
+| IR PORT | Point at a TV. `SPC` fire, `R` NA/EU, `E` file from `/0N3P0rK/ir`. |
+| SPECTRUM | 2.4 GHz sweep, lobes, waterfall. `ENT` lock, `SPC` kick, `W` wake. |
+| STOP | Radio sleep. Loot on the card stays. |
+
+### LOOT
+
+One bag for **wpa-sec** and **pwncrack.org**. `,` / `.` switch tab. `S` sync, `T` test.
+
+Put API keys in **SET →** the matching key fields (they live in net NVS, not `pig.cfg`).
+
+### PIG
+
+Name, skin, season, sky, LIFE, scene layers (trees / grass / wolf / weather…), ANIM TEST, **CODE**, WOLF / WOLF EAT.
+
+### SET
+
+1. **SYSTEM** — brightness, sound, dim after / dim level  
+2. **STATUS** — LVL, XP bar, board, battery, SD, Wi-Fi, WPA/PWN keys present, version. `;` / `.` scroll  
+3. **RADIO** — pack (STOCK / OURS / PAN), hop, lock, deauth, RSSI, MAC, PMKID, CSA, pcap…  
+4. **BLE** — burst / adv time  
+5. **CONNECT** — home Wi-Fi for sync (scan, type **only the password**)  
+6. **KEYS** — farm / menu shortcuts. `ENT` to bind, Backspace to clear  
+7. **USB SD** — the SD card as a disk on the PC. Eject on the PC, then `` ` ``
 
 ---
 
 ## SD card
 
-Root: `/0N3P0rK/`
+Root folder is always `/0N3P0rK/`. Created on boot if missing.
 
 ```
 /0N3P0rK
-  handshakes/     pcap + 22000
+  handshakes/     pcap + 22000 captures
   wpa-sec/        key.txt  results.txt  uploaded.txt
   pwncrack/       key.txt  results.txt  uploaded.txt
   evilpig/        creds.csv
   pigpass/        cracked.txt  checkpoint
   Passworld/      wordlists for PIGPASS
   ir/             IR files
-  wolf/           what the wolf stole
+  wolf/           what the wolf stole (handshakes, never keys)
   talk/           custom pig lines
 ```
 
-**talk** — one file per mood, one line = one bubble, `#` starts a comment, ~24 chars:
+**talk** — one file per mood, one line = one bubble, `#` starts a comment, keep lines around 24 characters:
 
 `idle.txt` `happy.txt` `hungry.txt` `sad.txt` `sleepy.txt` `fed.txt` `pet.txt` `play.txt` `bird.txt`
 
 ---
 
-## Firmware
+## Keys (global)
 
-One `.bin` for Cardputer and ADV.
+| Key | Action |
+| --- | --- |
+| `` ` `` / `~` / Esc (code 27) | Back / leave the mode |
+| Backspace | Minimize the window, **not** exit |
+| `;` / `.` | Up / down in lists (STATUS too) |
+| Enter | Select |
+| `,` / `/` | Walk on the farm |
 
-1. USB into the Cardputer, pick the COM yourself (Device Manager, VID `303A`)
-2. M5Launcher / `esptool` / PlatformIO `pio run -t upload --upload-port COMx`
-3. SD card in the slot **before** boot
-
-Build from source:
-
-```
-pio run
-```
-
-Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release: `0N3P0rK_v2.0_m5cardputer.bin`
-
-PlatformIO: `espressif32@6.12.0`, Arduino, ESP32-S3 8MB.
+Change binds in **SET → KEYS**.
 
 ---
 
-## v2.0
+## Build notes
 
-- Splash and serial: **0N3P0rK v2.0**
-- Font0 like 1.6
-- More pig lines + `/talk` folder
-- SD like 1.2 (GPIO 5 HIGH only during mount), Cardputer / ADV keys restored after SD
-- Zombie after 5 bites, battery in the top bar, RADIO hotkey, ANIM TEST
+- PlatformIO env `m5cardputer`, board `m5stack-stamps3`
+- `espressif32@6.12.0`, Arduino framework
+- Partition table: `partitions.csv`
+- USB: `-UARDUINO_USB_MODE` then `-DARDUINO_USB_MODE=0`, `ARDUINO_USB_CDC_ON_BOOT=1`
+- Version string is injected by `scripts/pre_build.py` from `custom_version` in `platformio.ini`
 
 ---
 
-## Hardware
+## License
 
-- Original M5Cardputer (74HC138 matrix) and Cardputer ADV (TCA8418)
-- After SD: original runs `Keyboard.begin()` again; ADV keeps GPIO 5 HIGH and does **not** re-init I2C
-- GPIO 8/9 are left alone — on ADV that is the keyboard
+MIT. Copyright (c) 2026 lexilexiko.
 
-Inspired by M5PORKCHOP (0ct0) and the OnePork farm package.  
-Those projects remain their authors'. **0N3P0rK** is a separate work.
+Inspired by M5PORKCHOP (0ct0) and the OnePork farm package. Those projects remain their authors'. **0N3P0rK** is a separate work.

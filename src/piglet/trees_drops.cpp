@@ -166,6 +166,11 @@ static void drawApple(M5Canvas& canvas, int16_t gx, int16_t gy, int tier, int co
         mid  = fl(0x6400);   // deeper olive shade
         deep = fl(0x4200);   // dark green
         hi   = fl(0xC6E0);   // warm pale highlight (not toxic lime)
+    } else if (color == 3) {
+        body = fl(0xFE60);
+        mid  = fl(0xD560);
+        deep = fl(0xAB40);
+        hi   = fl(0xFFF1);
     } else {
         body = fl(C_APPLE_RED); mid = fl(C_APPLE_RED2); deep = fl(C_APPLE_RED3); hi = fl(C_APPLE_RED_H);
     }
@@ -300,6 +305,9 @@ void drawProduce(M5Canvas& canvas, int16_t cx, int16_t cy, int r, Produce p) {
         case Produce::GREEN_APPLE:
             drawApple(canvas, gx, gy, tier, 2);
             break;
+        case Produce::GOLD_APPLE:
+            drawApple(canvas, gx, gy, tier, 3);
+            break;
         case Produce::BERRY:
             drawBerry(canvas, gx, gy, tier);
             break;
@@ -334,8 +342,10 @@ bool tryCollectNearbyFruit(int pigCenterX, int pigFeetY, int radius) {
         const int radX = (drops[i].groundSince != 0) ? (radius + 14) : (radius + 10);
         if (dx <= radX && dy <= radY) {
             drops[i].active = false;
-            // Same path as HS/BLE: event awards XP + lifetime counter (NVS)
-            XP::addXP(XPEvent::FRUIT_PICKED);
+            if (drops[i].produce == Produce::GOLD_APPLE)
+                XP::addXP(XPEvent::GOLD_APPLE);
+            else
+                XP::addXP(XPEvent::FRUIT_PICKED);
             return true;
         }
     }
@@ -388,6 +398,7 @@ void drawDropsForeground(M5Canvas& canvas) {
             switch (splashes[i].produce) {
                 case Produce::YELLOW_APPLE: col = fl(C_APPLE_YEL); break;
                 case Produce::GREEN_APPLE:  col = fl(0x8D40); break;
+                case Produce::GOLD_APPLE:   col = fl(0xFE60); break;
                 case Produce::CHERRY:       col = fl(C_CHERRY); break;
                 case Produce::ACORN:        col = fl(C_CONE); break;
                 case Produce::CONE:         col = fl(C_FIR_CONE); break;

@@ -2,7 +2,8 @@
 //
 // (1) FRUIT  — seasonal main tree (spring cherry / summer apple /
 //              autumn old apple / winter fir); drops produce when applicable
-// (2) DECOR  — seasonal scenery; winter = classic snowy tree (not 2nd fir)
+// (2) DECOR  — seasonal scenery; spring = weeping willow, winter = snowy
+//              classic (never a 2nd fir / 2nd cherry)
 // (3) BERRY  — bush; berries fall when stomped
 // Spring cherry: pink blossom canopy + paired cherries
 // Autumn old apple: soft green apples (bush stays berries)

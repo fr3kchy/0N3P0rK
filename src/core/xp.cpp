@@ -1,21 +1,193 @@
 #include "xp.h"
+#include "config.h"
+#include "../ui/display.h"
+#include "../piglet/avatar.h"
+#include "../piglet/mood.h"
+#include "../audio/sfx.h"
+#include <Preferences.h>
+#include <Arduino.h>
+#include <stdio.h>
+
+static constexpr uint8_t XP_MAX_LEVEL = 50;
 
 static uint32_t s_xp = 0;
+static bool s_all = false;
+static Preferences s_prefs;
+static bool s_ready = false;
+
+// Growing ladder: 100, 250, 500, 1000, 2500, 5000, 7500, then +2500 each level.
+static uint32_t xpNeed(uint8_t fromLevel) {
+    if (fromLevel < 1) fromLevel = 1;
+    switch (fromLevel) {
+        case 1: return 100;
+        case 2: return 250;
+        case 3: return 500;
+        case 4: return 1000;
+        case 5: return 2500;
+        case 6: return 5000;
+        case 7: return 7500;
+        default:
+            return 7500u + 2500u * (uint32_t)(fromLevel - 7);
+    }
+}
+
+static uint32_t xpToReach(uint8_t level) {
+    if (level <= 1) return 0;
+    if (level > XP_MAX_LEVEL) level = XP_MAX_LEVEL;
+    uint32_t t = 0;
+    for (uint8_t l = 1; l < level; l++) t += xpNeed(l);
+    return t;
+}
+
+static void persist() {
+    if (!s_ready) return;
+    s_prefs.putUInt("xp", s_xp);
+    s_prefs.putBool("all", s_all);
+}
+
+uint8_t XP::getLevel() {
+    uint32_t remain = s_xp;
+    uint8_t lvl = 1;
+    while (lvl < XP_MAX_LEVEL) {
+        uint32_t need = xpNeed(lvl);
+        if (remain < need) break;
+        remain -= need;
+        lvl++;
+    }
+    return lvl;
+}
+
+uint32_t XP::getXP() { return s_xp; }
+
+uint32_t XP::needForNext() {
+    uint8_t lvl = getLevel();
+    if (lvl >= XP_MAX_LEVEL) return xpNeed((uint8_t)(XP_MAX_LEVEL - 1));
+    return xpNeed(lvl);
+}
+
+uint32_t XP::intoLevel() {
+    if (getLevel() >= XP_MAX_LEVEL) return needForNext();
+    uint32_t remain = s_xp;
+    uint8_t lvl = 1;
+    while (lvl < XP_MAX_LEVEL) {
+        uint32_t need = xpNeed(lvl);
+        if (remain < need) return remain;
+        remain -= need;
+        lvl++;
+    }
+    return 0;
+}
+
+bool XP::blushUnlocked() { return s_all || getLevel() >= 5; }
+bool XP::goldAppleUnlocked() { return s_all || getLevel() >= 10; }
+bool XP::retroUnlocked() { return s_all || getLevel() >= 15; }
+bool XP::noirUnlocked() { return s_all || getLevel() >= 18; }
+bool XP::allUnlocked() { return s_all; }
+
+void XP::unlockAll() {
+    if (!s_ready) begin();
+    s_all = true;
+    s_xp = xpToReach(XP_MAX_LEVEL);
+    Config::personality().zombieSkinUnlocked = true;
+    Config::save();
+    persist();
+}
+
+bool XP::isSkinLocked(uint8_t skin) {
+    if (s_all) return false;
+    if (skin == (uint8_t)PigSkin::ZOMBIE)
+        return !Config::isZombieSkinUnlocked();
+    if (skin == (uint8_t)PigSkin::BLUSH)  return getLevel() < 5;
+    if (skin == (uint8_t)PigSkin::SHADOW) return getLevel() < 8;
+    if (skin == (uint8_t)PigSkin::CANDY)  return getLevel() < 12;
+    if (skin == (uint8_t)PigSkin::RETRO)  return getLevel() < 15;
+    if (skin == (uint8_t)PigSkin::GOLD)   return getLevel() < 20;
+    return false;
+}
+
+bool XP::isSeasonLocked(uint8_t seasonMode) {
+    if (s_all) return false;
+    if (seasonMode == (uint8_t)SeasonMode::RETRO) return getLevel() < 15;
+    if (seasonMode == (uint8_t)SeasonMode::NOIR)  return getLevel() < 18;
+    return false;
+}
+
+static void celebrate(uint8_t newLvl) {
+    SFX::play(SFX::LEVEL_UP);
+    Avatar::spin();
+    Avatar::triggerSparkles(8);
+    Avatar::triggerTailWiggle();
+    Mood::setStatusMessage("LVL UP");
+    Display::showToast("LVL UP", 1400);
+    if (newLvl == 5)
+        Display::notify(NoticeKind::REWARD, "SECRET BLUSH", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 8)
+        Display::notify(NoticeKind::REWARD, "SECRET SHADOW", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 10)
+        Display::notify(NoticeKind::REWARD, "GOLD APPLES", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 12)
+        Display::notify(NoticeKind::REWARD, "SECRET CANDY", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 15)
+        Display::notify(NoticeKind::REWARD, "SECRET RETRO", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 18)
+        Display::notify(NoticeKind::REWARD, "SECRET NOIR", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 20)
+        Display::notify(NoticeKind::REWARD, "SECRET GOLD", 3200, NoticeChannel::TOP_BAR);
+}
+
+void XP::begin() {
+    if (s_ready) return;
+    s_prefs.begin("pigxp", false);
+    s_xp = s_prefs.getUInt("xp", 0);
+    s_all = s_prefs.getBool("all", false);
+    auto bump = [](uint32_t need) {
+        if (s_xp < need) s_xp = need;
+    };
+    uint8_t sk = Config::personality().pigSkin;
+    uint8_t sm = Config::personality().seasonMode;
+    if (sk == (uint8_t)PigSkin::BLUSH)  bump(xpToReach(5));
+    if (sk == (uint8_t)PigSkin::SHADOW) bump(xpToReach(8));
+    if (sk == (uint8_t)PigSkin::CANDY)  bump(xpToReach(12));
+    if (sk == (uint8_t)PigSkin::RETRO || sm == (uint8_t)SeasonMode::RETRO) bump(xpToReach(15));
+    if (sm == (uint8_t)SeasonMode::NOIR) bump(xpToReach(18));
+    if (sk == (uint8_t)PigSkin::GOLD)   bump(xpToReach(20));
+    s_ready = true;
+    persist();
+}
 
 void XP::addXP(XPEvent event) {
-    uint16_t n = 3;
-    if (event == XPEvent::WOLF_SCARE) n = 5;
-    if (event == XPEvent::WOLF_HIDE) n = 8;
+    if (event == XPEvent::PET || event == XPEvent::FEED) {
+        static uint32_t lastCare = 0;
+        uint32_t now = millis();
+        if (now - lastCare < 7000) return;
+        lastCare = now;
+    }
+    uint16_t n = 6;
+    switch (event) {
+        case XPEvent::FRUIT_PICKED:  n = 8;  break;
+        case XPEvent::GOLD_APPLE:    n = 28; break;
+        case XPEvent::WOLF_SCARE:    n = 5;  break;
+        case XPEvent::WOLF_HIDE:     n = 14; break;
+        case XPEvent::PIGPASS_CRACK: n = 80; break;
+        case XPEvent::EVILPIG_CATCH: n = 40; break;
+        case XPEvent::HANDSHAKE:     n = 35; break;
+        case XPEvent::PET:           n = 6;  break;
+        case XPEvent::FEED:          n = 5;  break;
+        case XPEvent::NIGHT_SURVIVE: n = 18; break;
+    }
     addXP(n);
 }
 
 void XP::addXP(uint16_t amount) {
-    s_xp += amount;
-}
-
-uint8_t XP::getLevel() {
-    uint8_t lvl = (uint8_t)(1 + s_xp / 100);
-    if (lvl < 1) lvl = 1;
-    if (lvl > 50) lvl = 50;
-    return lvl;
+    if (amount == 0) return;
+    if (!s_ready) begin();
+    uint8_t before = getLevel();
+    uint32_t cap = xpToReach(XP_MAX_LEVEL);
+    if (s_xp >= cap) return;
+    uint32_t next = s_xp + amount;
+    if (next > cap) next = cap;
+    s_xp = next;
+    persist();
+    uint8_t after = getLevel();
+    if (after > before) celebrate(after);
 }

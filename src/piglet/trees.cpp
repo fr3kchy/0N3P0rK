@@ -7,6 +7,7 @@
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include "../core/config.h"
+#include "../core/xp.h"
 #include <esp_random.h>
 #include <math.h>
 
@@ -78,6 +79,14 @@ static constexpr uint16_t C_BLOSSOM3 = 0xFEDB;  // pale blossom tip
 static constexpr uint16_t C_SPRING = 0x3D08;  // fresh leaf (bush / accents)
 static constexpr uint16_t C_SPRING2= 0x6E8A;
 static constexpr uint16_t C_SPRING3= 0xAFE5;
+// Spring willow (decorative) — olive bark + lime curtains, yellow catkins
+static constexpr uint16_t C_WILLOW_TRUNK  = 0x6B20;
+static constexpr uint16_t C_WILLOW_TRUNK2 = 0x4200;
+static constexpr uint16_t C_WILLOW_TRUNK_H= 0x8C60;
+static constexpr uint16_t C_WILLOW1 = 0x3C80;  // deep lime
+static constexpr uint16_t C_WILLOW2 = 0x6E20;  // mid
+static constexpr uint16_t C_WILLOW3 = 0xBFE0;  // pale tip
+static constexpr uint16_t C_CATKIN  = 0xDE40;  // yellow-green catkin
 // Autumn old apple tree — warm fall canopy
 static constexpr uint16_t C_OAK1   = 0xD300;  // orange
 static constexpr uint16_t C_OAK2   = 0xE4E0;  // yellow
@@ -89,17 +98,20 @@ static constexpr uint16_t C_DECOR_LEAF = 0x1C40;
 enum class Phase : uint8_t { HIDDEN = 0, GROWING, ALIVE, COLLAPSING };
 
 // Season look for FRUIT + DECOR (main scenery trees)
-// SPRING=cherry  SUMMER=apple  AUTUMN=old apple  WINTER=fir
+// FRUIT:  SPRING=cherry  SUMMER=apple  AUTUMN=old apple  WINTER=fir
+// DECOR:  SPRING=willow  SUMMER=apple  AUTUMN=old apple  WINTER=snowy apple
 enum class SeasonTree : uint8_t {
     CHERRY    = 0,
     APPLE     = 1,
     OLD_APPLE = 2,  // autumn "old apple tree" (was oak)
-    FIR       = 3
+    FIR       = 3,
+    WILLOW    = 4,  // spring decorative only — weeping, not a 2nd cherry
+    LAMP      = 5   // noir decorative — street lamp, not a 2nd tree
 };
 
 struct Branch { int16_t x1, y1, x2, y2; uint8_t thickness; };
 struct Leaf   { int16_t cx, cy; uint8_t radius; uint8_t shade; };
-struct Fruit  { int16_t ox, oy; uint8_t r, bob; };
+struct Fruit  { int16_t ox, oy; uint8_t r, bob; Produce produce; };
 
 static constexpr uint8_t MAX_BRANCHES = 24;
 static constexpr uint8_t MAX_LEAVES   = 24;
@@ -146,6 +158,7 @@ static SeasonTree styleFromSeason(Season s) {
         case Season::AUTUMN: return SeasonTree::OLD_APPLE;
         case Season::WINTER: return SeasonTree::FIR;
         case Season::RETRO:  return SeasonTree::APPLE;  // round canopy, mono colors applied at draw
+        case Season::NOIR:   return SeasonTree::APPLE;  // dark canopy; decor becomes a lamp
         default: return SeasonTree::APPLE;
     }
 }
@@ -177,12 +190,20 @@ static bool globalStompArmed = true;
 static Produce produceForSlot(const Slot& t) {
     // Bush always berries (all seasons)
     if (t.kind == Kind::BERRY) return Produce::BERRY;
-    // Autumn old apple tree: soft green apples
     if (t.style == SeasonTree::OLD_APPLE) return Produce::GREEN_APPLE;
-    // Spring cherry: paired red cherries on pink blossoms
     if (t.style == SeasonTree::CHERRY) return Produce::CHERRY;
     if (t.style == SeasonTree::FIR) return Produce::CONE;
     return Produce::RED_APPLE;
+}
+
+static void rollFruitKinds(Slot& t) {
+    for (uint8_t i = 0; i < t.fruitCount; i++) {
+        Produce p = produceForSlot(t);
+        if (t.kind == Kind::FRUIT && XP::goldAppleUnlocked() &&
+            (esp_random() % 100) < 12)
+            p = Produce::GOLD_APPLE;
+        t.fruits[i].produce = p;
+    }
 }
 
 static uint32_t lcg(uint32_t& s) {
@@ -218,9 +239,13 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
     uint32_t s = t.seed;
     if (t.kind != Kind::BERRY) {
         t.style = currentStyle();
-        // DECOR never becomes fir — classic tree with winter snow instead of 2nd fir
+        // DECOR never copies the fruit tree
         if (t.kind == Kind::DECOR && t.style == SeasonTree::FIR)
             t.style = SeasonTree::APPLE;
+        if (t.kind == Kind::DECOR && t.style == SeasonTree::CHERRY)
+            t.style = SeasonTree::WILLOW;
+        if (t.kind == Kind::DECOR && Weather::getActiveSeason() == Season::NOIR)
+            t.style = SeasonTree::LAMP;
     } else {
         t.style = SeasonTree::APPLE;  // bush shape; produce color from season
     }
@@ -245,6 +270,8 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
     uint8_t fullH = 66 + fruitCount + (uint8_t)(lcg(s) % 7);
     if (t.kind == Kind::BERRY) fullH = 40 + (uint8_t)(lcg(s) % 10);
     else if (t.style == SeasonTree::FIR) fullH = 70 + (uint8_t)(lcg(s) % 10);   // tall fir
+    else if (t.style == SeasonTree::LAMP) fullH = 64 + (uint8_t)(lcg(s) % 6);   // street lamp
+    else if (t.style == SeasonTree::WILLOW) fullH = 66 + (uint8_t)(lcg(s) % 8); // tall weeping willow
     else if (t.style == SeasonTree::OLD_APPLE) fullH = 58 + (uint8_t)(lcg(s) % 8); // stout old apple
     else if (t.style == SeasonTree::CHERRY) fullH = 60 + (uint8_t)(lcg(s) % 10); // elegant cherry
     t.trunkH = (uint8_t)((int)fullH * (int)scalePct / 100);
@@ -253,11 +280,80 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
     t.trunkW = 2 + (uint8_t)(lcg(s) % 2);
     if (t.style == SeasonTree::OLD_APPLE) t.trunkW = 3;     // thick gnarled trunk
     if (t.style == SeasonTree::CHERRY) t.trunkW = 2;        // medium cherry trunk
+    if (t.style == SeasonTree::WILLOW) t.trunkW = 2;
+    if (t.style == SeasonTree::LAMP) t.trunkW = 1;
     if (t.style == SeasonTree::FIR) t.trunkW = 1;
     if (t.kind == Kind::BERRY && t.trunkW > 2) t.trunkW = 2;
     t.lean = (int8_t)(lcg(s) % 7) - 3;
     if (t.style == SeasonTree::FIR) t.lean = (int8_t)(lcg(s) % 3) - 1;  // straighter
+    if (t.style == SeasonTree::WILLOW) t.lean = (int8_t)(lcg(s) % 5) - 2;
     t.crownR = 8 + t.trunkH / 5 + (uint8_t)(lcg(s) % 3);
+
+    // --- Spring willow: high arches + hanging curtains (decorative only) ---
+    if (t.kind != Kind::BERRY && t.style == SeasonTree::WILLOW) {
+        t.branchCount = 0;
+        t.leafCount = 0;
+        t.fruitCount = 0;
+        auto addHang = [&](int8_t side, uint8_t originPct, uint8_t outLen, uint8_t hangLen) {
+            if (t.branchCount + 4 > MAX_BRANCHES) return;
+            int16_t oy = -(int16_t)(t.trunkH * originPct / 100);
+            int16_t ox = (int16_t)t.lean * originPct / 100;
+            Branch& br = t.branches[t.branchCount++];
+            br.x1 = ox; br.y1 = oy;
+            br.x2 = ox + (int16_t)side * (int16_t)outLen;
+            br.y2 = oy + 6;
+            br.thickness = 2;
+            for (int h = 0; h < 3 && t.branchCount < MAX_BRANCHES; h++) {
+                int16_t hx = br.x1 + (br.x2 - br.x1) * (h + 1) / 3;
+                int16_t hy = br.y1 + (br.y2 - br.y1) * (h + 1) / 3;
+                int16_t hl = (int16_t)hangLen + (int16_t)(lcg(s) % 8) - (int16_t)(h * 5);
+                if (hl < 14) hl = 14;
+                Branch& hg = t.branches[t.branchCount++];
+                hg.x1 = hx; hg.y1 = hy;
+                hg.x2 = hx + (int16_t)side * (int16_t)(1 + (lcg(s) % 4));
+                hg.y2 = hy + hl;
+                if (hg.y2 > -6) hg.y2 = -6;
+                hg.thickness = 1;
+                for (uint8_t k = 0; k < 2 && t.leafCount < MAX_LEAVES; k++) {
+                    Leaf& L = t.leaves[t.leafCount++];
+                    L.cx = hg.x1 + (hg.x2 - hg.x1) * (int16_t)(k + 1) / 3
+                         + (int16_t)((lcg(s) % 3) - 1);
+                    L.cy = hg.y1 + (hg.y2 - hg.y1) * (int16_t)(k + 1) / 3
+                         + (int16_t)((lcg(s) % 3) - 1);
+                    L.radius = 3 + (uint8_t)(lcg(s) % 2);
+                    L.shade = (uint8_t)(lcg(s) % 3);
+                }
+            }
+        };
+        addHang( 1, 90, 22, 28);
+        addHang(-1, 90, 22, 28);
+        addHang( 1, 68, 24, 32);
+        addHang(-1, 68, 24, 32);
+        if (t.branchCount + 3 <= MAX_BRANCHES) {
+            int16_t top = -(int16_t)t.trunkH;
+            for (int c = -1; c <= 1; c++) {
+                Branch& cr = t.branches[t.branchCount++];
+                cr.x1 = 0; cr.y1 = top + 4;
+                cr.x2 = (int16_t)(c * 8);
+                cr.y2 = top - 8;
+                cr.thickness = 1;
+            }
+        }
+        t.stompHits = 0;
+        t.stompArmed = true;
+        return;
+    }
+
+    // --- Noir street lamp: pole + arm (drawn in drawLamp) ---
+    if (t.kind != Kind::BERRY && t.style == SeasonTree::LAMP) {
+        t.branchCount = 0;
+        t.leafCount = 0;
+        t.fruitCount = 0;
+        t.lean = 0;
+        t.stompHits = 0;
+        t.stompArmed = true;
+        return;
+    }
 
     // --- Winter fir: no classic branches — tiers stored as horizontal "needles" ---
     if (t.kind != Kind::BERRY && t.style == SeasonTree::FIR) {
@@ -289,6 +385,7 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
         } else {
             t.fruitCount = 0;
         }
+        rollFruitKinds(t);
         t.stompHits = 0;
         t.stompArmed = true;
         return;
@@ -443,6 +540,7 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
         t.fruitCount = 0;
     }
 
+    rollFruitKinds(t);
     t.stompHits = 0;
     t.stompArmed = true;
 }
@@ -455,9 +553,9 @@ void setPigHint(int pigX, bool pigOnRight) {
 
 void init() {
     reset();
-    // Auto flora for scenery
     showDecor();
     showBerry();
+    showFruit(5);
 }
 
 void reset() {
@@ -478,47 +576,51 @@ void reset() {
     globalStompArmed = true;
 }
 
-static int16_t pickSpacedX(Kind self) {
-    const int16_t lo[3] = {22, 96, 168};
-    const int16_t hi[3] = {70, 140, 216};
-    bool taken[3] = {false, false, false};
+// World lanes — one kind per post, shared scroll so walking never stacks them.
+static constexpr int16_t kLaneX[3] = {28, 120, 212};
+
+static int16_t sharedScroll() {
     for (int i = 0; i < 3; i++) {
-        if (slots[i].kind == self) continue;
-        if (slots[i].phase == Phase::HIDDEN) continue;
-        int16_t x = slots[i].baseX;
-        if (x < 88) taken[0] = true;
-        else if (x < 154) taken[1] = true;
-        else taken[2] = true;
+        if (slots[i].phase != Phase::HIDDEN) return slots[i].scroll;
     }
-    uint8_t freeN = 0;
-    uint8_t freeL[3];
-    for (uint8_t i = 0; i < 3; i++) if (!taken[i]) freeL[freeN++] = i;
-    uint8_t lane = (freeN > 0) ? freeL[esp_random() % freeN] : (uint8_t)(esp_random() % 3);
-    int span = hi[lane] - lo[lane] + 1;
-    return lo[lane] + (int16_t)(esp_random() % (uint32_t)span);
+    return 0;
 }
 
-// Push baseX away from other visible flora so kinds don't stack
-static void separateBaseX(Slot& t, int minGap) {
-    for (int pass = 0; pass < 6; pass++) {
-        bool ok = true;
-        for (int i = 0; i < 3; i++) {
-            if (&slots[i] == &t) continue;
-            if (slots[i].phase == Phase::HIDDEN) continue;
-            int16_t d = t.baseX - slots[i].baseX;
-            if (d < 0) d = -d;
-            if (d < minGap) {
-                // nudge toward free half of screen
-                if (slots[i].baseX < 120) t.baseX = slots[i].baseX + minGap + (int16_t)(esp_random() % 25);
-                else t.baseX = slots[i].baseX - minGap - (int16_t)(esp_random() % 25);
-                if (t.baseX < 20) t.baseX = 20 + (int16_t)(esp_random() % 40);
-                if (t.baseX > 210) t.baseX = 170 + (int16_t)(esp_random() % 30);
-                ok = false;
-                break;
-            }
-        }
-        if (ok) break;
+static void placeOnLane(Slot& t) {
+    t.scroll = sharedScroll();
+    t.baseX = kLaneX[(int)t.kind];
+}
+
+static uint8_t produceWant(const Slot& t) {
+    if (t.kind == Kind::DECOR || t.style == SeasonTree::LAMP) return 0;
+    if (t.kind == Kind::BERRY) return 6;
+    if (t.style == SeasonTree::FIR) return 5;
+    if (t.style == SeasonTree::CHERRY) return 6;
+    return 5;
+}
+
+static void addOneProduce(Slot& t) {
+    if (t.fruitCount >= MAX_FRUITS) return;
+    uint32_t s = t.seed + (uint32_t)t.fruitCount * 17u + millis();
+    Fruit& f = t.fruits[t.fruitCount];
+    if (t.branchCount > 0) {
+        const Branch& br = t.branches[lcg(s) % t.branchCount];
+        f.ox = br.x2 + (int16_t)((lcg(s) % 5) - 2);
+        f.oy = br.y2 + (int16_t)((lcg(s) % 5) - 2);
+    } else {
+        f.ox = (int16_t)((lcg(s) % 17) - 8);
+        f.oy = -(int16_t)(10 + (lcg(s) % 18));
     }
+    f.r = 2;
+    f.bob = (uint8_t)(lcg(s) & 0xFF);
+    t.fruitCount++;
+    rollFruitKinds(t);
+}
+
+static void refillProduce(Slot& t) {
+    if (t.phase != Phase::ALIVE) return;
+    uint8_t want = produceWant(t);
+    while (t.fruitCount < want) addOneProduce(t);
 }
 
 void showFruit(uint8_t fruitCount) {
@@ -545,12 +647,12 @@ void showFruit(uint8_t fruitCount) {
             t.fruits[i].r = 2 + (uint8_t)(lcg(s) % 2);
             t.fruits[i].bob = (uint8_t)(lcg(s) & 0xFF);
         }
+        rollFruitKinds(t);
         t.stompHits = 0;
         return;
     }
     genClassicTree(t, fruitCount, 100);
-    t.baseX = pickSpacedX(Kind::FRUIT);
-    separateBaseX(t, 80);
+    placeOnLane(t);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -562,8 +664,7 @@ void showDecor() {
     t.kind = Kind::DECOR;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 3, 100);  // full classic tree, no produce
-    t.baseX = pickSpacedX(Kind::DECOR);
-    separateBaseX(t, 80);
+    placeOnLane(t);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -574,8 +675,7 @@ void showBerry() {
     t.kind = Kind::BERRY;
     if (t.phase == Phase::ALIVE || t.phase == Phase::GROWING) return;
     genClassicTree(t, 6, 70);  // taller bush, denser branches, purple berries
-    t.baseX = pickSpacedX(Kind::BERRY);
-    separateBaseX(t, 70);
+    placeOnLane(t);
     t.phase = Phase::GROWING;
     t.growth = 0;
     t.animStart = millis();
@@ -609,7 +709,10 @@ bool isFruitVisible() { return fruitSlot().phase != Phase::HIDDEN; }
 static void updateSlot(Slot& t) {
     uint32_t now = millis();
     if (t.phase == Phase::ALIVE) {
-        if (t.pendingHide && (now - t.aliveStart >= MIN_ALIVE_MS)) {
+        // Bush never collapses on its own — only a stomp knocks it down.
+        if (t.kind == Kind::BERRY) t.pendingHide = false;
+        if (t.pendingHide && t.kind != Kind::BERRY &&
+            (now - t.aliveStart >= MIN_ALIVE_MS)) {
             t.pendingHide = false;
             t.phase = Phase::COLLAPSING;
             t.animStart = now;
@@ -638,15 +741,13 @@ static void updateSlot(Slot& t) {
             t.growth = 0;
             if (t.pendingShow) {
                 t.pendingShow = false;
-                if (t.kind == Kind::FRUIT) {
+                if (t.kind == Kind::FRUIT)
                     genClassicTree(t, t.pendingFruits, 100);
-                } else if (t.kind == Kind::DECOR) {
+                else if (t.kind == Kind::DECOR)
                     genClassicTree(t, 3, 100);
-                    separateBaseX(t, 55);
-                } else {
+                else
                     genClassicTree(t, 6, 70);
-                    separateBaseX(t, 40);
-                }
+                placeOnLane(t);
                 t.phase = Phase::GROWING;
                 t.animStart = now;
                 t.stompHits = 0;
@@ -680,15 +781,13 @@ static bool dropOneFrom(Slot& t) {
     if (rr < 2) rr = 2;
     if (t.kind == Kind::BERRY && rr > 3) rr = 3;
     // Always detach from tree; pool-full just means no visible drop
-    (void)dropsSpawn(ax, dy, rr, produceForSlot(t));
+    (void)dropsSpawn(ax, dy, rr, f.produce);
     t.fruitCount--;
     return true;
 }
 
 void dropFruit() {
-    Slot& t = fruitSlot();
-    if (!dropOneFrom(t)) return;
-    if (t.fruitCount == 0) hideFruit();
+    (void)dropOneFrom(fruitSlot());
 }
 
 static void dumpAllProduce(Slot& t) {
@@ -714,59 +813,35 @@ uint8_t updateAmbient(int pigCenterX, int pigFeetY, int pigHintX_, bool pigOnRig
     uint32_t now = millis();
     const bool fruitAmbient = Config::personality().fruitTreesAmbient;
 
-    // --- Random fruit tree (kind 1) grows when none is up ---
-    static uint32_t nextFruitSpawnMs = 0;
-    static uint32_t nextAmbientDropMs = 0;
-    if (nextFruitSpawnMs == 0) {
-        nextFruitSpawnMs = now + 6000 + (esp_random() % 8000);  // first 6–14s
-        nextAmbientDropMs = now + 4000;
-    }
-
+    // Keep all three planted. Bush never despawns on its own.
     Slot& fruit = fruitSlot();
+    Slot& berry = berrySlot();
+    Slot& decor = decorSlot();
     if (fruitAmbient) {
-        if (fruit.phase == Phase::HIDDEN) {
-            if (now >= nextFruitSpawnMs) {
-                Season sn = Weather::getActiveSeason();
-                uint8_t n = 4;
-                uint32_t wait = 18000 + (esp_random() % 18000);
-                bool grow = true;
-                if (sn == Season::SUMMER) {
-                    n = 6 + (uint8_t)(esp_random() % 3);
-                    wait = 12000 + (esp_random() % 14000);
-                } else if (sn == Season::WINTER) {
-                    wait = 28000 + (esp_random() % 28000);
-                    if ((esp_random() % 100) < 45) grow = false;
-                    else n = 1 + (uint8_t)(esp_random() % 2);
-                } else {
-                    n = 3 + (uint8_t)(esp_random() % 2);
-                }
-                if (grow) {
-                    showFruit(n);
-                    nextAmbientDropMs = now + 2500;
-                }
-                nextFruitSpawnMs = now + wait;
-            }
-        } else if (fruit.phase == Phase::ALIVE) {
-            // Occasional ambient fruit rain while tree is up
-            if (now >= nextAmbientDropMs && fruit.fruitCount > 0) {
-                dropFruit();
-                nextAmbientDropMs = now + 1400 + (esp_random() % 2200);
-            }
-            if (nextFruitSpawnMs < now) {
-                nextFruitSpawnMs = now + 12000 + (esp_random() % 18000);
-            }
-        } else if (fruit.phase == Phase::COLLAPSING) {
-            nextFruitSpawnMs = now + 10000 + (esp_random() % 12000);
-        }
+        if (fruit.phase == Phase::HIDDEN) showFruit(5);
+        if (decor.phase == Phase::HIDDEN) showDecor();
+        if (berry.phase == Phase::HIDDEN) showBerry();
     }
 
-    // Ambient drops from berry bush (autumn: green apples; else berries)
+    static uint32_t nextAmbientDropMs = 0;
     static uint32_t nextBerryDropMs = 0;
+    static uint32_t nextRefillMs = 0;
+    if (nextAmbientDropMs == 0) nextAmbientDropMs = now + 4000;
     if (nextBerryDropMs == 0) nextBerryDropMs = now + 3500;
-    Slot& berry = berrySlot();
+    if (nextRefillMs == 0) nextRefillMs = now + 2200;
+
+    if (fruit.phase == Phase::ALIVE && fruit.fruitCount > 0 && now >= nextAmbientDropMs) {
+        dropFruit();
+        nextAmbientDropMs = now + 1400 + (esp_random() % 2200);
+    }
     if (berry.phase == Phase::ALIVE && berry.fruitCount > 0 && now >= nextBerryDropMs) {
         dropOneFrom(berry);
         nextBerryDropMs = now + 1600 + (esp_random() % 2400);
+    }
+    if (now >= nextRefillMs) {
+        refillProduce(fruit);
+        refillProduce(berry);
+        nextRefillMs = now + 2000 + (esp_random() % 800);
     }
 
     // --- Auto-collect fallen fruit/berries near pig ---
@@ -1013,13 +1088,59 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     }
 }
 
+// Noir street lamp — pole, arm, sodium glow (decorative only)
+static void drawLamp(M5Canvas& canvas, Slot& t, int16_t yOffset) {
+    uint32_t now = millis();
+    const int16_t baseY = (int16_t)(106 + yOffset);
+    int16_t bx = screenX(t);
+    bool collapsing = (t.phase == Phase::COLLAPSING);
+    float g = t.growth;
+    if (collapsing) g = t.growth;
+    if (g < 0.05f) return;
+
+    int16_t h = (int16_t)(t.trunkH * g);
+    if (collapsing) {
+        float ct = 1.0f - t.growth;
+        h -= (int16_t)(ct * ct * t.trunkH);
+        if (h < 0) h = 0;
+    }
+    int8_t sway = 0;
+    if (t.phase == Phase::ALIVE) sway = ((now / 800) & 1) ? 0 : 0;
+    sway += stompShake;
+    int16_t x = bx + sway;
+    uint16_t pole = fl(0x3186);
+    uint16_t poleHi = fl(0x5AEB);
+    uint16_t head = fl(0x2104);
+    uint16_t glow = fl(0xFE60);
+    uint16_t glow2 = fl(0xC480);
+    if (h > 0) {
+        canvas.fillRect(x - PX, baseY - h, PX * 2, h, pole);
+        canvas.fillRect(x, baseY - h, PX, h, poleHi);
+    }
+    int16_t top = baseY - h;
+    canvas.fillRect(x, top, PX * 8, PX, pole);
+    canvas.fillRect(x + PX * 5, top + PX, PX * 4, PX * 3, head);
+    canvas.fillRect(x + PX * 6, top + PX, PX * 2, PX * 2, glow);
+    if (!collapsing && g > 0.55f) {
+        canvas.fillRect(x + PX * 4, top + PX * 3, PX * 6, PX, glow2);
+        canvas.fillRect(x + PX * 2, baseY - PX, PX * 10, PX, fl(0x8200));
+        if (((now / 220) & 3) != 0) {
+            canvas.fillRect(x + PX * 6, top, PX * 2, PX, fl(0xFFF1));
+        }
+    }
+}
+
 // One drawer for FRUIT / DECOR / BERRY — seasonal trunk/leaves/produce
 static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     if (t.phase == Phase::HIDDEN) return;
     const bool isDecor = (t.kind == Kind::DECOR);
     const bool isBerry = (t.kind == Kind::BERRY);
 
-    // Winter fir has its own silhouette
+    // Noir lamp / winter fir have their own silhouettes
+    if (!isBerry && t.style == SeasonTree::LAMP) {
+        drawLamp(canvas, t, yOffset);
+        return;
+    }
     if (!isBerry && t.style == SeasonTree::FIR) {
         drawFir(canvas, t, yOffset);
         return;
@@ -1030,6 +1151,7 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     uint16_t leafCol, leafLite, leafHi;
     const Season season = Weather::getActiveSeason();
     const bool retro  = (season == Season::RETRO);
+    const bool noir   = (season == Season::NOIR);
     const bool winter = (season == Season::WINTER);
     const bool autumn = (season == Season::AUTUMN);
     const bool spring = (season == Season::SPRING);
@@ -1045,6 +1167,10 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
         trunkCol  = fl(C_CHERRY_TRUNK);
         trunkDark = fl(C_CHERRY_TRUNK2);
         trunkHi   = fl(C_CHERRY_TRUNK_H);
+    } else if (!isBerry && t.style == SeasonTree::WILLOW) {
+        trunkCol  = fl(C_WILLOW_TRUNK);
+        trunkDark = fl(C_WILLOW_TRUNK2);
+        trunkHi   = fl(C_WILLOW_TRUNK_H);
     } else if (!isBerry && t.style == SeasonTree::OLD_APPLE) {
         trunkCol  = fl(0x6A00);
         trunkDark = fl(0x4100);
@@ -1079,6 +1205,10 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             leafCol  = fl(C_BLOSSOM1);
             leafLite = fl(C_BLOSSOM2);
             leafHi   = fl(C_BLOSSOM3);
+        } else if (t.style == SeasonTree::WILLOW) {
+            leafCol  = fl(C_WILLOW1);
+            leafLite = fl(C_WILLOW2);
+            leafHi   = fl(C_WILLOW3);
         } else if (t.style == SeasonTree::OLD_APPLE) {
             leafCol  = fl(C_OAK3);
             leafLite = fl(C_OAK1);
@@ -1098,6 +1228,15 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             leafLite = fl(0x1C20);
             leafHi   = fl(0x3C60);
         }
+    }
+
+    if (noir && !retro) {
+        trunkCol  = fl(0x2104);
+        trunkDark = fl(0x1082);
+        trunkHi   = fl(0x4A49);
+        leafCol   = fl(0x1124);
+        leafLite  = fl(0x1A40);
+        leafHi    = fl(isBerry ? 0x7810 : 0x4A00);
     }
 
     uint32_t now = millis();
@@ -1179,9 +1318,10 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             }
             int16_t ex = sx + (int16_t)((fex - sx) * bp);
             int16_t ey = sy + (int16_t)((fey - sy) * bp);
-            // Cherry twigs slightly darker brown; oak keeps trunk tone
+            // Cherry twigs slightly darker brown; willow hangers olive
             uint16_t brCol = trunkCol;
             if (t.style == SeasonTree::CHERRY) brCol = fl(C_CHERRY_TRUNK2);
+            if (t.style == SeasonTree::WILLOW) brCol = fl(C_WILLOW_TRUNK2);
             fatLine(canvas, sx, sy, ex, ey, brCol);
             if (bp > 0.85f) {
                 drawLeafPuff(canvas, ex, ey, leafCol, leafLite, leafHi, 4, i % 3);
@@ -1214,6 +1354,11 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
                     lh = fl(C_SPRING3);
                 }
                 drawLeafPuff(canvas, lx, ly, lc, ll, lh, rr, L.shade);
+                // Willow: tiny yellow catkins hanging off a few leaves
+                if (t.style == SeasonTree::WILLOW && t.phase == Phase::ALIVE && (i & 3) == 0) {
+                    canvas.fillRect(snapPx(lx), snapPx(ly) + PX, PX, PX * 2, fl(C_CATKIN));
+                    canvas.fillRect(snapPx(lx) - PX, snapPx(ly) + PX * 2, PX, PX, fl(0xC600));
+                }
                 // Winter snow blobs on foliage (all non-fir trees + bush)
                 if (winter && t.phase == Phase::ALIVE && (L.shade == 0 || (i & 1))) {
                     canvas.fillRect(snapPx(lx) - PX, snapPx(ly) - 2 * PX, PX * 2, PX, fl(0xFFFF));
@@ -1228,7 +1373,6 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
             if (fp > 1) fp = 1;
             uint8_t vis = (uint8_t)(t.fruitCount * fp + 0.5f);
             if (vis > t.fruitCount) vis = t.fruitCount;
-            Produce prod = produceForSlot(t);
             for (uint8_t i = 0; i < vis; i++) {
                 int16_t fx = bx + t.fruits[i].ox + sway;
                 int16_t fy = baseY + t.fruits[i].oy;
@@ -1241,7 +1385,7 @@ static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
                     uint32_t ph = now + t.fruits[i].bob * 8u;
                     if ((ph % 2000) >= 1000) fy += PX;
                 }
-                drawProduce(canvas, fx, fy, t.fruits[i].r, prod);
+                drawProduce(canvas, fx, fy, t.fruits[i].r, t.fruits[i].produce);
             }
         }
     }

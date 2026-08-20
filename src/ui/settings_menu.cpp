@@ -2,6 +2,7 @@
 #include "display.h"
 #include "keys.h"
 #include "../core/config.h"
+#include "../core/xp.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
@@ -48,6 +49,7 @@ static const Item SCENE[] = {
     {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
     {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
+    {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
 
@@ -118,7 +120,8 @@ static const char* const H_SCENE[] = {
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE.",
-    "-/= CYCLE ANIMS ON FARM."
+    "-/= CYCLE ANIMS ON FARM.",
+    "TYPE CODE. ENT."
 };
 static const char* const H_SYSTEM[] = {
     "SCREEN GLOW.",
@@ -179,6 +182,8 @@ static bool s_bind = false;
 static SettingsPage s_page = SettingsPage::SCENE;
 static uint8_t s_idx = 0;
 static uint8_t s_scroll = 0;
+static uint8_t s_statScroll = 0;
+static const uint8_t STAT_VIS = 5;
 static char s_edit[65];
 static const uint8_t VIS = 4;
 
@@ -215,6 +220,9 @@ static const char* skinName(uint8_t s) {
         case PigSkin::HOG:     return "HOG";
         case PigSkin::ZOMBIE:  return "ZOMBIE";
         case PigSkin::RETRO:   return "RETRO";
+        case PigSkin::SHADOW:  return "SHADOW";
+        case PigSkin::CANDY:   return "CANDY";
+        case PigSkin::GOLD:    return "GOLD";
         default: return "?";
     }
 }
@@ -226,6 +234,7 @@ static const char* seasonName(uint8_t s) {
         case SeasonMode::AUTUMN: return "AUTUMN";
         case SeasonMode::WINTER: return "WINTER";
         case SeasonMode::RETRO:  return "RETRO";
+        case SeasonMode::NOIR:   return "NOIR";
         default: return "?";
     }
 }
@@ -324,6 +333,11 @@ static int getValue(const Item& it) {
 
 static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     if (it.kind == Kind::TEXT) {
+        if (it.id == 16) {
+            if (s_text) snprintf(out, len, ">%s", s_edit);
+            else snprintf(out, len, XP::allUnlocked() ? "OPEN" : "----");
+            return;
+        }
         const char* n = s_text ? s_edit : Config::personality().name;
         snprintf(out, len, editing || s_text ? ">%s" : "%s", n);
         return;
@@ -398,14 +412,13 @@ static bool setValue(const Item& it, int v) {
                 const int back = (from - v + span) % span;
                 const int dir = (fwd <= back) ? 1 : -1;
                 int skin = v;
-                if (skin == (int)PigSkin::ZOMBIE && !Config::isZombieSkinUnlocked()) {
+                if (XP::isSkinLocked((uint8_t)skin)) {
                     skin = from;
                     for (int i = 0; i < PIG_SKIN_COUNT; i++) {
                         skin += dir;
                         if (skin < it.minV) skin = it.maxV;
                         if (skin > it.maxV) skin = it.minV;
-                        if (skin == (int)PigSkin::ZOMBIE && !Config::isZombieSkinUnlocked())
-                            continue;
+                        if (XP::isSkinLocked((uint8_t)skin)) continue;
                         break;
                     }
                 }
@@ -418,7 +431,26 @@ static bool setValue(const Item& it, int v) {
                 if (leavingZombie) p.nightWolfBites = 0;
                 break;
             }
-            case 2: p.seasonMode = (uint8_t)v; break;
+            case 2: {
+                int from = (int)p.seasonMode;
+                int span = it.maxV - it.minV + 1;
+                int fwd = (v - from + span) % span;
+                int back = (from - v + span) % span;
+                int dir = (fwd <= back) ? 1 : -1;
+                int sm = v;
+                if (XP::isSeasonLocked((uint8_t)sm)) {
+                    sm = from;
+                    for (int i = 0; i < SEASON_MODE_COUNT; i++) {
+                        sm += dir;
+                        if (sm < it.minV) sm = it.maxV;
+                        if (sm > it.maxV) sm = it.minV;
+                        if (XP::isSeasonLocked((uint8_t)sm)) continue;
+                        break;
+                    }
+                }
+                p.seasonMode = (uint8_t)sm;
+                break;
+            }
             case 3: p.skyMode = (uint8_t)v; break;
             case 4: p.scrollSpeed = (uint8_t)v; break;
             case 5: p.freeLife = v != 0; break;
@@ -561,6 +593,7 @@ void show(SettingsPage page) {
     s_page = page;
     s_idx = 0;
     s_scroll = 0;
+    s_statScroll = 0;
     s_editing = false;
     s_text = false;
     s_bind = false;
@@ -594,7 +627,7 @@ const char* bottomHint() {
         if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
         return ";/. pick  ENT  R rescan";
     }
-    if (s_page == SettingsPage::STATUS) return "` back";
+    if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -603,7 +636,8 @@ const char* bottomHint() {
     const Item* it = items(&n);
     if (it && s_idx < n) {
         if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
-        if (it[s_idx].kind == Kind::TEXT) return "ENT type name";
+        if (it[s_idx].kind == Kind::TEXT)
+            return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
         if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
         return "ENT edit  ;/.  ` back";
     }
@@ -701,7 +735,22 @@ void update() {
         return;
     }
     if (s_page == SettingsPage::STATUS) {
-        if (keyEsc()) hide();
+        auto keys = M5Cardputer.Keyboard.keysState();
+        bool up = M5Cardputer.Keyboard.isKeyPressed(';');
+        bool down = M5Cardputer.Keyboard.isKeyPressed('.');
+        if (keyEsc()) {
+            hide();
+            return;
+        }
+        const uint8_t statN = 9;
+        if (up && s_statScroll > 0) {
+            s_statScroll--;
+            SFX::play(SFX::MENU_CLICK);
+        } else if (down && s_statScroll + STAT_VIS < statN) {
+            s_statScroll++;
+            SFX::play(SFX::MENU_CLICK);
+        }
+        (void)keys;
         return;
     }
 
@@ -719,6 +768,28 @@ void update() {
 
     if (s_text) {
         if (keys.enter) {
+            if (cur.id == 16) {
+                auto same = [](const char* a, const char* b) {
+                    while (*a && *b) {
+                        char ca = *a++, cb = *b++;
+                        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+                        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+                        if (ca != cb) return false;
+                    }
+                    return *a == 0 && *b == 0;
+                };
+                s_text = false;
+                if (same(s_edit, "l3xik0")) {
+                    XP::unlockAll();
+                    SFX::play(SFX::LEVEL_UP);
+                    Display::showToast("ALL OPEN", 1600);
+                } else {
+                    SFX::play(SFX::ERROR);
+                    Display::showToast("NOPE", 900);
+                }
+                s_edit[0] = '\0';
+                return;
+            }
             PersonalityConfig& p = Config::personality();
             strncpy(p.name, s_edit, sizeof(p.name) - 1);
             p.name[sizeof(p.name) - 1] = '\0';
@@ -853,8 +924,11 @@ void update() {
         return;
     }
     if (cur.kind == Kind::TEXT) {
-        strncpy(s_edit, Config::personality().name, sizeof(s_edit) - 1);
-        s_edit[sizeof(s_edit) - 1] = '\0';
+        if (cur.id == 16) s_edit[0] = '\0';
+        else {
+            strncpy(s_edit, Config::personality().name, sizeof(s_edit) - 1);
+            s_edit[sizeof(s_edit) - 1] = '\0';
+        }
         s_text = true;
         SFX::play(SFX::MENU_CLICK);
         return;
@@ -951,60 +1025,65 @@ static void drawStatus(M5Canvas& canvas) {
     canvas.setTextSize(1);
     canvas.setTextDatum(top_left);
 
-    int y = 24;
-    auto row = [&](const char* k, const char* v) {
-        canvas.setTextColor(UI_DIM);
-        canvas.drawString(k, 8, y);
-        canvas.setTextColor(UI_TEXT);
-        canvas.drawString(v, 78, y);
-        y += 11;
-    };
-
-    row("BOARD", Board::modelLabel());
-
-    int32_t lv = M5.Power.getBatteryLevel();
-    if (lv < 0) lv = 0;
-    if (lv > 100) lv = 100;
+    char lvl[16], xp[16], batt[16], wifi[18], ver[16];
+    snprintf(lvl, sizeof(lvl), "%u", (unsigned)XP::getLevel());
+    snprintf(xp, sizeof(xp), "%lu/%lu",
+             (unsigned long)XP::intoLevel(), (unsigned long)XP::needForNext());
+    int32_t blv = M5.Power.getBatteryLevel();
+    if (blv < 0) blv = 0;
+    if (blv > 100) blv = 100;
     const bool chg = (M5.Power.isCharging() == m5::Power_Class::is_charging);
-    char batt[16];
-    snprintf(batt, sizeof(batt), "%d%%%s", (int)lv, chg ? " CHG" : "");
-    row("BATT", batt);
-
-    row("SD", Config::isSDAvailable() ? "YES" : "NO");
-
-    char wifi[20] = "--";
+    snprintf(batt, sizeof(batt), "%d%%%s", (int)blv, chg ? " CHG" : "");
+    wifi[0] = '-'; wifi[1] = '-'; wifi[2] = '\0';
     if (Net::hasStaCreds() && Net::cfg().staSsid[0]) {
         strncpy(wifi, Net::cfg().staSsid, sizeof(wifi) - 1);
         wifi[sizeof(wifi) - 1] = '\0';
     }
-    row("WIFI", wifi);
-
-    row("WPASEC", Net::cfg().wpaSecKey[0] ? "KEY" : "NO");
-    row("PWN", Net::cfg().pwncrackKey[0] ? "KEY" : "NO");
-
-    char keys[24];
-    size_t n = 0;
-    const HotkeyConfig& hk = Config::hotkeys();
-    for (uint8_t i = 0; i < HOTKEY_COUNT && n + 2 < sizeof(keys); i++) {
-        char k = hk.key[i];
-        if (k >= 'a' && k <= 'z') k = (char)(k - 'a' + 'A');
-        if (k < 32 || k >= 127) k = '-';
-        if (n) keys[n++] = ' ';
-        keys[n++] = k;
-    }
-    keys[n] = '\0';
-    row("KEYS", keys[0] ? keys : "--");
-
-    char ver[20];
     snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
-    canvas.setTextColor(UI_GOLD);
-    canvas.drawString(ver, 8, y + 2);
+
+    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "WIFI", "WPA", "PWN", "VER" };
+    const char* v[] = {
+        lvl, xp, Board::modelLabel(), batt,
+        Config::isSDAvailable() ? "YES" : "NO",
+        wifi,
+        Net::cfg().wpaSecKey[0] ? "YES" : "NO",
+        Net::cfg().pwncrackKey[0] ? "YES" : "NO",
+        ver
+    };
+    const uint8_t statN = 9;
+    if (s_statScroll > statN - STAT_VIS) {
+        s_statScroll = (statN > STAT_VIS) ? (uint8_t)(statN - STAT_VIS) : 0;
+    }
+
+    int y = 24;
+    const int lh = 12;
+    for (uint8_t i = 0; i < STAT_VIS; i++) {
+        uint8_t idx = (uint8_t)(s_statScroll + i);
+        if (idx >= statN) break;
+        canvas.setTextColor(UI_DIM);
+        canvas.drawString(k[idx], 8, y);
+        canvas.setTextColor(idx == 8 ? UI_GOLD : UI_TEXT);
+        canvas.drawString(v[idx], 78, y);
+        if (idx == 1) {
+            int barW = 80;
+            uint32_t need = XP::needForNext();
+            int fill = (need > 0) ? (int)(XP::intoLevel() * (uint32_t)barW / need) : barW;
+            if (XP::getLevel() >= 50) fill = barW;
+            canvas.fillRect(78, y + 9, barW, 3, UI_DIM);
+            if (fill > 0) canvas.fillRect(78, y + 9, fill, 3, UI_GOLD);
+        }
+        y += lh;
+    }
+
+    canvas.setTextColor(UI_DIM);
+    if (s_statScroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
+    if (s_statScroll + STAT_VIS < statN)
+        canvas.drawString("v", DISPLAY_W - 12, MAIN_H - 22);
 
     canvas.setTextColor(UI_TITLE);
     canvas.setTextDatum(top_center);
-    canvas.drawString("` BACK", DISPLAY_W / 2, MAIN_H - 10);
+    canvas.drawString(";/.  ` BACK", DISPLAY_W / 2, MAIN_H - 10);
     canvas.setTextDatum(top_left);
-    canvas.setTextSize(1);
     canvas.setFont(&fonts::Font0);
 }
 

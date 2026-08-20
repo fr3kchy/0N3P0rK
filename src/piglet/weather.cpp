@@ -480,6 +480,7 @@ const char* getSeasonName() {
         case Season::AUTUMN: return "AUTUMN";
         case Season::WINTER: return "WINTER";
         case Season::RETRO:  return "RETRO";
+        case Season::NOIR:   return "NOIR";
     }
     return "SUMMER";
 }
@@ -491,6 +492,7 @@ const char* getSeasonShort() {
         case Season::AUTUMN: return "AUT";
         case Season::WINTER: return "WIN";
         case Season::RETRO:  return "RET";
+        case Season::NOIR:   return "NOI";
     }
     return "SUM";
 }
@@ -527,7 +529,17 @@ static void updateSeasonCycle(uint32_t now) {
         else if (mode == (uint8_t)SeasonMode::SUMMER) forced = Season::SUMMER;
         else if (mode == (uint8_t)SeasonMode::AUTUMN) forced = Season::AUTUMN;
         else if (mode == (uint8_t)SeasonMode::WINTER) forced = Season::WINTER;
-        else if (mode == (uint8_t)SeasonMode::RETRO)  forced = Season::RETRO;
+        else if (mode == (uint8_t)SeasonMode::RETRO) {
+            if (XP::isSeasonLocked((uint8_t)SeasonMode::RETRO))
+                forced = Season::SUMMER;
+            else
+                forced = Season::RETRO;
+        } else if (mode == (uint8_t)SeasonMode::NOIR) {
+            if (XP::isSeasonLocked((uint8_t)SeasonMode::NOIR))
+                forced = Season::SUMMER;
+            else
+                forced = Season::NOIR;
+        }
         bool changed = (lastSeasonModeCfg != mode) || (activeSeason != forced);
         setActiveSeason(forced, now, changed && lastSeasonModeCfg != 255);
         lastSeasonModeCfg = mode;
@@ -537,7 +549,8 @@ static void updateSeasonCycle(uint32_t now) {
     // AUTO — advance every 15 minutes (SPRING..WINTER only, never RETRO)
     if (lastSeasonModeCfg != mode) {
         // Just switched to AUTO: leave RETRO if stuck there
-        if (activeSeason == Season::RETRO) activeSeason = Season::SUMMER;
+        if (activeSeason == Season::RETRO || activeSeason == Season::NOIR)
+            activeSeason = Season::SUMMER;
         lastSeasonModeCfg = mode;
         seasonStartedMs = now;
         return;

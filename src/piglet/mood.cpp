@@ -2,6 +2,7 @@
 #include "weather.h"
 #include "wolf.h"
 #include "../core/config.h"
+#include "../core/xp.h"
 #include "../core/app.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
@@ -322,6 +323,8 @@ int Mood::addFood(int amount) {
         life += 1;
         gained++;
     }
+    // Keep a food bar after a new heart so hunger=0 does not eat it next tick.
+    if (gained && hunger < 40) hunger = 40;
     if (life >= 5 && hunger > 100) hunger = 100;
     if (hunger < 0) hunger = 0;
     return gained;
@@ -339,6 +342,7 @@ void Mood::maybeBecomeZombie() {
     if (life > 0) return;
     if (Config::personality().pigSkin == (uint8_t)PigSkin::ZOMBIE) return;
     Config::becomeZombie();
+    hunger = 45;
 }
 
 void Mood::feed() {
@@ -350,6 +354,7 @@ void Mood::feed() {
     say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
+    XP::addXP(XPEvent::FEED);
     if (gained) {
         Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
         maybeCureZombie();
@@ -399,6 +404,7 @@ void Mood::pet() {
     SFX::play(SFX::OINK_CURIOUS);
     Avatar::wiggleEars();
     Avatar::triggerTailWiggle();
+    XP::addXP(XPEvent::PET);
     saveMood();
     updateAvatarState();
 }
@@ -462,6 +468,12 @@ void Mood::pickPhrase() {
 void Mood::update() {
     uint32_t now = millis();
 
+    static bool s_wasNight = false;
+    const bool night = Avatar::isNightTime();
+    if (s_wasNight && !night && life > 0)
+        XP::addXP(XPEvent::NIGHT_SURVIVE);
+    s_wasNight = night;
+
     if (now - lastDecayMs >= 10000) {
         lastDecayMs = now;
         hunger -= 4;
@@ -520,6 +532,9 @@ void Mood::draw(M5Canvas& canvas) {
     uint16_t bg = 0x2145;
     if (Weather::getActiveSeason() == Season::RETRO) {
         fg = 0xE73C;
+        bg = 0x1082;
+    } else if (Weather::getActiveSeason() == Season::NOIR) {
+        fg = 0xFE60;
         bg = 0x1082;
     }
 

@@ -505,6 +505,10 @@ void draw(M5Canvas& canvas) {
             OUT  = 0x2104; FUR = 0xAD55; FUR2 = 0x7BEF; FURH = 0xC618;
             BELLY = 0xDEFB; NOSE = 0x0000; EYE = 0xFFFF; EAR = 0x8410;
             break;
+        case Season::NOIR:
+            OUT  = 0x1082; FUR = 0x3186; FUR2 = 0x2104; FURH = 0x5AEB;
+            BELLY = 0x4A49; NOSE = 0x0000; EYE = 0xFE60; EAR = 0x4208;
+            break;
         case Season::SUMMER:
         default:
             OUT  = 0x41E0; FUR = 0x9A60; FUR2 = 0x7200; FURH = 0xD4A0;

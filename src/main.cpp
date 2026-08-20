@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include "build_info.h"
 #include "core/config.h"
+#include "core/xp.h"
 #include "core/app.h"
 #include "ui/display.h"
 #include "ui/menu.h"
@@ -61,6 +62,7 @@ void setup() {
     Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
 
     Config::init();
+    XP::begin();
     M5.Display.setBrightness(Config::personality().brightness * 255 / 100);
 
     Display::init();

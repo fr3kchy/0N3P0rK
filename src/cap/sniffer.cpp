@@ -8,6 +8,7 @@
 #include "../storage/littlefs_ops.h"
 #include "../net/ap_sta.h"
 #include "../core/config.h"
+#include "../core/xp.h"
 #include "../core/wsl_bypasser.h"
 #include <esp_wifi.h>
 #include <WiFi.h>
@@ -376,6 +377,7 @@ static bool openFileForBssid(const uint8_t* bssid) {
         s_fileSize = sizeof(fh);
         s_cnt.filesOpened++;
         createdNew = true;
+        XP::addXP(XPEvent::HANDSHAKE);
     }
 
     memcpy(s_fileBssid, bssid, 6);

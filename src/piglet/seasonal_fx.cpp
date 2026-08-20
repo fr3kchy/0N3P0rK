@@ -103,6 +103,45 @@ static bool isSpring() { return Weather::getActiveSeason() == Season::SPRING; }
 static bool isSummer() { return Weather::getActiveSeason() == Season::SUMMER; }
 static bool isAutumn() { return Weather::getActiveSeason() == Season::AUTUMN; }
 static bool isWinter() { return Weather::getActiveSeason() == Season::WINTER; }
+static bool isNoir()   { return Weather::getActiveSeason() == Season::NOIR; }
+
+// Noir: moths around the street lamp (center lane)
+struct Moth {
+    float a;
+    float r;
+    uint8_t phase;
+    bool active;
+};
+static Moth moths[3] = {};
+
+static void updateMoths(uint32_t now) {
+    static uint32_t last = 0;
+    if (now - last < 40) return;
+    last = now;
+    for (int i = 0; i < 3; i++) {
+        if (!moths[i].active) {
+            moths[i].active = true;
+            moths[i].a = (float)i * 2.1f;
+            moths[i].r = 10.0f + (float)i * 4.0f;
+            moths[i].phase = (uint8_t)(i * 40);
+        }
+        moths[i].phase++;
+        moths[i].a += 0.08f + (float)i * 0.02f;
+        moths[i].r = 10.0f + (float)i * 4.0f + sinf((float)moths[i].phase * 0.12f) * 3.0f;
+    }
+}
+
+static void drawMoths(M5Canvas& canvas, bool flash) {
+    const int16_t cx = 120;
+    const int16_t cy = 42;
+    uint16_t c = flash ? 0xFFFF : 0xFE60;
+    for (int i = 0; i < 3; i++) {
+        if (!moths[i].active) continue;
+        int16_t x = cx + (int16_t)(cosf(moths[i].a) * moths[i].r);
+        int16_t y = cy + (int16_t)(sinf(moths[i].a) * moths[i].r * 0.45f);
+        canvas.fillRect(x, y, 2, 2, c);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Winter banks
@@ -633,6 +672,10 @@ void reset() {
 void update() {
     // RETRO film world: only pixel rain (weather module) — no color FX
     if (Weather::getActiveSeason() == Season::RETRO) return;
+    if (isNoir()) {
+        updateMoths(millis());
+        return;
+    }
     uint32_t now = millis();
     updateSnowBanks(now);
     updateLeaves(now);
@@ -645,6 +688,7 @@ void update() {
 
 void drawBackdrop(M5Canvas& canvas) {
     if (Weather::getActiveSeason() == Season::RETRO) return;
+    if (isNoir()) return;
     // Sky-layer only (behind tree/pig)
     drawLightningBolts(canvas);
 }
@@ -652,6 +696,10 @@ void drawBackdrop(M5Canvas& canvas) {
 void draw(M5Canvas& canvas) {
     if (Weather::getActiveSeason() == Season::RETRO) return;
     const bool flash = Weather::isThunderFlashing();
+    if (isNoir()) {
+        drawMoths(canvas, flash);
+        return;
+    }
     // Order: ground decor first, then air
     drawSnowBanks(canvas, flash);
     drawLeaves(canvas, flash);
