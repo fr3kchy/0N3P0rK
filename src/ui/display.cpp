@@ -20,8 +20,7 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
-#include "../build_info.h"
-#include "../board/board.h"
+#include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
 #include <stdio.h>
@@ -108,21 +107,7 @@ void Display::init() {
 }
 
 void Display::showBootSplash() {
-    M5.Display.fillScreen(UiStyle::BG);
-    M5.Display.setFont(&fonts::Font0);
-    M5.Display.setTextColor(UiStyle::PINK);
-    M5.Display.setTextSize(2);
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.drawString(ON3PORK_NAME, DISPLAY_W / 2, 52);
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(UiStyle::TEXT);
-    char ver[24];
-    snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
-    M5.Display.drawString(ver, DISPLAY_W / 2, 80);
-    M5.Display.setTextColor(UiStyle::DIM);
-    M5.Display.drawString(Board::modelLabel(), DISPLAY_W / 2, 100);
-    M5.Display.setTextDatum(TL_DATUM);
-    delay(1600);
+    runBootSplash();
 }
 
 // Night: setting-20 (floor 10). Day: setting+20 (cap 100). Never 0.

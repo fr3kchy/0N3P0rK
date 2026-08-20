@@ -10,6 +10,8 @@
 #include "../audio/sfx.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
+#include "../board/board.h"
+#include "../build_info.h"
 #include <M5Cardputer.h>
 #include <WiFi.h>
 #include <string.h>
@@ -195,6 +197,7 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
+    if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
     *n = SCENE_N;
     return SCENE;
 }
@@ -385,16 +388,34 @@ static bool setValue(const Item& it, int v) {
     if (s_page == SettingsPage::SCENE) {
         switch (it.id) {
             case 1: {
-                if (v == (int)PigSkin::ZOMBIE) {
-                    if (!Config::isZombieSkinUnlocked()) {
-                        Display::showToast("ZOMBIE LOCKED", 1200);
-                        return false;
+                if (Mood::getHearts() < 1) {
+                    Display::showToast("NEED HEART", 1000);
+                    return false;
+                }
+                const int from = (int)p.pigSkin;
+                const int span = it.maxV - it.minV + 1;
+                const int fwd = (v - from + span) % span;
+                const int back = (from - v + span) % span;
+                const int dir = (fwd <= back) ? 1 : -1;
+                int skin = v;
+                if (skin == (int)PigSkin::ZOMBIE && !Config::isZombieSkinUnlocked()) {
+                    skin = from;
+                    for (int i = 0; i < PIG_SKIN_COUNT; i++) {
+                        skin += dir;
+                        if (skin < it.minV) skin = it.maxV;
+                        if (skin > it.maxV) skin = it.minV;
+                        if (skin == (int)PigSkin::ZOMBIE && !Config::isZombieSkinUnlocked())
+                            continue;
+                        break;
                     }
+                }
+                if (skin == (int)PigSkin::ZOMBIE) {
                     Config::becomeZombie();
-                    Mood::onZombieApplied();
                     break;
                 }
-                p.pigSkin = (uint8_t)v;
+                const bool leavingZombie = (from == (int)PigSkin::ZOMBIE);
+                p.pigSkin = (uint8_t)skin;
+                if (leavingZombie) p.nightWolfBites = 0;
                 break;
             }
             case 2: p.seasonMode = (uint8_t)v; break;
@@ -573,6 +594,7 @@ const char* bottomHint() {
         if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
         return ";/. pick  ENT  R rescan";
     }
+    if (s_page == SettingsPage::STATUS) return "` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
@@ -676,6 +698,10 @@ void update() {
 
     if (s_page == SettingsPage::CONNECT) {
         updateConnect();
+        return;
+    }
+    if (s_page == SettingsPage::STATUS) {
+        if (keyEsc()) hide();
         return;
     }
 
@@ -911,9 +937,84 @@ static void drawConnect(M5Canvas& canvas) {
     canvas.drawString("PICK NET. ONLY TYPE PASS.", DISPLAY_W / 2, MAIN_H - 10);
 }
 
+static void drawStatus(M5Canvas& canvas) {
+    const uint16_t UI_BG = 0x2145, UI_TITLE = 0xFFE0;
+    const uint16_t UI_TEXT = 0xEF5D, UI_DIM = 0x9CD3, UI_GOLD = 0xFE60;
+    canvas.fillSprite(UI_BG);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextSize(2);
+    canvas.setTextDatum(top_center);
+    canvas.setTextColor(UI_TITLE);
+    canvas.drawString("STATUS", DISPLAY_W / 2, 2);
+    canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
+
+    canvas.setTextSize(1);
+    canvas.setTextDatum(top_left);
+
+    int y = 24;
+    auto row = [&](const char* k, const char* v) {
+        canvas.setTextColor(UI_DIM);
+        canvas.drawString(k, 8, y);
+        canvas.setTextColor(UI_TEXT);
+        canvas.drawString(v, 78, y);
+        y += 11;
+    };
+
+    row("BOARD", Board::modelLabel());
+
+    int32_t lv = M5.Power.getBatteryLevel();
+    if (lv < 0) lv = 0;
+    if (lv > 100) lv = 100;
+    const bool chg = (M5.Power.isCharging() == m5::Power_Class::is_charging);
+    char batt[16];
+    snprintf(batt, sizeof(batt), "%d%%%s", (int)lv, chg ? " CHG" : "");
+    row("BATT", batt);
+
+    row("SD", Config::isSDAvailable() ? "YES" : "NO");
+
+    char wifi[20] = "--";
+    if (Net::hasStaCreds() && Net::cfg().staSsid[0]) {
+        strncpy(wifi, Net::cfg().staSsid, sizeof(wifi) - 1);
+        wifi[sizeof(wifi) - 1] = '\0';
+    }
+    row("WIFI", wifi);
+
+    row("WPASEC", Net::cfg().wpaSecKey[0] ? "KEY" : "NO");
+    row("PWN", Net::cfg().pwncrackKey[0] ? "KEY" : "NO");
+
+    char keys[24];
+    size_t n = 0;
+    const HotkeyConfig& hk = Config::hotkeys();
+    for (uint8_t i = 0; i < HOTKEY_COUNT && n + 2 < sizeof(keys); i++) {
+        char k = hk.key[i];
+        if (k >= 'a' && k <= 'z') k = (char)(k - 'a' + 'A');
+        if (k < 32 || k >= 127) k = '-';
+        if (n) keys[n++] = ' ';
+        keys[n++] = k;
+    }
+    keys[n] = '\0';
+    row("KEYS", keys[0] ? keys : "--");
+
+    char ver[20];
+    snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
+    canvas.setTextColor(UI_GOLD);
+    canvas.drawString(ver, 8, y + 2);
+
+    canvas.setTextColor(UI_TITLE);
+    canvas.setTextDatum(top_center);
+    canvas.drawString("` BACK", DISPLAY_W / 2, MAIN_H - 10);
+    canvas.setTextDatum(top_left);
+    canvas.setTextSize(1);
+    canvas.setFont(&fonts::Font0);
+}
+
 void draw(M5Canvas& canvas) {
     if (s_page == SettingsPage::CONNECT) {
         drawConnect(canvas);
+        return;
+    }
+    if (s_page == SettingsPage::STATUS) {
+        drawStatus(canvas);
         return;
     }
 

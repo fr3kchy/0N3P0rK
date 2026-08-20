@@ -13,7 +13,6 @@ public:
 
     static void feed();
     static void eatWorld();      // fruit/berry she found herself
-    static void onZombieApplied();  // curse: 5 hearts → empty, eat fruit to heal
     static void hurt(int amount);
     static void pet();
     static void play();          // walk / jump
@@ -49,4 +48,5 @@ private:
     static void say(const char* phrase);
     static int addFood(int amount);
     static void maybeCureZombie();
+    static void maybeBecomeZombie();
 };

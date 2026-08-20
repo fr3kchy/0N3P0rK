@@ -58,12 +58,16 @@ static const char* const H_PIG[] = {
     "SKIN SEASON SKY LAYERS LIFE."
 };
 static const char* const H_SET[] = {
-    "SYSTEM RADIO BLE CONNECT.",
+    "SYSTEM STATUS RADIO.",
     "EACH PAGE ITS OWN KNOBS."
 };
 static const char* const H_SYS[] = {
     "BRIGHT SOUND DIM.",
     "WHEN THE SCREEN SLEEPS."
+};
+static const char* const H_STAT[] = {
+    "BOARD BATT SD WIFI KEYS.",
+    "READ ONLY. ` BACK."
 };
 static const char* const H_RADIO[] = {
     "HOP LOCK DEAUTH RSSI MAC.",
@@ -155,6 +159,7 @@ static const Item G_ATTACK[] = {
 };
 static const Item G_SET[] = {
     {"[]", "SYSTEM",  14, H_SYS,    2},
+    {"::", "STATUS",  19, H_STAT,   2},
     {"))", "RADIO",   11, H_RADIO,  2},
     {"BT", "BLE",     12, H_BLESET, 2},
     {"))", "CONNECT",  6, H_CONN,   2},
@@ -188,7 +193,7 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 6;
+    if (g == GroupId::SET) return 7;
     return 0;
 }
 
@@ -238,6 +243,10 @@ static void doAction(uint8_t id) {
             break;
         case 14:
             SettingsMenu::show(SettingsPage::SYSTEM);
+            App::setMode(AppMode::TUNE);
+            break;
+        case 19:
+            SettingsMenu::show(SettingsPage::STATUS);
             App::setMode(AppMode::TUNE);
             break;
         case 11:

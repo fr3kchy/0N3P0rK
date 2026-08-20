@@ -228,10 +228,11 @@ bool Config::isZombieSkinUnlocked() {
 }
 
 bool Config::registerNightWolfBite() {
-    if (personalityConfig.zombieSkinUnlocked) return false;
+    if (personalityConfig.pigSkin == (uint8_t)PigSkin::ZOMBIE) return false;
     if (personalityConfig.nightWolfBites < 255)
         personalityConfig.nightWolfBites++;
     if (personalityConfig.nightWolfBites >= 5) {
+        personalityConfig.nightWolfBites = 5;
         personalityConfig.zombieSkinUnlocked = true;
         save();
         return true;
@@ -248,6 +249,7 @@ void Config::becomeZombie() {
             personalityConfig.pigSkinAlive = (uint8_t)PigSkin::CLASSIC;
     }
     personalityConfig.pigSkin = (uint8_t)PigSkin::ZOMBIE;
+    personalityConfig.zombieSkinUnlocked = true;
     save();
 }
 
@@ -257,5 +259,6 @@ void Config::cureZombie() {
     if (back >= PIG_SKIN_COUNT || back == (uint8_t)PigSkin::ZOMBIE)
         back = (uint8_t)PigSkin::CLASSIC;
     personalityConfig.pigSkin = back;
+    personalityConfig.nightWolfBites = 0;
     save();
 }

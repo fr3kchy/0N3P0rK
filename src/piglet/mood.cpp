@@ -275,6 +275,7 @@ void Mood::init() {
     loadTalkFromSd();
     say("hello");
     maybeCureZombie();
+    maybeBecomeZombie();
     updateAvatarState();
 }
 
@@ -334,14 +335,10 @@ void Mood::maybeCureZombie() {
     Display::notify(NoticeKind::REWARD, "P1G AGAIN", 3000, NoticeChannel::TOP_BAR);
 }
 
-void Mood::onZombieApplied() {
-    // Full hearts + zombie = no room to refill. Start the eat-5-hearts curse.
-    if (life >= 5) {
-        life = 0;
-        hunger = 0;
-        saveMood();
-        Display::showToast("ZOMBIE: EAT 5 HEARTS", 1800);
-    }
+void Mood::maybeBecomeZombie() {
+    if (life > 0) return;
+    if (Config::personality().pigSkin == (uint8_t)PigSkin::ZOMBIE) return;
+    Config::becomeZombie();
 }
 
 void Mood::feed() {
@@ -353,8 +350,10 @@ void Mood::feed() {
     say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
-    if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
-    maybeCureZombie();
+    if (gained) {
+        Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
+        maybeCureZombie();
+    }
     saveMood();
     updateAvatarState();
 }
@@ -368,8 +367,10 @@ void Mood::eatWorld() {
     say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
     SFX::play(SFX::OINK_HAPPY);
     Avatar::sniff();
-    if (gained) Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
-    maybeCureZombie();
+    if (gained) {
+        Display::showToast(gained == 1 ? "+1 HEART" : "+HEARTS", 900);
+        maybeCureZombie();
+    }
     saveMood();
     updateAvatarState();
 }
@@ -384,6 +385,7 @@ void Mood::hurt(int amount) {
     clampStat(happiness);
     lastEffective = happiness;
     say("segfault");
+    maybeBecomeZombie();
     saveMood();
     updateAvatarState();
 }
@@ -467,6 +469,7 @@ void Mood::update() {
         if (hunger == 0 && life > 0) {
             life -= 1;
             say("tummy empty");
+            maybeBecomeZombie();
         }
         if ((now - lastActivityTime) > 90000) happiness -= 2;
         clampStat(happiness);

@@ -2810,21 +2810,6 @@ void Avatar::onWolfBitten() {
         return;
     }
 
-    // Night ambient bites unlock ZOMBIE (5 hearts). Not Fruit Run.
-    bool justUnlocked = false;
-    if (!FruitRunMode::isRunning() && isNightTime()) {
-        if (Config::registerNightWolfBite()) {
-            justUnlocked = true;
-            Display::showToast("ZOMBIE SKIN UNLOCKED!", 2500);
-            Display::notify(NoticeKind::REWARD, "UND3AD P1G", 4000, NoticeChannel::TOP_BAR);
-        } else if (!Config::isZombieSkinUnlocked()) {
-            char buf[28];
-            snprintf(buf, sizeof(buf), "NIGHT BITE %u/5",
-                     (unsigned)Config::personality().nightWolfBites);
-            Display::showToast(buf, 1800);
-        }
-    }
-
     // Play-dead + control lock. Shorter in Fruit Run (lives handle death).
     uint32_t lockMs = kWolfBiteLockMs;
     if (FruitRunMode::isRunning()) lockMs = 1800;  // brief stun, not 10s
@@ -2836,11 +2821,6 @@ void Avatar::onWolfBitten() {
     setPlayDead(true);
     setState(AvatarState::SAD);
     Mood::hurt(1);
-    // Apply zombie after the 5th bite so this hit still takes a heart.
-    if (justUnlocked) {
-        Config::becomeZombie();
-        Mood::onZombieApplied();
-    }
     s_hiding = false;
     s_sitAfterWalk = false;
     s_strollDir = 0;
