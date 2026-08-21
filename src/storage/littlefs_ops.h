@@ -73,6 +73,9 @@ bool loadKeyFile(const char* path, char* dest, size_t destLen);
 void loadKeysIntoNet();
 void migrateLegacy();
 void brewHeap();
+// FAT on a busy card (M5Launcher bins, etc.) can lag after close/rename.
+void sdSettle();
+bool commitTempFile(const char* tmpPath, const char* destPath);
 
 // Wolf-eat: move up to want random capture files into /0N3P0rK/wolf. Never keys.
 uint8_t eatRandomLoot(uint8_t want);

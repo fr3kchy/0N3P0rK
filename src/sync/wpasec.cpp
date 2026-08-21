@@ -428,9 +428,7 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
         Serial.println("[WPASEC] pot no lines, keep old");
         return false;
     }
-    SD.remove(Storage::FILE_WPASEC_RESULTS);
-    if (!SD.rename(potTmp, Storage::FILE_WPASEC_RESULTS)) {
-        SD.remove(potTmp);
+    if (!Storage::commitTempFile(potTmp, Storage::FILE_WPASEC_RESULTS)) {
         snprintf(lastError, sizeof(lastError), "pot save");
         return false;
     }
@@ -551,6 +549,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     }
     SD.remove(WPA_PENDING);
     if (result.uploaded > 0) saveUploadedList();
+    Storage::sdSettle();
 
     if (cb) cb("Potfile", pend.count, pend.count);
     ioXferPhase("POTFILE", pend.count, pend.count);
@@ -562,6 +561,13 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     }
     cacheLoaded = false;
     loadCache();
+    if (crackedCache.empty() &&
+        Storage::fileSize(Storage::FILE_WPASEC_RESULTS) > 4) {
+        Serial.println("[WPASEC] cache empty after write, wait SD");
+        Storage::sdSettle();
+        cacheLoaded = false;
+        loadCache();
+    }
     result.cracked = getCrackedCount();
 
     if (potOk || result.uploaded > 0 || result.skipped > 0) {

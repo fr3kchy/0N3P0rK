@@ -466,17 +466,35 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
 
     Storage::ensureDir(Storage::DIR_PWNCRACK);
     const char* potTmp = "/0N3P0rK/pwncrack/results.tmp";
-    File out = SD.open(potTmp, "w");
-    if (!out) {
-        if (useTls) tls.stop(); else plain.stop();
-        snprintf(lastError, sizeof(lastError), "pot save");
-        return false;
-    }
+    SD.remove(potTmp);
 
+    // Receive first (headers + HTML sniff). Only then write the potfile.
+    // 1-byte SD writes on a full M5Launcher card miss the 25s window.
+    File out;
+    bool outOpen = false;
+    uint8_t wbuf[512];
+    size_t wlen = 0;
     size_t body = 0;
     bool looksHtml = false;
     bool firstNonWs = false;
-    while (millis() - t0 < 25000) {
+    auto flushW = [&]() {
+        if (!outOpen || wlen == 0) return;
+        out.write(wbuf, wlen);
+        wlen = 0;
+    };
+    auto putB = [&](uint8_t b) {
+        if (looksHtml) return;
+        if (!outOpen) {
+            out = SD.open(potTmp, "w");
+            if (!out) return;
+            outOpen = true;
+        }
+        if (wlen >= sizeof(wbuf)) flushW();
+        wbuf[wlen++] = b;
+        body++;
+    };
+
+    while (millis() - t0 < 45000) {
         int avail = useTls ? tls.available() : plain.available();
         if (avail <= 0) {
             if (headersDone &&
@@ -501,21 +519,26 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
             } else if (ch != '\r' && li + 1 < sizeof(line)) {
                 line[li++] = (char)ch;
             }
-        } else if (statusOk) {
-            if (!firstNonWs && body < 64) {
+        } else if (statusOk && !looksHtml) {
+            if (!firstNonWs) {
+                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
+                    continue;
+                }
+                firstNonWs = true;
                 if (ch == '<') {
                     looksHtml = true;
-                } else if (ch != '\r' && ch != '\n' && ch != ' ' && ch != '\t') {
-                    firstNonWs = true;
+                    continue;
                 }
             }
-            out.write((uint8_t)ch);
-            body++;
+            putB((uint8_t)ch);
             if (body > 80000) break;
         }
     }
-    out.flush();
-    out.close();
+    flushW();
+    if (outOpen) {
+        out.flush();
+        out.close();
+    }
     if (useTls) tls.stop(); else plain.stop();
 
     if (!headersDone || !statusOk) {
@@ -531,33 +554,21 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
                       lastError, (unsigned)body);
         return false;
     }
-    SD.remove(Storage::FILE_PWNCRACK_RESULTS);
-    if (!SD.rename(potTmp, Storage::FILE_PWNCRACK_RESULTS)) {
-        // rename can fail on FAT — copy-by-write fallback
-        File src = SD.open(potTmp, "r");
-        File dst = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
-        bool copied = false;
-        if (src && dst) {
-            uint8_t buf[512];
-            while (src.available()) {
-                int n = src.read(buf, sizeof(buf));
-                if (n <= 0) break;
-                dst.write(buf, (size_t)n);
-            }
-            copied = true;
-        }
-        if (src) src.close();
-        if (dst) { dst.flush(); dst.close(); }
-        SD.remove(potTmp);
-        if (!copied) {
-            snprintf(lastError, sizeof(lastError), "pot save");
-            return false;
-        }
+    if (!Storage::commitTempFile(potTmp, Storage::FILE_PWNCRACK_RESULTS)) {
+        snprintf(lastError, sizeof(lastError), "pot save");
+        return false;
     }
 
     uint16_t before = cacheLoaded ? (uint16_t)crackedCache.size() : 0;
     cacheLoaded = false;
     loadCache();
+    if (crackedCache.empty() &&
+        Storage::fileSize(Storage::FILE_PWNCRACK_RESULTS) > 4) {
+        Serial.println("[PWNCRACK] cache empty after write, wait SD");
+        Storage::sdSettle();
+        cacheLoaded = false;
+        loadCache();
+    }
     uint16_t after = (uint16_t)crackedCache.size();
     newCracks = (after > before) ? (uint16_t)(after - before) : 0;
     Serial.printf("[PWNCRACK] pot %u B cracked=%u\n", (unsigned)body, after);
@@ -667,6 +678,7 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
     }
     SD.remove(PWN_PENDING);
     if (result.uploaded > 0) saveUploadedList();
+    Storage::sdSettle();
 
     if (cb) cb("Potfile", pend.count, pend.count);
     ioXferPhase("POTFILE", pend.count, pend.count);
