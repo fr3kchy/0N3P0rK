@@ -494,43 +494,6 @@ void brewHeap() {
     yield();
 }
 
-void sdSettle() {
-    delay(220);
-    yield();
-}
-
-bool commitTempFile(const char* tmpPath, const char* destPath) {
-    if (!tmpPath || !destPath) return false;
-    sdSettle();
-    if (fileExists(destPath)) SD.remove(destPath);
-    delay(80);
-    yield();
-    if (SD.rename(tmpPath, destPath)) {
-        sdSettle();
-        return fileExists(destPath) && fileSize(destPath) > 0;
-    }
-    File src = SD.open(tmpPath, "r");
-    File dst = SD.open(destPath, "w");
-    bool ok = false;
-    if (src && dst) {
-        uint8_t buf[512];
-        while (src.available()) {
-            int n = src.read(buf, sizeof(buf));
-            if (n <= 0) break;
-            dst.write(buf, (size_t)n);
-        }
-        ok = true;
-    }
-    if (src) src.close();
-    if (dst) {
-        dst.flush();
-        dst.close();
-    }
-    SD.remove(tmpPath);
-    sdSettle();
-    return ok && fileExists(destPath) && fileSize(destPath) > 0;
-}
-
 void loadKeysIntoNet() {
     char buf[65];
     const char* wpaKeys[] = {

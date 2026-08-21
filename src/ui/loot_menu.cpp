@@ -701,16 +701,26 @@ void LootMenu::update() {
                 const char* id = s_rows[s_oneIdx].hex[0] ? s_rows[s_oneIdx].hex
                                                         : s_rows[s_oneIdx].filename;
                 ok = WPASec::uploadOneFile(path, id, Net::cfg().wpaSecKey);
-                if (ok) ioXfer().ok = 1;
-                else ioXfer().fail = 1;
-                snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
-                         ok ? "" : (WPASec::getLastError()[0] ? WPASec::getLastError() : "?"));
+                if (ok) {
+                    ioXfer().ok = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "OK 1 crk%u",
+                             (unsigned)WPASec::getCrackedCount());
+                } else {
+                    ioXfer().fail = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
+                             WPASec::getLastError()[0] ? WPASec::getLastError() : "?");
+                }
             } else {
                 ok = Pwncrack::uploadOneFile(path, Net::cfg().pwncrackKey);
-                if (ok) ioXfer().ok = 1;
-                else ioXfer().fail = 1;
-                snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
-                         ok ? "" : (Pwncrack::getLastError()[0] ? Pwncrack::getLastError() : "?"));
+                if (ok) {
+                    ioXfer().ok = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "OK 1 crk%u",
+                             (unsigned)Pwncrack::getCrackedCount());
+                } else {
+                    ioXfer().fail = 1;
+                    snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
+                             Pwncrack::getLastError()[0] ? Pwncrack::getLastError() : "?");
+                }
             }
             ioXferPaint(true);
         } else if (tab == Tab::WPASEC) {

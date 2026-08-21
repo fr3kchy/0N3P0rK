@@ -26,6 +26,7 @@ public:
     static bool canSync();
     static PwncrackSyncResult syncCaptures(const char* apiKey, PwncrackProgressCallback cb = nullptr);
     static bool uploadOneFile(const char* filepath, const char* apiKey);
+    static bool pullPotfile(const char* apiKey, uint16_t& lines);
 
     static bool loadCache();
     static void freeCacheMemory();

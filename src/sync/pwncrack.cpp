@@ -46,101 +46,6 @@ static bool writeStr(WiFiClient& c, const char* s) {
 }
 
 // "AA-BB-CC-DD-EE-FF.22000" / "name.hc22000" / stem → comparable id
-static bool isHex12Field(const char* s) {
-    if (!s) return false;
-    size_t n = 0;
-    for (; s[n]; n++) {
-        if (!isxdigit((unsigned char)s[n])) return false;
-    }
-    return n == 12;
-}
-
-static void copyField(char* dst, size_t dstLen, const char* src) {
-    if (!dst || dstLen == 0) return;
-    dst[0] = '\0';
-    if (!src) return;
-    strncpy(dst, src, dstLen - 1);
-    dst[dstLen - 1] = '\0';
-}
-
-static void hex12Upper(const char* src, char* dst) {
-    for (int i = 0; i < 12; i++)
-        dst[i] = (char)toupper((unsigned char)src[i]);
-    dst[12] = '\0';
-}
-
-// pwncrack plugin / hcx pot: hash:AP:STA:SSID:password
-// Do NOT take the 32-hex hash as BSSID (extractBssidHex would keep the first 12).
-static bool parsePwnPotLine(const char* line, char* id, char* label, char* pass) {
-    if (id) id[0] = '\0';
-    if (label) label[0] = '\0';
-    if (pass) pass[0] = '\0';
-    if (!line || line[0] == '#' || line[0] == '<' || line[0] == '\0') return false;
-
-    if (strncmp(line, "WPA*", 4) == 0) {
-        char bssidP[18], ssid[33], pw[64];
-        if (!Pot::parseLine(line, bssidP, ssid, pw) || !pw[0]) return false;
-        copyField(pass, 64, pw);
-        if (ssid[0]) copyField(label, 33, ssid);
-        if (!CapName::extractBssidHex(bssidP, id) && ssid[0])
-            copyField(id, 33, ssid);
-        return pass && pass[0];
-    }
-
-    const char* col[4];
-    int n = 0;
-    const char* p = line;
-    while (n < 4) {
-        const char* c = strchr(p, ':');
-        if (!c) break;
-        col[n++] = c;
-        p = c + 1;
-    }
-    if (n >= 4) {
-        char f0[40], f1[20];
-        size_t l0 = (size_t)(col[0] - line);
-        if (l0 >= sizeof(f0)) l0 = sizeof(f0) - 1;
-        memcpy(f0, line, l0);
-        f0[l0] = '\0';
-        size_t l1 = (size_t)(col[1] - (col[0] + 1));
-        if (l1 >= sizeof(f1)) l1 = sizeof(f1) - 1;
-        memcpy(f1, col[0] + 1, l1);
-        f1[l1] = '\0';
-
-        size_t sl = (size_t)(col[3] - (col[2] + 1));
-        if (sl > 32) sl = 32;
-        memcpy(label, col[2] + 1, sl);
-        label[sl] = '\0';
-        copyField(pass, 64, col[3] + 1);
-
-        if (isHex12Field(f1)) hex12Upper(f1, id);
-        else if (isHex12Field(f0)) hex12Upper(f0, id);
-        else if (label[0]) copyField(id, 33, label);
-        return pass[0] != '\0';
-    }
-
-    char buf[200];
-    copyField(buf, sizeof(buf), line);
-    char* parts[8];
-    int pc = 0;
-    char* q = buf;
-    while (pc < 8) {
-        parts[pc++] = q;
-        char* c = strchr(q, ':');
-        if (!c) break;
-        *c = '\0';
-        q = c + 1;
-    }
-    if (pc >= 2) {
-        copyField(label, 33, parts[0]);
-        copyField(pass, 64, parts[pc - 1]);
-        if (isHex12Field(parts[0])) hex12Upper(parts[0], id);
-        else copyField(id, 33, parts[0]);
-        return pass[0] != '\0';
-    }
-    return false;
-}
-
 static void normPwnId(const char* in, char* out, size_t outLen) {
     if (!out || outLen < 2) return;
     out[0] = '\0';
@@ -255,7 +160,42 @@ bool Pwncrack::loadCache() {
                 if (n < 3) continue;
 
                 CrackedEntry e{};
-                if (!parsePwnPotLine(line, e.id, e.label, e.password)) continue;
+                // v1.2 split: WPA* via parseLine, else pwncrack plugin "a:b:c:SSID:pass"
+                if (strncmp(line, "WPA*", 4) == 0) {
+                    char bssidP[18], ssid[33], pass[64];
+                    if (!Pot::parseLine(line, bssidP, ssid, pass) || !pass[0]) continue;
+                    strncpy(e.password, pass, sizeof(e.password) - 1);
+                    if (ssid[0]) strncpy(e.label, ssid, sizeof(e.label) - 1);
+                    if (!CapName::extractBssidHex(bssidP, e.id) && ssid[0])
+                        strncpy(e.id, ssid, sizeof(e.id) - 1);
+                } else {
+                    char buf[200];
+                    strncpy(buf, line, sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = '\0';
+                    char* parts[8];
+                    int pc = 0;
+                    char* p = buf;
+                    while (pc < 8) {
+                        parts[pc++] = p;
+                        char* c = strchr(p, ':');
+                        if (!c) break;
+                        *c = '\0';
+                        p = c + 1;
+                    }
+                    if (pc >= 5) {
+                        strncpy(e.label, parts[3], sizeof(e.label) - 1);
+                        strncpy(e.password, parts[4], sizeof(e.password) - 1);
+                        if (!CapName::extractBssidHex(parts[0], e.id))
+                            strncpy(e.id, parts[3], sizeof(e.id) - 1);
+                    } else if (pc >= 2) {
+                        strncpy(e.label, parts[0], sizeof(e.label) - 1);
+                        strncpy(e.password, parts[pc - 1], sizeof(e.password) - 1);
+                        if (!CapName::extractBssidHex(parts[0], e.id))
+                            strncpy(e.id, parts[0], sizeof(e.id) - 1);
+                    } else {
+                        continue;
+                    }
+                }
                 if (e.password[0]) crackedCache.push_back(e);
             }
             f.close();
@@ -526,35 +466,17 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
 
     Storage::ensureDir(Storage::DIR_PWNCRACK);
     const char* potTmp = "/0N3P0rK/pwncrack/results.tmp";
-    SD.remove(potTmp);
+    File out = SD.open(potTmp, "w");
+    if (!out) {
+        if (useTls) tls.stop(); else plain.stop();
+        snprintf(lastError, sizeof(lastError), "pot save");
+        return false;
+    }
 
-    // Receive first (headers + HTML sniff). Only then write the potfile.
-    // 1-byte SD writes on a full M5Launcher card miss the 25s window.
-    File out;
-    bool outOpen = false;
-    uint8_t wbuf[512];
-    size_t wlen = 0;
     size_t body = 0;
     bool looksHtml = false;
     bool firstNonWs = false;
-    auto flushW = [&]() {
-        if (!outOpen || wlen == 0) return;
-        out.write(wbuf, wlen);
-        wlen = 0;
-    };
-    auto putB = [&](uint8_t b) {
-        if (looksHtml) return;
-        if (!outOpen) {
-            out = SD.open(potTmp, "w");
-            if (!out) return;
-            outOpen = true;
-        }
-        if (wlen >= sizeof(wbuf)) flushW();
-        wbuf[wlen++] = b;
-        body++;
-    };
-
-    while (millis() - t0 < 45000) {
+    while (millis() - t0 < 25000) {
         int avail = useTls ? tls.available() : plain.available();
         if (avail <= 0) {
             if (headersDone &&
@@ -579,26 +501,21 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
             } else if (ch != '\r' && li + 1 < sizeof(line)) {
                 line[li++] = (char)ch;
             }
-        } else if (statusOk && !looksHtml) {
-            if (!firstNonWs) {
-                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') {
-                    continue;
-                }
-                firstNonWs = true;
+        } else if (statusOk) {
+            if (!firstNonWs && body < 64) {
                 if (ch == '<') {
                     looksHtml = true;
-                    continue;
+                } else if (ch != '\r' && ch != '\n' && ch != ' ' && ch != '\t') {
+                    firstNonWs = true;
                 }
             }
-            putB((uint8_t)ch);
+            out.write((uint8_t)ch);
+            body++;
             if (body > 80000) break;
         }
     }
-    flushW();
-    if (outOpen) {
-        out.flush();
-        out.close();
-    }
+    out.flush();
+    out.close();
     if (useTls) tls.stop(); else plain.stop();
 
     if (!headersDone || !statusOk) {
@@ -614,21 +531,33 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
                       lastError, (unsigned)body);
         return false;
     }
-    if (!Storage::commitTempFile(potTmp, Storage::FILE_PWNCRACK_RESULTS)) {
-        snprintf(lastError, sizeof(lastError), "pot save");
-        return false;
+    SD.remove(Storage::FILE_PWNCRACK_RESULTS);
+    if (!SD.rename(potTmp, Storage::FILE_PWNCRACK_RESULTS)) {
+        // rename can fail on FAT — copy-by-write fallback
+        File src = SD.open(potTmp, "r");
+        File dst = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
+        bool copied = false;
+        if (src && dst) {
+            uint8_t buf[512];
+            while (src.available()) {
+                int n = src.read(buf, sizeof(buf));
+                if (n <= 0) break;
+                dst.write(buf, (size_t)n);
+            }
+            copied = true;
+        }
+        if (src) src.close();
+        if (dst) { dst.flush(); dst.close(); }
+        SD.remove(potTmp);
+        if (!copied) {
+            snprintf(lastError, sizeof(lastError), "pot save");
+            return false;
+        }
     }
 
     uint16_t before = cacheLoaded ? (uint16_t)crackedCache.size() : 0;
     cacheLoaded = false;
     loadCache();
-    if (crackedCache.empty() &&
-        Storage::fileSize(Storage::FILE_PWNCRACK_RESULTS) > 4) {
-        Serial.println("[PWNCRACK] cache empty after write, wait SD");
-        Storage::sdSettle();
-        cacheLoaded = false;
-        loadCache();
-    }
     uint16_t after = (uint16_t)crackedCache.size();
     newCracks = (after > before) ? (uint16_t)(after - before) : 0;
     Serial.printf("[PWNCRACK] pot %u B cracked=%u\n", (unsigned)body, after);
@@ -738,7 +667,6 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
     }
     SD.remove(PWN_PENDING);
     if (result.uploaded > 0) saveUploadedList();
-    Storage::sdSettle();
 
     if (cb) cb("Potfile", pend.count, pend.count);
     ioXferPhase("POTFILE", pend.count, pend.count);
@@ -786,6 +714,25 @@ bool Pwncrack::uploadOneFile(const char* filepath, const char* apiKey) {
         saveUploadedList();
         lastError[0] = '\0';
     }
+    // One-file upload never ran the potfile step — force results.txt now.
+    ioXferPhase("POTFILE", 1, 1);
+    uint16_t n = 0;
+    downloadPotfile(apiKey, n);
+    cacheLoaded = false;
+    loadCache();
     busy = false;
+    return ok;
+}
+
+bool Pwncrack::pullPotfile(const char* apiKey, uint16_t& lines) {
+    lines = 0;
+    if (!hasApiKey(apiKey)) {
+        strncpy(lastError, "invalid API key", sizeof(lastError) - 1);
+        return false;
+    }
+    bool ok = downloadPotfile(apiKey, lines);
+    cacheLoaded = false;
+    loadCache();
+    lines = getCrackedCount();
     return ok;
 }

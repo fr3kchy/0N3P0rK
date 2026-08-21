@@ -4,7 +4,7 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.2.5** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2.1** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -47,7 +47,7 @@ Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / C
 3. Flash with any of:
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.5_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.1_m5cardputer.bin
 ```
 
 or PlatformIO:
@@ -65,7 +65,7 @@ pio run
 ```
 
 Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release name: `0N3P0rK_v1.2.5_m5cardputer.bin`
+Release name: `0N3P0rK_v1.2.1_m5cardputer.bin`
 
 ---
 
@@ -271,16 +271,12 @@ Change binds in **SET → KEYS**.
 
 ---
 
-## v1.2.5
-
-- Fix: LOOT potfile is saved to SD, then read after the card settles — upload could succeed while `results.txt` never appeared (busy cards / M5Launcher)
-- Fix: PwnCrack potfile lines `hash:bssid:sta:SSID:password` show the network and password, not the hash stub
-
 ## v1.2.1
 
 - Fix: WPA-SEC / PwnCrack potfile and `[OK]` status survive reboot and show after sync
 - Fix: PwnCrack potfile download/parse restored to the v1.2 path that worked
 - `R` reloads the LOOT list from SD (both tabs)
+- `U` (one file) also pulls `results.txt` — upload alone did not download the potfile
 
 ## v1.2
 
