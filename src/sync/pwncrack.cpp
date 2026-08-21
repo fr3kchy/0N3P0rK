@@ -127,20 +127,20 @@ bool Pwncrack::loadUploadedList() {
 
 bool Pwncrack::saveUploadedList() {
     Storage::ensureDir(Storage::DIR_PWNCRACK);
-    File f = SD.open(Storage::FILE_PWNCRACK_UPLOADED, "w");
+    const char* tmp = "/0N3P0rK/pwncrack/uploaded.tmp";
+    File f = SD.open(tmp, "w");
     if (!f) return false;
-    for (const auto& e : uploadedCache) f.println(e.id);
+    for (const auto& e : uploadedCache) {
+        if (e.id[0]) f.println(e.id);
+    }
+    f.flush();
     f.close();
-    return true;
-}
-
-static bool appendUploadedPwn(const char* filename) {
-    if (!filename || !filename[0]) return false;
-    Storage::ensureDir(Storage::DIR_PWNCRACK);
-    File f = SD.open(Storage::FILE_PWNCRACK_UPLOADED, "a");
-    if (!f) return false;
-    f.println(filename);
-    f.close();
+    SD.remove(Storage::FILE_PWNCRACK_UPLOADED);
+    if (!SD.rename(tmp, Storage::FILE_PWNCRACK_UPLOADED)) {
+        SD.remove(tmp);
+        return false;
+    }
+    Serial.printf("[PWNCRACK] saved %u uploaded\n", (unsigned)uploadedCache.size());
     return true;
 }
 
@@ -160,13 +160,14 @@ bool Pwncrack::loadCache() {
                 if (n < 3) continue;
 
                 CrackedEntry e{};
-                if (strncmp(line, "WPA*", 4) == 0) {
-                    char bssidP[18], ssid[33], pass[64];
-                    if (!Pot::parseLine(line, bssidP, ssid, pass) || !pass[0]) continue;
+                char bssidP[18], ssid[33], pass[64];
+                if (Pot::parseLine(line, bssidP, ssid, pass) && pass[0]) {
                     strncpy(e.password, pass, sizeof(e.password) - 1);
                     if (ssid[0]) strncpy(e.label, ssid, sizeof(e.label) - 1);
                     if (!CapName::extractBssidHex(bssidP, e.id) && ssid[0])
                         strncpy(e.id, ssid, sizeof(e.id) - 1);
+                } else if (strncmp(line, "WPA*", 4) == 0) {
+                    continue;
                 } else {
                     char buf[200];
                     strncpy(buf, line, sizeof(buf) - 1);
@@ -185,7 +186,8 @@ bool Pwncrack::loadCache() {
                         strncpy(e.label, parts[3], sizeof(e.label) - 1);
                         strncpy(e.password, parts[4], sizeof(e.password) - 1);
                         if (!CapName::extractBssidHex(parts[0], e.id))
-                            strncpy(e.id, parts[3], sizeof(e.id) - 1);
+                            CapName::extractBssidHex(parts[1], e.id);
+                        if (!e.id[0]) strncpy(e.id, parts[3], sizeof(e.id) - 1);
                     } else if (pc >= 2) {
                         strncpy(e.label, parts[0], sizeof(e.label) - 1);
                         strncpy(e.password, parts[pc - 1], sizeof(e.password) - 1);
@@ -234,19 +236,26 @@ const char* Pwncrack::getPassword(const char* key) {
     char hex[13] = {0};
     CapName::extractBssidHex(key, hex);
     for (const auto& e : crackedCache) {
+        if (!e.password[0]) continue;
         if (strcasecmp(e.id, key) == 0 || strcasecmp(e.label, key) == 0) return e.password;
         if (norm[0] && (strcasecmp(e.id, norm) == 0 || strcasecmp(e.label, norm) == 0))
             return e.password;
         if (hex[0] && strcasecmp(e.id, hex) == 0) return e.password;
-        if (CapName::sameSsid(e.label, key)) return e.password;
+        if (e.label[0] && CapName::sameSsid(e.label, key)) return e.password;
+        if (e.id[0] && CapName::sameSsid(e.id, key)) return e.password;
         char nid[48], nlab[48];
         normPwnId(e.id, nid, sizeof(nid));
         normPwnId(e.label, nlab, sizeof(nlab));
         if (norm[0] && (strcasecmp(nid, norm) == 0 || strcasecmp(nlab, norm) == 0))
             return e.password;
-        char ehex[13] = {0};
-        if (CapName::extractBssidHex(e.id, ehex) && hex[0] && strcasecmp(ehex, hex) == 0)
-            return e.password;
+        if (hex[0]) {
+            char ehex[13] = {0};
+            if (CapName::extractBssidHex(e.id, ehex) && strcasecmp(ehex, hex) == 0)
+                return e.password;
+            ehex[0] = '\0';
+            if (CapName::extractBssidHex(e.label, ehex) && strcasecmp(ehex, hex) == 0)
+                return e.password;
+        }
     }
     return "";
 }
@@ -423,120 +432,166 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     newCracks = 0;
     if (!apiKey) return false;
 
-    WiFiClientSecure tls;
-    WiFiClient plain;
-    bool useTls = false;
-    if (!ioPwnOpen(tls, plain, useTls, PWN_HOST)) {
-        snprintf(lastError, sizeof(lastError), "pot connect");
-        return false;
-    }
+    // Official plugin uses HTTP and follows redirects. We did not — a 301
+    // on :80 made upload retry HTTPS, but the potfile stay empty.
+    bool forceTls = false;
+    for (uint8_t attempt = 0; attempt < 2; attempt++) {
+        WiFiClientSecure tls;
+        WiFiClient plain;
+        bool useTls = false;
+        if (!ioPwnOpen(tls, plain, useTls, PWN_HOST, forceTls)) {
+            snprintf(lastError, sizeof(lastError), "pot connect");
+            return false;
+        }
+        WiFiClient& sock = useTls ? (WiFiClient&)tls : (WiFiClient&)plain;
+        sock.setTimeout(25000);
 
-    char req[280];
-    snprintf(req, sizeof(req),
-             "GET %s?key=%s HTTP/1.1\r\nHost: %s\r\n"
-             "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\nConnection: close\r\n\r\n",
-             PWN_POTFILE_PATH, apiKey, PWN_HOST);
-    size_t reqN = strlen(req);
-    size_t off = 0;
-    while (off < reqN) {
-        size_t w = useTls ? tls.write((const uint8_t*)req + off, reqN - off)
-                          : plain.write((const uint8_t*)req + off, reqN - off);
-        if (w == 0) {
-            if (useTls) tls.stop(); else plain.stop();
+        char req[280];
+        snprintf(req, sizeof(req),
+                 "GET %s?key=%s HTTP/1.0\r\nHost: %s\r\n"
+                 "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\nConnection: close\r\n\r\n",
+                 PWN_POTFILE_PATH, apiKey, PWN_HOST);
+        if (!ioWriteAll(sock, req)) {
+            sock.stop();
             snprintf(lastError, sizeof(lastError), "pot send");
             return false;
         }
-        off += w;
-    }
 
-    bool headersDone = false;
-    bool statusOk = false;
-    bool first = true;
-    char line[200];
-    size_t li = 0;
-    unsigned long t0 = millis();
+        char status[80] = {0};
+        ioReadStatusLine(sock, status, sizeof(status), 20000);
+        Serial.printf("[PWNCRACK] pot %s via %s\n", status, useTls ? "HTTPS" : "HTTP");
 
-    Storage::ensureDir(Storage::DIR_PWNCRACK);
-    File out = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
-    if (!out) {
-        if (useTls) tls.stop(); else plain.stop();
-        snprintf(lastError, sizeof(lastError), "pot save");
-        return false;
-    }
-
-    size_t body = 0;
-    bool looksHtml = false;
-    bool firstNonWs = false;
-    while (millis() - t0 < 25000) {
-        int avail = useTls ? tls.available() : plain.available();
-        if (avail <= 0) {
-            if (headersDone &&
-                ((useTls && !tls.connected()) || (!useTls && !plain.connected())))
-                break;
-            delay(5);
-            yield();
+        if (!ioHttpOk(status) && !useTls && !forceTls) {
+            ioDrain(sock, 3000);
+            sock.stop();
+            forceTls = true;
             continue;
         }
-        int ch = useTls ? tls.read() : plain.read();
-        if (ch < 0) continue;
-        if (!headersDone) {
+        if (!ioHttpOk(status)) {
+            ioDrain(sock, 2000);
+            sock.stop();
+            snprintf(lastError, sizeof(lastError), "pot http");
+            return false;
+        }
+
+        char hline[160];
+        size_t hi = 0;
+        bool headersDone = false;
+        unsigned long t0 = millis();
+        while ((uint32_t)(millis() - t0) < 15000 && !headersDone) {
+            int avail = sock.available();
+            if (avail <= 0) {
+                if (!sock.connected()) break;
+                delay(5);
+                yield();
+                continue;
+            }
+            int ch = sock.read();
+            if (ch < 0) continue;
             if (ch == '\n') {
-                line[li] = '\0';
-                if (first) {
-                    first = false;
-                    statusOk = (strstr(line, "200") != nullptr);
-                    Serial.printf("[PWNCRACK] pot %s\n", line);
-                }
-                if (li == 0 || (li == 1 && line[0] == '\r')) headersDone = true;
-                li = 0;
-            } else if (ch != '\r' && li + 1 < sizeof(line)) {
-                line[li++] = (char)ch;
+                if (hi == 0) headersDone = true;
+                hi = 0;
+            } else if (ch != '\r' && hi + 1 < sizeof(hline)) {
+                hline[hi++] = (char)ch;
             }
-        } else if (statusOk) {
-            // pwncrack.org /download_potfile_script serves an HTML page
-            // when the key is bad or the session is wrong. Sniff the first
-            // non-whitespace byte: a real potfile starts with "WPA*01*" /
-            // hex BSSID, never with '<'.
-            if (!firstNonWs && body < 64) {
-                if (ch == '<') {
-                    looksHtml = true;
-                } else if (ch != '\r' && ch != '\n' && ch != ' ' && ch != '\t') {
-                    firstNonWs = true;
-                }
+        }
+        if (!headersDone) {
+            sock.stop();
+            snprintf(lastError, sizeof(lastError), "pot headers");
+            return false;
+        }
+
+        Storage::ensureDir(Storage::DIR_PWNCRACK);
+        const char* potTmp = "/0N3P0rK/pwncrack/results.tmp";
+        File out = SD.open(potTmp, "w");
+        if (!out) {
+            sock.stop();
+            snprintf(lastError, sizeof(lastError), "pot save");
+            return false;
+        }
+        size_t body = 0;
+        t0 = millis();
+        while ((uint32_t)(millis() - t0) < 25000) {
+            int avail = sock.available();
+            if (avail <= 0) {
+                if (!sock.connected()) break;
+                delay(5);
+                yield();
+                continue;
             }
+            int ch = sock.read();
+            if (ch < 0) continue;
             out.write((uint8_t)ch);
             body++;
             if (body > 80000) break;
         }
-    }
-    out.close();
-    if (useTls) tls.stop(); else plain.stop();
+        out.flush();
+        out.close();
+        sock.stop();
 
-    if (!headersDone || !statusOk) {
-        snprintf(lastError, sizeof(lastError), "pot http");
-        return false;
-    }
+        File in = SD.open(potTmp, "r");
+        if (!in) {
+            snprintf(lastError, sizeof(lastError), "pot save");
+            return false;
+        }
+        const char* harvest = "/0N3P0rK/pwncrack/results.ok";
+        File okf = SD.open(harvest, "w");
+        if (!okf) {
+            in.close();
+            SD.remove(potTmp);
+            snprintf(lastError, sizeof(lastError), "pot save");
+            return false;
+        }
+        uint16_t kept = 0;
+        static char pline[1024];
+        while (in.available()) {
+            size_t n = in.readBytesUntil('\n', pline, sizeof(pline) - 1);
+            pline[n] = '\0';
+            while (n > 0 && (pline[n - 1] == '\r' || pline[n - 1] == ' '))
+                pline[--n] = '\0';
+            if (n < 5 || pline[0] == '<') continue;
+            char bssidP[18], ssid[33], pass[64];
+            bool good = Pot::parseLine(pline, bssidP, ssid, pass) && pass[0];
+            if (!good) {
+                int col = 0;
+                for (char* p = pline; *p; p++) if (*p == ':') col++;
+                good = (col >= 1 && strncmp(pline, "WPA*", 4) == 0) || col >= 2;
+            }
+            if (!good) continue;
+            okf.println(pline);
+            kept++;
+            if (kept == 1) Serial.printf("[PWNCRACK] pot sample: %.80s\n", pline);
+        }
+        in.close();
+        okf.flush();
+        okf.close();
+        SD.remove(potTmp);
 
-    // Reject HTML responses — the site returned an error/login page, not
-    // a potfile. Keep the previous results.txt intact.
-    if (looksHtml || body < 4) {
-        // rewind the file we just wrote by truncating it to 0
-        File trunc = SD.open(Storage::FILE_PWNCRACK_RESULTS, "w");
-        if (trunc) trunc.close();
-        snprintf(lastError, sizeof(lastError), looksHtml ? "pot html" : "pot empty");
-        Serial.printf("[PWNCRACK] pot rejected: %s (body=%u)\n",
-                      lastError, (unsigned)body);
-        return false;
-    }
+        if (kept == 0) {
+            SD.remove(harvest);
+            snprintf(lastError, sizeof(lastError), body < 4 ? "pot empty" : "pot parse");
+            Serial.printf("[PWNCRACK] pot no lines body=%u\n", (unsigned)body);
+            return false;
+        }
+        SD.remove(Storage::FILE_PWNCRACK_RESULTS);
+        if (!SD.rename(harvest, Storage::FILE_PWNCRACK_RESULTS)) {
+            SD.remove(harvest);
+            snprintf(lastError, sizeof(lastError), "pot save");
+            return false;
+        }
 
-    uint16_t before = cacheLoaded ? (uint16_t)crackedCache.size() : 0;
-    cacheLoaded = false;
-    loadCache();
-    uint16_t after = (uint16_t)crackedCache.size();
-    newCracks = (after > before) ? (uint16_t)(after - before) : 0;
-    Serial.printf("[PWNCRACK] pot %u B cracked=%u\n", (unsigned)body, after);
-    lastError[0] = '\0';
-    return true;
+        uint16_t before = cacheLoaded ? (uint16_t)crackedCache.size() : 0;
+        cacheLoaded = false;
+        loadCache();
+        uint16_t after = (uint16_t)crackedCache.size();
+        newCracks = (after > before) ? (uint16_t)(after - before) : 0;
+        Serial.printf("[PWNCRACK] pot %u B lines=%u cracked=%u\n",
+                      (unsigned)body, (unsigned)kept, after);
+        lastError[0] = '\0';
+        return true;
+    }
+    snprintf(lastError, sizeof(lastError), "pot http");
+    return false;
 }
 
 struct PwnPendCtx {
@@ -606,7 +661,8 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
     result.skipped = pend.skipped;
     Serial.printf("[PWNCRACK] pending=%u skipped=%u\n", pend.count, pend.skipped);
 
-    freeCacheMemory();
+    crackedCache.clear();
+    // uploaded list stays; cracked is stale until we reload from SD after potfile
 
     if (cb) cb("Uploading", 0, pend.count);
     ioXferPhase("UPLOAD", 0, pend.count);
@@ -625,7 +681,7 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
             if (uploadFile(path, apiKey)) {
-                appendUploadedPwn(name);
+                markAsUploaded(name);
                 result.uploaded++;
                 ioXfer().ok++;
             } else {
@@ -639,17 +695,20 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
         if (pendIn) pendIn.close();
     }
     SD.remove(PWN_PENDING);
+    if (result.uploaded > 0) saveUploadedList();
 
     if (cb) cb("Potfile", pend.count, pend.count);
     ioXferPhase("POTFILE", pend.count, pend.count);
     uint16_t newCracks = 0;
     bool potOk = downloadPotfile(apiKey, newCracks);
+    if (potOk) result.newCracked = newCracks;
+    cacheLoaded = false;
+    loadCache();
+    result.cracked = getCrackedCount();
     if (potOk) {
-        result.newCracked = newCracks;
-        result.cracked = getCrackedCount();
         result.success = true;
     } else {
-        result.success = (result.uploaded > 0 || result.skipped > 0);
+        result.success = (result.uploaded > 0 || result.skipped > 0 || result.cracked > 0);
         if (!result.success) {
             strncpy(result.error, lastError[0] ? lastError : "pot fail", sizeof(result.error) - 1);
         } else {
@@ -679,9 +738,9 @@ bool Pwncrack::uploadOneFile(const char* filepath, const char* apiKey) {
     busy = true;
     bool ok = uploadFile(filepath, apiKey);
     if (ok) {
-        const char* base = Storage::baseName(filepath);
-        markAsUploaded(base);
-        appendUploadedPwn(base);
+        loadCache();
+        markAsUploaded(Storage::baseName(filepath));
+        saveUploadedList();
         lastError[0] = '\0';
     }
     busy = false;

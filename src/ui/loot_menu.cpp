@@ -231,9 +231,10 @@ void LootMenu::scan() {
                             const char* potSs = r.hex[0] ? WPASec::getSSID(r.hex) : nullptr;
                             if (potSs && potSs[0]) strncpy(r.ssid, potSs, sizeof(r.ssid) - 1);
                             if (!r.ssid[0]) strncpy(r.ssid, r.id[0] ? r.id : name, sizeof(r.ssid) - 1);
-                            const char* pw = r.hex[0] ? WPASec::getPassword(r.hex) : nullptr;
-                            if ((!pw || !pw[0]) && r.ssid[0]) pw = WPASec::getPassword(r.ssid);
-                            if ((!pw || !pw[0])) pw = WPASec::getPassword(name);
+                            const char* pw = r.hex[0] ? WPASec::getPassword(r.hex) : "";
+                            if (!pw[0] && r.ssid[0]) pw = WPASec::getPassword(r.ssid);
+                            if (!pw[0] && r.id[0]) pw = WPASec::getPassword(r.id);
+                            if (!pw[0]) pw = WPASec::getPassword(name);
                             if (pw && pw[0]) {
                                 strncpy(r.password, pw, sizeof(r.password) - 1);
                                 r.status = St::CRACKED;
@@ -251,10 +252,12 @@ void LootMenu::scan() {
                             stem[sizeof(stem) - 1] = '\0';
                             char* dot = strchr(stem, '.');
                             if (dot) *dot = '\0';
-                            const char* pw = Pwncrack::getPassword(stem);
-                            if ((!pw || !pw[0]) && r.hex[0]) pw = Pwncrack::getPassword(r.hex);
-                            if ((!pw || !pw[0]) && r.ssid[0]) pw = Pwncrack::getPassword(r.ssid);
-                            if ((!pw || !pw[0])) pw = Pwncrack::getPassword(name);
+                            const char* pw = "";
+                            if (r.hex[0]) pw = Pwncrack::getPassword(r.hex);
+                            if (!pw[0] && r.ssid[0]) pw = Pwncrack::getPassword(r.ssid);
+                            if (!pw[0] && r.id[0]) pw = Pwncrack::getPassword(r.id);
+                            if (!pw[0]) pw = Pwncrack::getPassword(stem);
+                            if (!pw[0]) pw = Pwncrack::getPassword(name);
                             if (pw && pw[0]) {
                                 strncpy(r.password, pw, sizeof(r.password) - 1);
                                 r.status = St::CRACKED;
@@ -311,11 +314,32 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
+    uint8_t page = (uint8_t)((millis() / 2500u) % 6u);
     if (syncModal) return "ENT close";
-    if (diagModal) return ";/. scroll  ENT close";
-    if (detailView) return "U send  D del  ENT";
-    if (!count) return ", tab  T test  `";
-    return "S all  U one  D del";
+    if (diagModal) {
+        if (page & 1) return ";/.  scroll log";
+        return "ENT  close test";
+    }
+    if (detailView) {
+        if (page == 0) return "U  send this file";
+        if (page == 1) return "D  delete this file";
+        if (page == 2) return "R  reload list";
+        return "ENT  close card";
+    }
+    if (!count) {
+        if (page == 0) return "R  reload list";
+        if (page == 1) return "T  test wifi / api";
+        if (page == 2) return ",/  wpasec / pwncrack";
+        return "`  back";
+    }
+    switch (page) {
+        case 0: return "S  send all pending";
+        case 1: return "U  send this file";
+        case 2: return "D  delete this file";
+        case 3: return "R  reload list";
+        case 4: return "T  test wifi / api";
+        default: return ",/  wpasec / pwncrack";
+    }
 }
 
 static void paintLoot() {
@@ -539,6 +563,24 @@ void LootMenu::deleteSelected() {
     detailView = wasDetail && count > 0;
 }
 
+void LootMenu::reloadList() {
+    uint8_t keep = selected;
+    bool wasDetail = detailView;
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
+    scan();
+    if (keep >= count && count) keep = (uint8_t)(count - 1);
+    selected = count ? keep : 0;
+    if (selected < scroll) scroll = selected;
+    if (count && selected >= scroll + VISIBLE)
+        scroll = (uint8_t)(selected - VISIBLE + 1);
+    detailView = wasDetail && count > 0;
+    char msg[24];
+    snprintf(msg, sizeof(msg), "RELOAD %u", (unsigned)count);
+    Display::showToast(msg, 800);
+    SFX::play(SFX::MENU_CLICK);
+}
+
 void LootMenu::handleInput() {
     if (!keyNewPress(keyWasPressed)) return;
 
@@ -578,6 +620,11 @@ void LootMenu::handleInput() {
             deleteSelected();
             return;
         }
+        if (M5Cardputer.Keyboard.isKeyPressed('r') ||
+            M5Cardputer.Keyboard.isKeyPressed('R')) {
+            reloadList();
+            return;
+        }
         if (M5Cardputer.Keyboard.keysState().enter) detailView = false;
         return;
     }
@@ -610,6 +657,8 @@ void LootMenu::handleInput() {
         startSync(true);
     if (M5Cardputer.Keyboard.isKeyPressed('d') || M5Cardputer.Keyboard.isKeyPressed('D'))
         deleteSelected();
+    if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R'))
+        reloadList();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
 }
 

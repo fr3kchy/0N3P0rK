@@ -30,21 +30,6 @@ volatile bool WPASec::busy = false;
 bool WPASec::isBusy() { return busy; }
 const char* WPASec::getLastError() { return lastError; }
 
-static bool writeAll(WiFiClient& c, const uint8_t* p, size_t n) {
-    size_t off = 0;
-    while (off < n) {
-        size_t w = c.write(p + off, n - off);
-        if (w == 0) return false;
-        off += w;
-        yield();
-    }
-    return true;
-}
-
-static bool writeStr(WiFiClient& c, const char* s) {
-    return writeAll(c, reinterpret_cast<const uint8_t*>(s), strlen(s));
-}
-
 void WPASec::normalizeBSSID(const char* input, char* output, size_t outLen) {
     if (!output || outLen < 1) return;
     output[0] = '\0';
@@ -74,6 +59,15 @@ static bool isPcapName(const char* name) {
     if (n > 4 && strcasecmp(name + n - 4, ".cap") == 0) return true;
     if (n > 7 && strcasecmp(name + n - 7, ".pcapng") == 0) return true;
     return false;
+}
+
+static bool isHex12(const char* s) {
+    if (!s) return false;
+    size_t n = 0;
+    for (; s[n]; n++) {
+        if (!isxdigit((unsigned char)s[n])) return false;
+    }
+    return n == 12;
 }
 
 bool WPASec::hasApiKey(const char* key) {
@@ -131,23 +125,21 @@ bool WPASec::loadUploadedList() {
 }
 
 bool WPASec::saveUploadedList() {
-    Storage::ensureDir(Storage::DIR_RESULTS);
-    File f = SD.open(Storage::FILE_WPASEC_UPLOADED, "w");
+    Storage::ensureDir(Storage::DIR_WPASEC);
+    const char* tmp = "/0N3P0rK/wpa-sec/uploaded.tmp";
+    File f = SD.open(tmp, "w");
     if (!f) return false;
     for (const auto& e : uploadedCache) {
-        f.println(e.bssid);
+        if (e.bssid[0]) f.println(e.bssid);
     }
+    f.flush();
     f.close();
-    return true;
-}
-
-static bool appendUploadedBssid(const char* bssid) {
-    if (!bssid || !bssid[0]) return false;
-    Storage::ensureDir(Storage::DIR_WPASEC);
-    File f = SD.open(Storage::FILE_WPASEC_UPLOADED, "a");
-    if (!f) return false;
-    f.println(bssid);
-    f.close();
+    SD.remove(Storage::FILE_WPASEC_UPLOADED);
+    if (!SD.rename(tmp, Storage::FILE_WPASEC_UPLOADED)) {
+        SD.remove(tmp);
+        return false;
+    }
+    Serial.printf("[WPASEC] saved %u uploaded\n", (unsigned)uploadedCache.size());
     return true;
 }
 
@@ -248,7 +240,7 @@ void WPASec::markAsUploaded(const char* bssid) {
     if (!bssid) return;
     char key[13];
     normalizeBSSID(bssid, key, sizeof(key));
-    if (key[0] == '\0' || findUploaded(key)) return;
+    if (!isHex12(key) || findUploaded(key)) return;
     if (uploadedCache.size() >= WPASEC_MAX_CACHE) return;
     UploadedEntry e{};
     strncpy(e.bssid, key, sizeof(e.bssid) - 1);
@@ -341,51 +333,59 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
         snprintf(lastError, sizeof(lastError), "pot tls");
         return false;
     }
+    client.setTimeout(25000);
 
     char req[192];
     snprintf(req, sizeof(req),
-             "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: key=%s\r\n"
+             "GET %s HTTP/1.0\r\nHost: %s\r\nCookie: key=%s\r\n"
              "User-Agent: 0N3P0rK/" ON3PORK_VERSION "\r\nConnection: close\r\n\r\n",
              WPASEC_POTFILE_PATH, WPASEC_HOST, apiKey);
-    if (!writeStr(client, req)) {
+    if (!ioWriteAll(client, req)) {
         client.stop();
         snprintf(lastError, sizeof(lastError), "pot send");
         return false;
     }
 
-    unsigned long t0 = millis();
-    while (client.connected() && !client.available() && millis() - t0 < 15000) {
-        delay(10);
-        yield();
-    }
-    if (!client.available()) {
+    char status[80] = {0};
+    if (!ioReadStatusLine(client, status, sizeof(status), 20000) || !ioHttpOk(status)) {
+        ioDrain(client, 2000);
         client.stop();
-        snprintf(lastError, sizeof(lastError), "pot timeout");
+        Serial.printf("[WPASEC] pot %s\n", status);
+        snprintf(lastError, sizeof(lastError), "pot http");
         return false;
     }
+    Serial.printf("[WPASEC] pot %s\n", status);
 
+    char hline[160];
+    size_t hi = 0;
     bool headersDone = false;
-    bool statusOk = false;
-    char line[320];
-    bool first = true;
-    while (client.connected() && client.available() && !headersDone) {
-        size_t n = client.readBytesUntil('\n', line, sizeof(line) - 1);
-        line[n] = '\0';
-        if (first) {
-            first = false;
-            statusOk = (strstr(line, "200") != nullptr);
-            Serial.printf("[WPASEC] pot %s\n", line);
+    unsigned long t0 = millis();
+    while ((uint32_t)(millis() - t0) < 15000 && !headersDone) {
+        int avail = client.available();
+        if (avail <= 0) {
+            if (!client.connected()) break;
+            delay(5);
+            yield();
+            continue;
         }
-        if (n == 0 || (n == 1 && line[0] == '\r')) headersDone = true;
+        int ch = client.read();
+        if (ch < 0) continue;
+        if (ch == '\n') {
+            if (hi == 0) headersDone = true;
+            hi = 0;
+        } else if (ch != '\r' && hi + 1 < sizeof(hline)) {
+            hline[hi++] = (char)ch;
+        }
     }
-    if (!headersDone || !statusOk) {
+    if (!headersDone) {
         client.stop();
-        snprintf(lastError, sizeof(lastError), "pot http");
+        snprintf(lastError, sizeof(lastError), "pot headers");
         return false;
     }
 
     Storage::ensureDir(Storage::DIR_RESULTS);
-    File out = SD.open(Storage::FILE_WPASEC_RESULTS, "w");
+    const char* potTmp = "/0N3P0rK/wpa-sec/results.tmp";
+    File out = SD.open(potTmp, "w");
     if (!out) {
         client.stop();
         snprintf(lastError, sizeof(lastError), "pot save");
@@ -393,10 +393,12 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     }
 
     uint16_t lines = 0;
-    bool looksHtml = false;
-    while (client.connected() || client.available()) {
-        if (!client.available()) {
-            if (millis() - t0 > 45000) break;
+    char line[320];
+    t0 = millis();
+    while ((uint32_t)(millis() - t0) < 45000) {
+        int avail = client.available();
+        if (avail <= 0) {
+            if (!client.connected()) break;
             delay(5);
             yield();
             continue;
@@ -405,38 +407,38 @@ bool WPASec::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
         if (n == 0) continue;
         line[n] = '\0';
         if (n > 0 && line[n - 1] == '\r') line[n - 1] = '\0';
-        if (line[0] == '<' || strncmp(line, "<!", 2) == 0) {
-            looksHtml = true;
-            continue;
-        }
+        if (line[0] == '<' || line[0] == '#' || line[0] == '\0') continue;
         char bssidP[18], ssid[33], pass[64];
-        bool keep = Pot::parseLine(line, bssidP, ssid, pass);
-        if (!keep && line[0] && line[0] != '#' && strlen(line) > 8) {
-            // keep unknown but non-HTML lines so we can inspect later
-            keep = (strchr(line, ':') != nullptr || strncmp(line, "WPA*", 4) == 0);
-        }
-        if (keep) {
-            out.println(line);
-            lines++;
-            if (lines == 1) Serial.printf("[WPASEC] pot sample: %.80s\n", line);
-        }
+        bool keep = Pot::parseLine(line, bssidP, ssid, pass) && pass[0];
+        if (!keep && strchr(line, ':') && strncmp(line, "WPA*", 4) != 0)
+            keep = strlen(line) > 12;
+        if (!keep) continue;
+        out.println(line);
+        lines++;
+        if (lines == 1) Serial.printf("[WPASEC] pot sample: %.80s\n", line);
         yield();
     }
+    out.flush();
     out.close();
     client.stop();
 
-    // Server returned HTML (bad key / login page) — keep the old results.
-    if (looksHtml && lines == 0) {
-        File trunc = SD.open(Storage::FILE_WPASEC_RESULTS, "w");
-        if (trunc) trunc.close();
-        snprintf(lastError, sizeof(lastError), "pot html");
-        Serial.println("[WPASEC] pot rejected: html body");
+    if (lines == 0) {
+        SD.remove(potTmp);
+        snprintf(lastError, sizeof(lastError), "pot empty");
+        Serial.println("[WPASEC] pot no lines, keep old");
+        return false;
+    }
+    SD.remove(Storage::FILE_WPASEC_RESULTS);
+    if (!SD.rename(potTmp, Storage::FILE_WPASEC_RESULTS)) {
+        SD.remove(potTmp);
+        snprintf(lastError, sizeof(lastError), "pot save");
         return false;
     }
 
     newCracks = lines;
-    Serial.printf("[WPASEC] potfile %u lines\n", (unsigned)lines);
+    cacheLoaded = false;
     lastError[0] = '\0';
+    Serial.printf("[WPASEC] potfile %u lines\n", (unsigned)lines);
     return true;
 }
 
@@ -448,26 +450,13 @@ struct WpaPendCtx {
 
 static void wpaIdFromName(const char* name, char bssid[13]) {
     bssid[0] = '\0';
-    if (bssidFromFilename(name, bssid) && bssid[0]) return;
+    if (bssidFromFilename(name, bssid) && isHex12(bssid)) return;
     char hex[13] = {0};
-    if (CapName::extractBssidHex(name, hex) && hex[0]) {
+    if (CapName::extractBssidHex(name, hex) && isHex12(hex)) {
         memcpy(bssid, hex, 13);
         return;
     }
-    // SSID-only names still upload — keep a stable 12-char id from the stem.
-    const char* base = name;
-    const char* slash = strrchr(name, '/');
-    if (slash) base = slash + 1;
-    char stem[16];
-    size_t n = 0;
-    for (const char* p = base; *p && *p != '.' && n < 12; p++) {
-        char c = *p;
-        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) stem[n++] = c;
-    }
-    while (n < 12) stem[n++] = '0';
-    memcpy(bssid, stem, 12);
-    bssid[12] = '\0';
+    bssid[0] = '\0';
 }
 
 static void wpaCollect(const char* name, size_t size, void* raw) {
@@ -522,7 +511,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     result.skipped = pend.skipped;
     Serial.printf("[WPASEC] pending=%u skipped=%u\n", pend.count, pend.skipped);
 
-    freeCacheMemory();
+    crackedCache.clear();
 
     if (cb) cb("Uploading", 0, pend.count);
     ioXferPhase("UPLOAD", 0, pend.count);
@@ -536,18 +525,18 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
             while (n > 0 && (line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = '\0';
             if (n == 0) continue;
             char* bar = strchr(line, '|');
-            if (!bar || !bar[1]) continue;
-            *bar = '\0';
+            if (bar) *bar = '\0';
             const char* name = line;
-            const char* bssid = bar + 1;
+            const char* bssid = (bar && bar[1]) ? bar + 1 : "";
+            if (!name[0]) continue;
             i++;
             if (cb) cb("Uploading", i, pend.count);
             ioXferPhase("UPLOAD", i, pend.count);
             if (!canSync()) break;
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HANDSHAKES, name);
-            if (uploadSingleCapture(path, bssid, apiKey)) {
-                appendUploadedBssid(bssid);
+            if (uploadSingleCapture(path, bssid[0] ? bssid : name, apiKey)) {
+                if (isHex12(bssid)) markAsUploaded(bssid);
                 result.uploaded++;
                 ioXfer().ok++;
             } else {
@@ -561,6 +550,7 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
         if (pendIn) pendIn.close();
     }
     SD.remove(WPA_PENDING);
+    if (result.uploaded > 0) saveUploadedList();
 
     if (cb) cb("Potfile", pend.count, pend.count);
     ioXferPhase("POTFILE", pend.count, pend.count);
@@ -568,12 +558,11 @@ WPASecSyncResult WPASec::syncCaptures(const char* apiKey, WPASecProgressCallback
     bool potOk = false;
     if (canSync()) {
         potOk = downloadPotfile(apiKey, newCracks);
-        if (potOk) {
-            result.newCracked = newCracks;
-            loadCache();
-            result.cracked = getCrackedCount();
-        }
+        if (potOk) result.newCracked = newCracks;
     }
+    cacheLoaded = false;
+    loadCache();
+    result.cracked = getCrackedCount();
 
     if (potOk || result.uploaded > 0 || result.skipped > 0) {
         result.success = true;
@@ -602,17 +591,12 @@ bool WPASec::uploadOneFile(const char* filepath, const char* bssidHint, const ch
     char bssid[13] = {0};
     if (bssidHint && bssidHint[0]) normalizeBSSID(bssidHint, bssid, sizeof(bssid));
     if (!bssid[0] && filepath) bssidFromFilename(Storage::baseName(filepath), bssid);
-    if (!bssid[0]) {
-        strncpy(lastError, "no bssid", sizeof(lastError) - 1);
-        return false;
-    }
     busy = true;
-    bool ok = uploadSingleCapture(filepath, bssid, apiKey);
+    bool ok = uploadSingleCapture(filepath, bssid[0] ? bssid : Storage::baseName(filepath), apiKey);
     if (ok) {
         loadCache();
         markAsUploaded(bssid);
-        appendUploadedBssid(bssid);
-        freeCacheMemory();
+        saveUploadedList();
         lastError[0] = '\0';
     }
     busy = false;

@@ -32,4 +32,5 @@ private:
     static void startSync(bool oneFile = false);
     static void runDiag();
     static void deleteSelected();
+    static void reloadList();
 };

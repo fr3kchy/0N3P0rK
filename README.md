@@ -4,7 +4,7 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.2** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2.1** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -47,7 +47,7 @@ Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / C
 3. Flash with any of:
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.1_m5cardputer.bin
 ```
 
 or PlatformIO:
@@ -65,7 +65,7 @@ pio run
 ```
 
 Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release name: `0N3P0rK_v1.2_m5cardputer.bin`
+Release name: `0N3P0rK_v1.2.1_m5cardputer.bin`
 
 ---
 
@@ -204,7 +204,7 @@ She talks in a bubble (Font0). Drop your own lines in `/0N3P0rK/talk/` (see SD b
 
 ### LOOT
 
-One bag for **wpa-sec** and **pwncrack.org**. `,` / `.` switch tab. `S` sync all pending, `U` upload the selected file only, `T` test (scroll with `;` / `.`). Bottom bar cycles the key hints.
+One bag for **wpa-sec** and **pwncrack.org**. `,` / `.` switch tab. `S` sync all pending, `U` one file, `D` delete, `R` reload list from SD, `T` test (scroll with `;` / `.`). Bottom bar cycles the key hints.
 
 Put API keys in **SET →** the matching key fields (they live in net NVS, not `pig.cfg`).
 
@@ -270,6 +270,12 @@ Change binds in **SET → KEYS**.
 - Version string is injected by `scripts/pre_build.py` from `custom_version` in `platformio.ini`
 
 ---
+
+## v1.2.1
+
+- Fix: WPA-SEC / PwnCrack potfile and `[OK]` status survive reboot and show after sync
+- Fix: potfile follows HTTPS; HTML wrapper no longer wipes a good results file
+- `R` reloads the LOOT list from SD (both tabs)
 
 ## v1.2
 
