@@ -46,6 +46,101 @@ static bool writeStr(WiFiClient& c, const char* s) {
 }
 
 // "AA-BB-CC-DD-EE-FF.22000" / "name.hc22000" / stem → comparable id
+static bool isHex12Field(const char* s) {
+    if (!s) return false;
+    size_t n = 0;
+    for (; s[n]; n++) {
+        if (!isxdigit((unsigned char)s[n])) return false;
+    }
+    return n == 12;
+}
+
+static void copyField(char* dst, size_t dstLen, const char* src) {
+    if (!dst || dstLen == 0) return;
+    dst[0] = '\0';
+    if (!src) return;
+    strncpy(dst, src, dstLen - 1);
+    dst[dstLen - 1] = '\0';
+}
+
+static void hex12Upper(const char* src, char* dst) {
+    for (int i = 0; i < 12; i++)
+        dst[i] = (char)toupper((unsigned char)src[i]);
+    dst[12] = '\0';
+}
+
+// pwncrack plugin / hcx pot: hash:AP:STA:SSID:password
+// Do NOT take the 32-hex hash as BSSID (extractBssidHex would keep the first 12).
+static bool parsePwnPotLine(const char* line, char* id, char* label, char* pass) {
+    if (id) id[0] = '\0';
+    if (label) label[0] = '\0';
+    if (pass) pass[0] = '\0';
+    if (!line || line[0] == '#' || line[0] == '<' || line[0] == '\0') return false;
+
+    if (strncmp(line, "WPA*", 4) == 0) {
+        char bssidP[18], ssid[33], pw[64];
+        if (!Pot::parseLine(line, bssidP, ssid, pw) || !pw[0]) return false;
+        copyField(pass, 64, pw);
+        if (ssid[0]) copyField(label, 33, ssid);
+        if (!CapName::extractBssidHex(bssidP, id) && ssid[0])
+            copyField(id, 33, ssid);
+        return pass && pass[0];
+    }
+
+    const char* col[4];
+    int n = 0;
+    const char* p = line;
+    while (n < 4) {
+        const char* c = strchr(p, ':');
+        if (!c) break;
+        col[n++] = c;
+        p = c + 1;
+    }
+    if (n >= 4) {
+        char f0[40], f1[20];
+        size_t l0 = (size_t)(col[0] - line);
+        if (l0 >= sizeof(f0)) l0 = sizeof(f0) - 1;
+        memcpy(f0, line, l0);
+        f0[l0] = '\0';
+        size_t l1 = (size_t)(col[1] - (col[0] + 1));
+        if (l1 >= sizeof(f1)) l1 = sizeof(f1) - 1;
+        memcpy(f1, col[0] + 1, l1);
+        f1[l1] = '\0';
+
+        size_t sl = (size_t)(col[3] - (col[2] + 1));
+        if (sl > 32) sl = 32;
+        memcpy(label, col[2] + 1, sl);
+        label[sl] = '\0';
+        copyField(pass, 64, col[3] + 1);
+
+        if (isHex12Field(f1)) hex12Upper(f1, id);
+        else if (isHex12Field(f0)) hex12Upper(f0, id);
+        else if (label[0]) copyField(id, 33, label);
+        return pass[0] != '\0';
+    }
+
+    char buf[200];
+    copyField(buf, sizeof(buf), line);
+    char* parts[8];
+    int pc = 0;
+    char* q = buf;
+    while (pc < 8) {
+        parts[pc++] = q;
+        char* c = strchr(q, ':');
+        if (!c) break;
+        *c = '\0';
+        q = c + 1;
+    }
+    if (pc >= 2) {
+        copyField(label, 33, parts[0]);
+        copyField(pass, 64, parts[pc - 1]);
+        if (isHex12Field(parts[0])) hex12Upper(parts[0], id);
+        else copyField(id, 33, parts[0]);
+        return pass[0] != '\0';
+    }
+    return false;
+}
+
 static void normPwnId(const char* in, char* out, size_t outLen) {
     if (!out || outLen < 2) return;
     out[0] = '\0';
@@ -160,42 +255,7 @@ bool Pwncrack::loadCache() {
                 if (n < 3) continue;
 
                 CrackedEntry e{};
-                // v1.2 split: WPA* via parseLine, else pwncrack plugin "a:b:c:SSID:pass"
-                if (strncmp(line, "WPA*", 4) == 0) {
-                    char bssidP[18], ssid[33], pass[64];
-                    if (!Pot::parseLine(line, bssidP, ssid, pass) || !pass[0]) continue;
-                    strncpy(e.password, pass, sizeof(e.password) - 1);
-                    if (ssid[0]) strncpy(e.label, ssid, sizeof(e.label) - 1);
-                    if (!CapName::extractBssidHex(bssidP, e.id) && ssid[0])
-                        strncpy(e.id, ssid, sizeof(e.id) - 1);
-                } else {
-                    char buf[200];
-                    strncpy(buf, line, sizeof(buf) - 1);
-                    buf[sizeof(buf) - 1] = '\0';
-                    char* parts[8];
-                    int pc = 0;
-                    char* p = buf;
-                    while (pc < 8) {
-                        parts[pc++] = p;
-                        char* c = strchr(p, ':');
-                        if (!c) break;
-                        *c = '\0';
-                        p = c + 1;
-                    }
-                    if (pc >= 5) {
-                        strncpy(e.label, parts[3], sizeof(e.label) - 1);
-                        strncpy(e.password, parts[4], sizeof(e.password) - 1);
-                        if (!CapName::extractBssidHex(parts[0], e.id))
-                            strncpy(e.id, parts[3], sizeof(e.id) - 1);
-                    } else if (pc >= 2) {
-                        strncpy(e.label, parts[0], sizeof(e.label) - 1);
-                        strncpy(e.password, parts[pc - 1], sizeof(e.password) - 1);
-                        if (!CapName::extractBssidHex(parts[0], e.id))
-                            strncpy(e.id, parts[0], sizeof(e.id) - 1);
-                    } else {
-                        continue;
-                    }
-                }
+                if (!parsePwnPotLine(line, e.id, e.label, e.password)) continue;
                 if (e.password[0]) crackedCache.push_back(e);
             }
             f.close();

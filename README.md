@@ -274,6 +274,7 @@ Change binds in **SET → KEYS**.
 ## v1.2.5
 
 - Fix: LOOT potfile is saved to SD, then read after the card settles — upload could succeed while `results.txt` never appeared (busy cards / M5Launcher)
+- Fix: PwnCrack potfile lines `hash:bssid:sta:SSID:password` show the network and password, not the hash stub
 
 ## v1.2.1
 
