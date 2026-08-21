@@ -274,7 +274,7 @@ Change binds in **SET → KEYS**.
 ## v1.2.1
 
 - Fix: WPA-SEC / PwnCrack potfile and `[OK]` status survive reboot and show after sync
-- Fix: potfile follows HTTPS; HTML wrapper no longer wipes a good results file
+- Fix: PwnCrack potfile download/parse restored to the v1.2 path that worked
 - `R` reloads the LOOT list from SD (both tabs)
 
 ## v1.2
