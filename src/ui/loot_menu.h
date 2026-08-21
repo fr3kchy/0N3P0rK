@@ -30,6 +30,7 @@ private:
     static void scan();
     static void handleInput();
     static void startSync(bool oneFile = false);
+    static void startPullResults();
     static void runDiag();
     static void deleteSelected();
     static void reloadList();

@@ -54,7 +54,7 @@ static const uint8_t VISIBLE = 4;
 static const uint8_t DIAG_VIS = 7;
 enum class SyncGo : uint8_t { Off, Wifi, Work };
 static SyncGo s_syncGo = SyncGo::Off;
-static uint8_t s_oneIdx = 0xFF;  // 0xFF = sync all pending
+static uint8_t s_oneIdx = 0xFF;  // 0xFF = all pending, 0xFE = potfile only
 
 static void paintSyncLive() {
     const IoXfer& x = ioXfer();
@@ -314,7 +314,7 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    uint8_t page = (uint8_t)((millis() / 2500u) % 6u);
+    uint8_t page = (uint8_t)((millis() / 2500u) % 7u);
     if (syncModal) return "ENT close";
     if (diagModal) {
         if (page & 1) return ";/.  scroll log";
@@ -322,22 +322,25 @@ const char* LootMenu::getBottomHint() {
     }
     if (detailView) {
         if (page == 0) return "U  send this file";
-        if (page == 1) return "D  delete this file";
-        if (page == 2) return "R  reload list";
+        if (page == 1) return "Q  pull results";
+        if (page == 2) return "D  delete this file";
+        if (page == 3) return "R  reload list";
         return "ENT  close card";
     }
     if (!count) {
-        if (page == 0) return "R  reload list";
-        if (page == 1) return "T  test wifi / api";
-        if (page == 2) return ",/  wpasec / pwncrack";
+        if (page == 0) return "Q  pull results";
+        if (page == 1) return "R  reload list";
+        if (page == 2) return "T  test wifi / api";
+        if (page == 3) return ",/  wpasec / pwncrack";
         return "`  back";
     }
     switch (page) {
         case 0: return "S  send all pending";
         case 1: return "U  send this file";
-        case 2: return "D  delete this file";
-        case 3: return "R  reload list";
-        case 4: return "T  test wifi / api";
+        case 2: return "Q  pull results";
+        case 3: return "D  delete this file";
+        case 4: return "R  reload list";
+        case 5: return "T  test wifi / api";
         default: return ",/  wpasec / pwncrack";
     }
 }
@@ -541,6 +544,38 @@ void LootMenu::startSync(bool oneFile) {
     s_syncGo = SyncGo::Wifi;
 }
 
+void LootMenu::startPullResults() {
+    if (Cap::isRunning()) Cap::stop();
+    if (!Storage::available()) {
+        Display::showToast("NO SD", 1500);
+        return;
+    }
+    Storage::loadKeysIntoNet();
+    if (tab == Tab::WPASEC && !WPASec::hasApiKey()) {
+        Display::showToast("NO WPA KEY", 1500);
+        return;
+    }
+    if (tab == Tab::PWNCRACK && !Pwncrack::hasApiKey()) {
+        Display::showToast("NO PWN KEY", 1500);
+        return;
+    }
+    if (!Net::hasStaCreds()) {
+        Display::showToast("SET HOME WIFI", 1500);
+        return;
+    }
+    s_oneIdx = 0xFE;
+    syncModal = true;
+    strncpy(s_syncHost, tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK", sizeof(s_syncHost) - 1);
+    s_syncHost[sizeof(s_syncHost) - 1] = '\0';
+    strncpy(s_syncText, "RESULTS...", sizeof(s_syncText) - 1);
+    ioXferClear();
+    Avatar::suspendScene();
+    SFX::stop();
+    WPASec::freeCacheMemory();
+    Pwncrack::freeCacheMemory();
+    s_syncGo = SyncGo::Wifi;
+}
+
 void LootMenu::deleteSelected() {
     if (!count || selected >= count) {
         Display::showToast("NO FILE", 800);
@@ -615,6 +650,11 @@ void LootMenu::handleInput() {
             startSync(true);
             return;
         }
+        if (M5Cardputer.Keyboard.isKeyPressed('q') ||
+            M5Cardputer.Keyboard.isKeyPressed('Q')) {
+            startPullResults();
+            return;
+        }
         if (M5Cardputer.Keyboard.isKeyPressed('d') ||
             M5Cardputer.Keyboard.isKeyPressed('D')) {
             deleteSelected();
@@ -655,6 +695,8 @@ void LootMenu::handleInput() {
         startSync(false);
     if (M5Cardputer.Keyboard.isKeyPressed('u') || M5Cardputer.Keyboard.isKeyPressed('U'))
         startSync(true);
+    if (M5Cardputer.Keyboard.isKeyPressed('q') || M5Cardputer.Keyboard.isKeyPressed('Q'))
+        startPullResults();
     if (M5Cardputer.Keyboard.isKeyPressed('d') || M5Cardputer.Keyboard.isKeyPressed('D'))
         deleteSelected();
     if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R'))
@@ -691,7 +733,27 @@ void LootMenu::update() {
         ioXfer().paint = paintSyncLive;
         Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
         Storage::brewHeap();
-        if (s_oneIdx != 0xFF && s_oneIdx < count) {
+        if (s_oneIdx == 0xFE) {
+            onProg("Potfile", 1, 1);
+            ioXferPhase("POTFILE", 1, 1);
+            uint16_t n = 0;
+            bool ok = false;
+            if (tab == Tab::WPASEC)
+                ok = WPASec::pullPotfile(Net::cfg().wpaSecKey, n);
+            else
+                ok = Pwncrack::pullPotfile(Net::cfg().pwncrackKey, n);
+            if (ok) {
+                ioXfer().ok = 1;
+                snprintf(s_syncText, sizeof(s_syncText), "OK crk%u", (unsigned)n);
+            } else {
+                ioXfer().fail = 1;
+                const char* err = (tab == Tab::WPASEC)
+                    ? WPASec::getLastError() : Pwncrack::getLastError();
+                snprintf(s_syncText, sizeof(s_syncText), "FAIL %s",
+                         err && err[0] ? err : "?");
+            }
+            ioXferPaint(true);
+        } else if (s_oneIdx != 0xFF && s_oneIdx < count) {
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, s_rows[s_oneIdx].filename);
             onProg("Upload 1", 1, 1);
