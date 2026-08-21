@@ -63,6 +63,7 @@ const char* const FILE_PWNCRACK_UPLOADED = "/0N3P0rK/pwncrack/uploaded.txt";
 
 bool ensureDir(const char* path);
 bool removeFile(const char* path);
+bool removeCapture(const char* name);  // handshake file + companion .txt
 bool fileExists(const char* path);
 size_t fileSize(const char* path);
 bool formatStorage();

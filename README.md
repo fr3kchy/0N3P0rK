@@ -4,7 +4,7 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.1** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -47,7 +47,7 @@ Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / C
 3. Flash with any of:
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.1_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2_m5cardputer.bin
 ```
 
 or PlatformIO:
@@ -65,7 +65,7 @@ pio run
 ```
 
 Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release name: `0N3P0rK_v1.1_m5cardputer.bin`
+Release name: `0N3P0rK_v1.2_m5cardputer.bin`
 
 ---
 
@@ -270,6 +270,13 @@ Change binds in **SET → KEYS**.
 - Version string is injected by `scripts/pre_build.py` from `custom_version` in `platformio.ini`
 
 ---
+
+## v1.2
+
+- LOOT opens fast (no SD compact / extra file reads on every enter)
+- WPA-SEC and PwnCrack upload every pending file, up to 8 MB each, with a live bar
+- `D` deletes the selected capture; list columns stay put
+- Compact no longer eats `.pcap` when a `.22000` exists for the same AP
 
 ## v1.1
 

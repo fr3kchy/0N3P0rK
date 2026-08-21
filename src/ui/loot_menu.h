@@ -31,4 +31,5 @@ private:
     static void handleInput();
     static void startSync(bool oneFile = false);
     static void runDiag();
+    static void deleteSelected();
 };

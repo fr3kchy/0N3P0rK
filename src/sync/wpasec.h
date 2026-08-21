@@ -9,15 +9,15 @@
 
 struct WPASecSyncResult {
     bool success;
-    uint8_t uploaded;
-    uint8_t failed;
-    uint8_t skipped;
+    uint16_t uploaded;
+    uint16_t failed;
+    uint16_t skipped;
     uint16_t cracked;
     uint16_t newCracked;
     char error[48];
 };
 
-typedef void (*WPASecProgressCallback)(const char* status, uint8_t progress, uint8_t total);
+typedef void (*WPASecProgressCallback)(const char* status, uint16_t progress, uint16_t total);
 
 class WPASec {
 public:

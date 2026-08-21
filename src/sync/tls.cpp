@@ -1,4 +1,5 @@
 #include "tls.h"
+#include "net_io.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
@@ -59,9 +60,12 @@ void arenaEnd() {
 
 bool streamFile(WiFiClientSecure& client, File& file, size_t fileSize,
                 char* outError, size_t outErrorLen) {
-    uint8_t chunk[512];
+    uint8_t chunk[1460];
     size_t left = fileSize;
     size_t sent = 0;
+    ioXfer().sent = 0;
+    ioXfer().size = (uint32_t)fileSize;
+    ioXferPaint(true);
     while (left > 0) {
         if (ESP.getFreeHeap() < 16000) {
             client.flush();
@@ -92,8 +96,7 @@ bool streamFile(WiFiClientSecure& client, File& file, size_t fileSize,
             client.stop();
             return false;
         }
-        size_t wr = client.write(chunk, rd);
-        if (wr != rd) {
+        if (!ioWriteAll(client, chunk, rd)) {
             snprintf(outError, outErrorLen, "tls write");
             file.close();
             client.stop();
@@ -101,9 +104,13 @@ bool streamFile(WiFiClientSecure& client, File& file, size_t fileSize,
         }
         sent += rd;
         left -= rd;
+        ioXfer().sent = (uint32_t)sent;
+        ioXferPaint(false);
         yield();
     }
     file.close();
+    ioXfer().sent = (uint32_t)fileSize;
+    ioXferPaint(true);
     return true;
 }
 

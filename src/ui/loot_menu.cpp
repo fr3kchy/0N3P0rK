@@ -46,6 +46,7 @@ struct Row {
 
 static Row s_rows[48];
 static char s_syncText[48] = "";
+static char s_syncHost[12] = "";
 static char s_diag[16][42];
 static uint8_t s_diagN = 0;
 static uint8_t s_diagScroll = 0;
@@ -54,6 +55,57 @@ static const uint8_t DIAG_VIS = 7;
 enum class SyncGo : uint8_t { Off, Wifi, Work };
 static SyncGo s_syncGo = SyncGo::Off;
 static uint8_t s_oneIdx = 0xFF;  // 0xFF = sync all pending
+
+static void paintSyncLive() {
+    const IoXfer& x = ioXfer();
+    if (x.files) {
+        snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u",
+                 x.phase[0] ? x.phase : "...", x.file, x.files);
+    }
+
+    auto& d = M5.Display;
+    const int y0 = TOP_BAR_H;
+    d.fillRect(0, y0, DISPLAY_W, MAIN_H, UiStyle::BG);
+    d.fillRect(0, y0 + MAIN_H - 5, DISPLAY_W, 5, UiStyle::DIRT);
+    d.setTextSize(1);
+    d.setTextWrap(false);
+    d.setTextDatum(top_left);
+    d.setTextColor(UiStyle::GOLD);
+    d.setCursor(8, y0 + 8);
+    d.print(s_syncHost[0] ? s_syncHost : "LOOT");
+
+    d.setTextColor(UiStyle::TEXT);
+    d.setCursor(8, y0 + 22);
+    d.print(s_syncText);
+
+    if (!x.files) return;
+
+    char line[42];
+    snprintf(line, sizeof(line), "FILE %u/%u  ok %u  fail %u",
+             x.file, x.files, x.ok, x.fail);
+    d.setCursor(8, y0 + 38);
+    d.print(line);
+
+    const int bx = 8, by = y0 + 56, bw = DISPLAY_W - 16, bh = 12;
+    d.drawRect(bx, by, bw, bh, UiStyle::PINK);
+    uint32_t den = x.size ? x.size : (uint32_t)x.files;
+    uint32_t num = x.size ? x.sent : (uint32_t)x.file;
+    int inner = bw - 2;
+    int fill = (int)((uint64_t)inner * num / den);
+    if (fill < 0) fill = 0;
+    if (fill > inner) fill = inner;
+    if (fill > 0) d.fillRect(bx + 1, by + 1, fill, bh - 2, UiStyle::PINK);
+
+    if (x.size) {
+        unsigned pct = (unsigned)((uint64_t)x.sent * 100u / x.size);
+        snprintf(line, sizeof(line), "%u%%  %uK/%uK", pct,
+                 (unsigned)((x.sent + 512) / 1024),
+                 (unsigned)((x.size + 512) / 1024));
+        d.setTextColor(UiStyle::DIM);
+        d.setCursor(8, y0 + 74);
+        d.print(line);
+    }
+}
 
 static bool endsWith(const char* name, const char* suf) {
     size_t n = strlen(name), s = strlen(suf);
@@ -77,19 +129,24 @@ static void fillIdentity(Row& r, const char* dir) {
     CapName::extractSsidFromName(r.filename, fromName);
     if (fromName[0]) strncpy(r.ssid, fromName, sizeof(r.ssid) - 1);
 
-    char fromTxt[33] = {0};
-    if (CapName::readCompanionSsid(dir, r.filename, fromTxt) && fromTxt[0]) {
-        strncpy(r.ssid, fromTxt, sizeof(r.ssid) - 1);
+    const bool needSsid = !r.ssid[0] || strcasecmp(r.ssid, "HIDDEN") == 0;
+    if (needSsid) {
+        char fromTxt[33] = {0};
+        if (CapName::readCompanionSsid(dir, r.filename, fromTxt) && fromTxt[0])
+            strncpy(r.ssid, fromTxt, sizeof(r.ssid) - 1);
     }
 
-    if (endsWith(r.filename, ".22000") || endsWith(r.filename, ".hc22000")) {
+    // Opening every .22000 on the list is what made LOOT stall. Name is enough.
+    if ((!r.hex[0] || !r.ssid[0]) &&
+        (endsWith(r.filename, ".22000") || endsWith(r.filename, ".hc22000"))) {
         char hex[13] = {0}, ss[33] = {0};
         if (CapName::metaFrom22000File(dir, r.filename, hex, ss)) {
             if (hex[0] && !r.hex[0]) {
                 strncpy(r.hex, hex, sizeof(r.hex) - 1);
                 CapName::prettyMac(r.hex, r.id);
             }
-            if (ss[0]) strncpy(r.ssid, ss, sizeof(r.ssid) - 1);
+            if (ss[0] && (!r.ssid[0] || strcasecmp(r.ssid, "HIDDEN") == 0))
+                strncpy(r.ssid, ss, sizeof(r.ssid) - 1);
         }
     }
 }
@@ -112,16 +169,10 @@ void LootMenu::scan() {
     selected = 0;
     scroll = 0;
     if (!Storage::available()) return;
-    Storage::compactLoot();
 
     const bool wpa = (tab == Tab::WPASEC);
-    if (wpa) {
-        WPASec::freeCacheMemory();
-        WPASec::loadCache();
-    } else {
-        Pwncrack::freeCacheMemory();
-        Pwncrack::loadCache();
-    }
+    if (wpa) WPASec::loadCache();
+    else Pwncrack::loadCache();
 
     const char* dirs[2];
     uint8_t nd = 0;
@@ -137,7 +188,8 @@ void LootMenu::scan() {
         while (f && count < 48) {
             if (!f.isDirectory()) {
                 const char* name = Storage::baseName(f.name());
-                bool pcap = endsWith(name, ".pcap") || endsWith(name, ".pcapng");
+                bool pcap = endsWith(name, ".pcap") || endsWith(name, ".pcapng") ||
+                            endsWith(name, ".cap");
                 bool h220 = endsWith(name, ".22000") || endsWith(name, ".hc22000");
                 if ((wpa && pcap) || (!wpa && h220)) {
                     bool dup = false;
@@ -259,19 +311,11 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    uint8_t page = (uint8_t)((millis() / 2200u) % 3u);
     if (syncModal) return "ENT close";
-    if (diagModal) {
-        if (page == 0) return ";/. scroll  ENT close";
-        return "T test log";
-    }
-    if (detailView) {
-        if (page == 0) return "U send this file";
-        return "ENT / ` close";
-    }
-    if (page == 0) return "S all  U one file";
-    if (page == 1) return "T test  ENT card";
-    return ",/ tab  ` back";
+    if (diagModal) return ";/. scroll  ENT close";
+    if (detailView) return "U send  D del  ENT";
+    if (!count) return ", tab  T test  `";
+    return "S all  U one  D del";
 }
 
 static void paintLoot() {
@@ -462,12 +506,37 @@ void LootMenu::startSync(bool oneFile) {
         return;
     }
     syncModal = true;
+    strncpy(s_syncHost, tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK", sizeof(s_syncHost) - 1);
+    s_syncHost[sizeof(s_syncHost) - 1] = '\0';
     strncpy(s_syncText, oneFile ? "ONE FILE..." : "CONNECTING...", sizeof(s_syncText) - 1);
+    ioXferClear();
     Avatar::suspendScene();
     SFX::stop();
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
     s_syncGo = SyncGo::Wifi;
+}
+
+void LootMenu::deleteSelected() {
+    if (!count || selected >= count) {
+        Display::showToast("NO FILE", 800);
+        return;
+    }
+    const char* name = s_rows[selected].filename;
+    if (!name[0]) return;
+    bool ok = Storage::removeCapture(name);
+    Display::showToast(ok ? "DELETED" : "DEL FAIL", 900);
+    SFX::play(ok ? SFX::CONFIRM : SFX::ERROR);
+    if (!ok) return;
+    uint8_t keep = selected;
+    bool wasDetail = detailView;
+    scan();
+    if (keep >= count && count) keep = (uint8_t)(count - 1);
+    selected = count ? keep : 0;
+    if (selected < scroll) scroll = selected;
+    if (count && selected >= scroll + VISIBLE)
+        scroll = (uint8_t)(selected - VISIBLE + 1);
+    detailView = wasDetail && count > 0;
 }
 
 void LootMenu::handleInput() {
@@ -504,6 +573,11 @@ void LootMenu::handleInput() {
             startSync(true);
             return;
         }
+        if (M5Cardputer.Keyboard.isKeyPressed('d') ||
+            M5Cardputer.Keyboard.isKeyPressed('D')) {
+            deleteSelected();
+            return;
+        }
         if (M5Cardputer.Keyboard.keysState().enter) detailView = false;
         return;
     }
@@ -534,6 +608,8 @@ void LootMenu::handleInput() {
         startSync(false);
     if (M5Cardputer.Keyboard.isKeyPressed('u') || M5Cardputer.Keyboard.isKeyPressed('U'))
         startSync(true);
+    if (M5Cardputer.Keyboard.isKeyPressed('d') || M5Cardputer.Keyboard.isKeyPressed('D'))
+        deleteSelected();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
 }
 
@@ -555,30 +631,39 @@ void LootMenu::update() {
     }
 
     if (s_syncGo == SyncGo::Work) {
-        auto onProg = [](const char* st, uint8_t p, uint8_t t) {
+        auto onProg = [](const char* st, uint16_t p, uint16_t t) {
             if (t)
                 snprintf(s_syncText, sizeof(s_syncText), "%s %u/%u", st, p, t);
             else
                 strncpy(s_syncText, st ? st : "...", sizeof(s_syncText) - 1);
+            ioXferPaint(true);
         };
+        ioXferClear();
+        ioXfer().paint = paintSyncLive;
         Tls::arenaBegin(Display::mainCanvasBuffer(), Display::mainCanvasBufferSize());
         Storage::brewHeap();
         if (s_oneIdx != 0xFF && s_oneIdx < count) {
             char path[80];
             snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, s_rows[s_oneIdx].filename);
             onProg("Upload 1", 1, 1);
+            ioXferPhase("UPLOAD", 1, 1);
             bool ok = false;
             if (tab == Tab::WPASEC) {
                 const char* id = s_rows[s_oneIdx].hex[0] ? s_rows[s_oneIdx].hex
                                                         : s_rows[s_oneIdx].filename;
                 ok = WPASec::uploadOneFile(path, id, Net::cfg().wpaSecKey);
+                if (ok) ioXfer().ok = 1;
+                else ioXfer().fail = 1;
                 snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
                          ok ? "" : (WPASec::getLastError()[0] ? WPASec::getLastError() : "?"));
             } else {
                 ok = Pwncrack::uploadOneFile(path, Net::cfg().pwncrackKey);
+                if (ok) ioXfer().ok = 1;
+                else ioXfer().fail = 1;
                 snprintf(s_syncText, sizeof(s_syncText), ok ? "OK 1 file" : "FAIL %s",
                          ok ? "" : (Pwncrack::getLastError()[0] ? Pwncrack::getLastError() : "?"));
             }
+            ioXferPaint(true);
         } else if (tab == Tab::WPASEC) {
             WPASecSyncResult r = WPASec::syncCaptures(Net::cfg().wpaSecKey, onProg);
             if (r.success)
@@ -595,6 +680,7 @@ void LootMenu::update() {
                 snprintf(s_syncText, sizeof(s_syncText), "FAIL %s", r.error[0] ? r.error : "?");
         }
         Tls::arenaEnd();
+        ioXfer().paint = nullptr;
         dropWifi();
         Avatar::resumeScene();
         scan();
@@ -609,12 +695,12 @@ void LootMenu::update() {
 void LootMenu::draw(M5Canvas& canvas) {
     uiListBackground(canvas);
     canvas.setTextSize(1);
-
     canvas.setTextWrap(false);
+    canvas.setTextDatum(top_left);
+
     canvas.fillRect(4, 2, 112, 13, tab == Tab::WPASEC ? UiStyle::PINK : UiStyle::PANEL);
     canvas.fillRect(124, 2, 112, 13, tab == Tab::PWNCRACK ? UiStyle::PINK : UiStyle::PANEL);
     canvas.setTextDatum(top_center);
-    canvas.setTextSize(1);
     canvas.setTextColor(tab == Tab::WPASEC ? UiStyle::BG : UiStyle::TEXT);
     canvas.drawString("WPASEC", 60, 5);
     canvas.setTextColor(tab == Tab::PWNCRACK ? UiStyle::BG : UiStyle::TEXT);
@@ -629,12 +715,40 @@ void LootMenu::draw(M5Canvas& canvas) {
     }
 
     if (syncModal) {
+        canvas.setTextWrap(false);
         canvas.setTextColor(UiStyle::GOLD);
-        canvas.setCursor(8, 28);
+        canvas.setCursor(8, 8);
         canvas.print(tab == Tab::WPASEC ? "WPA-SEC" : "PWNCRACK");
         canvas.setTextColor(UiStyle::TEXT);
-        canvas.setCursor(8, 48);
+        canvas.setCursor(8, 22);
         canvas.print(s_syncText);
+        const IoXfer& x = ioXfer();
+        if (x.files) {
+            char line[42];
+            snprintf(line, sizeof(line), "FILE %u/%u  ok %u  fail %u",
+                     x.file, x.files, x.ok, x.fail);
+            canvas.setCursor(8, 38);
+            canvas.print(line);
+            const int bx = 8, by = 56, bw = DISPLAY_W - 16, bh = 12;
+            canvas.drawRect(bx, by, bw, bh, UiStyle::PINK);
+            uint32_t den = x.size ? x.size : (uint32_t)x.files;
+            uint32_t num = x.size ? x.sent : (uint32_t)x.file;
+            if (den == 0) den = 1;
+            int inner = bw - 2;
+            int fill = (int)((uint64_t)inner * num / den);
+            if (fill < 0) fill = 0;
+            if (fill > inner) fill = inner;
+            if (fill > 0) canvas.fillRect(bx + 1, by + 1, fill, bh - 2, UiStyle::PINK);
+            if (x.size) {
+                unsigned pct = (unsigned)((uint64_t)x.sent * 100u / x.size);
+                snprintf(line, sizeof(line), "%u%%  %uK/%uK", pct,
+                         (unsigned)((x.sent + 512) / 1024),
+                         (unsigned)((x.size + 512) / 1024));
+                canvas.setTextColor(UiStyle::DIM);
+                canvas.setCursor(8, 74);
+                canvas.print(line);
+            }
+        }
         return;
     }
     if (diagModal) {
@@ -656,25 +770,23 @@ void LootMenu::draw(M5Canvas& canvas) {
     if (detailView && selected < count) {
         const Row& c = s_rows[selected];
         canvas.setTextColor(UiStyle::PINK);
-        canvas.setCursor(6, 18);
-        canvas.print(c.ssid[0] ? c.ssid : "[UNKNOWN]");
+        canvas.drawString(c.ssid[0] ? c.ssid : "[UNKNOWN]", 6, 18);
         canvas.setTextColor(UiStyle::TEXT);
-        canvas.setCursor(6, 30);
-        canvas.print(c.id[0] ? c.id : c.filename);
-        canvas.setCursor(6, 42);
-        canvas.print(c.isPMKID ? "PMKID" : "HANDSHAKE");
-        canvas.setCursor(6, 56);
+        canvas.drawString(c.id[0] ? c.id : c.filename, 6, 30);
+        canvas.drawString(c.isPMKID ? "PMKID" : "HANDSHAKE", 6, 42);
         if (c.status == St::CRACKED && c.password[0]) {
             canvas.setTextColor(UiStyle::GREEN);
-            canvas.print("PASS ");
-            canvas.print(c.password);
+            canvas.drawString("PASS", 6, 56);
+            canvas.drawString(c.password, 6, 68);
         } else if (c.status == St::UPLOADED) {
             canvas.setTextColor(UiStyle::GOLD);
-            canvas.print("uploaded, waiting");
+            canvas.drawString("uploaded, waiting", 6, 56);
         } else {
             canvas.setTextColor(UiStyle::DIM);
-            canvas.print("local only");
+            canvas.drawString("local only", 6, 56);
         }
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString(c.filename, 6, 82);
         return;
     }
 
@@ -694,51 +806,45 @@ void LootMenu::draw(M5Canvas& canvas) {
         else if (s_rows[i].status == St::UPLOADED) up++;
         else loc++;
     }
-    char summary[64];
+    char summary[40];
     snprintf(summary, sizeof(summary), "%u  OK %u  UP %u  LOC %u",
              (unsigned)count, (unsigned)ok, (unsigned)up, (unsigned)loc);
     canvas.setTextColor(UiStyle::GOLD);
-    canvas.setCursor(4, 20);
-    canvas.print(summary);
+    canvas.drawString(summary, 6, 18);
 
     canvas.setTextColor(UiStyle::CYAN);
-    canvas.setCursor(4, 30);
-    canvas.print("SSID");
-    canvas.setCursor(120, 26);
-    canvas.print("ST");
-    canvas.setCursor(150, 26);
-    canvas.print("TYPE");
-    canvas.setCursor(190, 26);
-    canvas.print("SIZE");
+    canvas.drawString("SSID", 6, 28);
+    canvas.drawString("ST", 116, 28);
+    canvas.drawString("TYPE", 146, 28);
+    canvas.drawString("SIZE", 188, 28);
 
-    int y = 36;
+    int y = 38;
     for (uint8_t i = scroll; i < count && i < scroll + VISIBLE; i++) {
         const Row& cap = s_rows[i];
         bool sel = (i == selected);
         uiListRow(canvas, y, 14, sel, UiStyle::PINK);
         canvas.setTextColor(sel ? UiStyle::BG : UiStyle::TEXT);
 
-        char ssidBuf[20];
+        char ssidBuf[19];
         size_t pos = 0;
-        const char* src = cap.ssid;
-        while (*src && pos < 17) ssidBuf[pos++] = (char)toupper((unsigned char)*src++);
+        const char* src = cap.ssid[0] ? cap.ssid : cap.filename;
+        while (*src && pos < 17) {
+            char ch = *src++;
+            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
+            ssidBuf[pos++] = ch;
+        }
         ssidBuf[pos] = '\0';
         if (*src && pos >= 2) {
             ssidBuf[pos - 2] = '.';
             ssidBuf[pos - 1] = '.';
         }
-        canvas.setCursor(8, y + 2);
-        canvas.print(ssidBuf);
-        canvas.setCursor(120, y + 2);
-        if (cap.status == St::CRACKED) canvas.print("[OK]");
-        else if (cap.status == St::UPLOADED) canvas.print("[..]");
-        else canvas.print("[--]");
-        canvas.setCursor(150, y + 2);
-        canvas.print(cap.isPMKID ? "PM" : "HS");
+        canvas.drawString(ssidBuf, 6, y + 3);
+        canvas.drawString(cap.status == St::CRACKED ? "[OK]" :
+                          (cap.status == St::UPLOADED ? "[..]" : "[--]"), 116, y + 3);
+        canvas.drawString(cap.isPMKID ? "PM" : "HS", 146, y + 3);
         char sizeBuf[12];
         formatSize(sizeBuf, sizeof(sizeBuf), cap.fileSize);
-        canvas.setCursor(190, y + 2);
-        canvas.print(sizeBuf);
+        canvas.drawString(sizeBuf, 188, y + 3);
         y += 14;
     }
 }

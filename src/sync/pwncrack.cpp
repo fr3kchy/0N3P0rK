@@ -18,8 +18,8 @@
 static const char* PWN_HOST = "pwncrack.org";
 static const char* PWN_UPLOAD_PATH = "/upload_handshake";
 static const char* PWN_POTFILE_PATH = "/download_potfile_script";
-static const size_t PWN_MAX_CACHE = 100;
-static const uint8_t PWN_MAX_PENDING = 16;
+static const size_t PWN_MAX_CACHE = 512;
+static const char* PWN_PENDING = "/0N3P0rK/pwncrack/_pending.txt";
 
 bool Pwncrack::cacheLoaded = false;
 char Pwncrack::lastError[64] = "";
@@ -130,6 +130,16 @@ bool Pwncrack::saveUploadedList() {
     File f = SD.open(Storage::FILE_PWNCRACK_UPLOADED, "w");
     if (!f) return false;
     for (const auto& e : uploadedCache) f.println(e.id);
+    f.close();
+    return true;
+}
+
+static bool appendUploadedPwn(const char* filename) {
+    if (!filename || !filename[0]) return false;
+    Storage::ensureDir(Storage::DIR_PWNCRACK);
+    File f = SD.open(Storage::FILE_PWNCRACK_UPLOADED, "a");
+    if (!f) return false;
+    f.println(filename);
     f.close();
     return true;
 }
@@ -268,9 +278,14 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         return false;
     }
     size_t fileSize = capFile.size();
-    if (fileSize == 0 || fileSize > 200000) {
+    if (fileSize == 0) {
         capFile.close();
-        snprintf(lastError, sizeof(lastError), "bad size");
+        snprintf(lastError, sizeof(lastError), "empty");
+        return false;
+    }
+    if (fileSize > kHsUploadMax) {
+        capFile.close();
+        snprintf(lastError, sizeof(lastError), "too big");
         return false;
     }
 
@@ -318,19 +333,17 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         return false;
     }
     Serial.printf("[PWNCRACK] via %s\n", useTls ? "HTTPS" : "HTTP");
+    WiFiClient& sock = useTls ? (WiFiClient&)tls : (WiFiClient&)plain;
+    sock.setTimeout(60000);
+    ioXfer().sent = 0;
+    ioXfer().size = (uint32_t)fileSize;
+    ioXferPaint(true);
 
     auto sendAll = [&](const uint8_t* data, size_t n) -> bool {
-        size_t off = 0;
-        while (off < n) {
-            size_t w = useTls ? tls.write(data + off, n - off) : plain.write(data + off, n - off);
-            if (w == 0) return false;
-            off += w;
-            yield();
-        }
-        return true;
+        return ioWriteAll(sock, data, n);
     };
     auto sendStr = [&](const char* s) -> bool {
-        return sendAll(reinterpret_cast<const uint8_t*>(s), strlen(s));
+        return ioWriteAll(sock, s);
     };
 
     char hdr[320];
@@ -347,45 +360,38 @@ bool Pwncrack::uploadFile(const char* filepath, const char* apiKey) {
         return false;
     }
 
-    uint8_t buf[512];
+    uint8_t buf[1460];
     size_t left = fileSize;
+    size_t sent = 0;
     while (left > 0) {
         size_t chunk = left > sizeof(buf) ? sizeof(buf) : left;
         size_t rd = capFile.read(buf, chunk);
         if (rd == 0) break;
         if (!sendAll(buf, rd)) {
             capFile.close();
-            if (useTls) tls.stop(); else plain.stop();
+            sock.stop();
             snprintf(lastError, sizeof(lastError), "send body");
             return false;
         }
         left -= rd;
+        sent += rd;
+        ioXfer().sent = (uint32_t)sent;
+        ioXferPaint(false);
         yield();
     }
     capFile.close();
     if (!sendStr(fileTail)) {
-        if (useTls) tls.stop(); else plain.stop();
+        sock.stop();
         snprintf(lastError, sizeof(lastError), "send tail");
         return false;
     }
+    ioXfer().sent = (uint32_t)fileSize;
+    ioXferPaint(true);
 
-    unsigned long t0 = millis();
     char status[80] = {0};
-    size_t si = 0;
-    while (millis() - t0 < 20000) {
-        int avail = useTls ? tls.available() : plain.available();
-        if (avail <= 0) {
-            if ((useTls && !tls.connected()) || (!useTls && !plain.connected())) break;
-            delay(10);
-            yield();
-            continue;
-        }
-        char ch = useTls ? (char)tls.read() : (char)plain.read();
-        if (ch == '\n') break;
-        if (ch != '\r' && si + 1 < sizeof(status)) status[si++] = ch;
-    }
-    status[si] = '\0';
-    if (useTls) tls.stop(); else plain.stop();
+    ioReadStatusLine(sock, status, sizeof(status), 45000);
+    ioDrain(sock, 20000);
+    sock.stop();
     Serial.printf("[PWNCRACK] %s\n", status);
 
     if (ioHttpRedirect(status) && !useTls && !s_forceHttps) {
@@ -533,16 +539,11 @@ bool Pwncrack::downloadPotfile(const char* apiKey, uint16_t& newCracks) {
     return true;
 }
 
-struct PwnScanCtx {
-    struct Item {
-        char path[80];
-        char id[32];
-    };
-    Item items[PWN_MAX_PENDING];
-    uint8_t count;
-    uint8_t skipped;
+struct PwnPendCtx {
+    File* out;
+    uint16_t count;
+    uint16_t skipped;
 };
-static PwnScanCtx s_pwnScan;
 
 static bool isHashName(const char* name) {
     size_t n = strlen(name);
@@ -552,16 +553,13 @@ static bool isHashName(const char* name) {
 }
 
 static void pwnCollect(const char* name, size_t size, void* raw) {
-    PwnScanCtx* ctx = (PwnScanCtx*)raw;
-    if (ctx->count >= PWN_MAX_PENDING) return;
-    if (size == 0 || !isHashName(name)) return;
+    PwnPendCtx* ctx = (PwnPendCtx*)raw;
+    if (!ctx || !ctx->out || size == 0 || !isHashName(name)) return;
     if (Pwncrack::isUploaded(name)) {
         ctx->skipped++;
         return;
     }
-    snprintf(ctx->items[ctx->count].path, sizeof(ctx->items[0].path),
-             "%s/%s", Storage::DIR_HS, name);
-    strncpy(ctx->items[ctx->count].id, name, sizeof(ctx->items[0].id) - 1);
+    ctx->out->println(name);
     ctx->count++;
 }
 
@@ -591,31 +589,59 @@ PwncrackSyncResult Pwncrack::syncCaptures(const char* apiKey, PwncrackProgressCa
         return result;
     }
 
+    ioXferPhase("CONVERT", 0, 0);
     if (cb) cb("Converting", 0, 1);
     uint16_t conv = Hc22000::convertAllPcaps();
     Serial.printf("[PWNCRACK] converted %u pcap->22000\n", (unsigned)conv);
     Storage::brewHeap();
 
     loadCache();
-    memset(&s_pwnScan, 0, sizeof(s_pwnScan));
-    Storage::forEachPwn(pwnCollect, &s_pwnScan);
-    result.skipped = s_pwnScan.skipped;
+    Storage::ensureDir(Storage::DIR_PWNCRACK);
+    SD.remove(PWN_PENDING);
+    File pendOut = SD.open(PWN_PENDING, "w");
+    PwnPendCtx pend{};
+    pend.out = pendOut ? &pendOut : nullptr;
+    if (pend.out) Storage::forEachPwn(pwnCollect, &pend);
+    if (pendOut) pendOut.close();
+    result.skipped = pend.skipped;
+    Serial.printf("[PWNCRACK] pending=%u skipped=%u\n", pend.count, pend.skipped);
 
-    if (cb) cb("Uploading", 0, s_pwnScan.count);
-    for (uint8_t i = 0; i < s_pwnScan.count; i++) {
-        if (cb) cb("Uploading", i + 1, s_pwnScan.count);
-        if (uploadFile(s_pwnScan.items[i].path, apiKey)) {
-            markAsUploaded(s_pwnScan.items[i].id);
-            result.uploaded++;
-        } else {
-            result.failed++;
+    freeCacheMemory();
+
+    if (cb) cb("Uploading", 0, pend.count);
+    ioXferPhase("UPLOAD", 0, pend.count);
+    if (pend.count > 0) {
+        File pendIn = SD.open(PWN_PENDING, "r");
+        uint16_t i = 0;
+        char name[64];
+        while (pendIn && pendIn.available()) {
+            size_t n = pendIn.readBytesUntil('\n', name, sizeof(name) - 1);
+            name[n] = '\0';
+            while (n > 0 && (name[n - 1] == '\r' || name[n - 1] == ' ')) name[--n] = '\0';
+            if (n == 0) continue;
+            i++;
+            if (cb) cb("Uploading", i, pend.count);
+            ioXferPhase("UPLOAD", i, pend.count);
+            char path[80];
+            snprintf(path, sizeof(path), "%s/%s", Storage::DIR_HS, name);
+            if (uploadFile(path, apiKey)) {
+                appendUploadedPwn(name);
+                result.uploaded++;
+                ioXfer().ok++;
+            } else {
+                result.failed++;
+                ioXfer().fail++;
+            }
+            ioXferPaint(true);
+            delay(80);
+            yield();
         }
-        delay(80);
-        yield();
+        if (pendIn) pendIn.close();
     }
-    if (result.uploaded > 0) saveUploadedList();
+    SD.remove(PWN_PENDING);
 
-    if (cb) cb("Potfile", s_pwnScan.count, s_pwnScan.count);
+    if (cb) cb("Potfile", pend.count, pend.count);
+    ioXferPhase("POTFILE", pend.count, pend.count);
     uint16_t newCracks = 0;
     bool potOk = downloadPotfile(apiKey, newCracks);
     if (potOk) {
@@ -653,8 +679,9 @@ bool Pwncrack::uploadOneFile(const char* filepath, const char* apiKey) {
     busy = true;
     bool ok = uploadFile(filepath, apiKey);
     if (ok) {
-        markAsUploaded(Storage::baseName(filepath));
-        saveUploadedList();
+        const char* base = Storage::baseName(filepath);
+        markAsUploaded(base);
+        appendUploadedPwn(base);
         lastError[0] = '\0';
     }
     busy = false;

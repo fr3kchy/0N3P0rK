@@ -622,6 +622,12 @@ static bool isLootCap(const char* name) {
            endsWithCI(name, ".hc22000");
 }
 
+// pcap family and hash family are different tools — never delete one for the other.
+static uint8_t lootKind(const char* name) {
+    if (endsWithCI(name, ".22000") || endsWithCI(name, ".hc22000")) return 1;
+    return 0;
+}
+
 static int lootScore(const char* name, uint32_t size) {
     int s = 0;
     if (endsWithCI(name, "_hs.22000")) s += 300;
@@ -698,14 +704,17 @@ static uint8_t compactOneDir(const char* dir) {
     uint8_t killed = 0;
     for (uint8_t i = 0; i < n; i++) {
         if (used[i]) continue;
+        const uint8_t kind = lootKind(list[i].name);
         uint8_t best = i;
         for (uint8_t j = i + 1; j < n; j++) {
             if (used[j]) continue;
             if (strcmp(list[j].hex, list[i].hex) != 0) continue;
+            if (lootKind(list[j].name) != kind) continue;
             if (list[j].score > list[best].score) best = j;
         }
         for (uint8_t j = 0; j < n; j++) {
             if (strcmp(list[j].hex, list[i].hex) != 0) continue;
+            if (lootKind(list[j].name) != kind) continue;
             used[j] = true;
             if (j == best) continue;
             char path[96];
@@ -725,6 +734,16 @@ uint8_t compactLoot() {
     uint8_t n = compactOneDir(DIR_HS);
     if (n) Serial.printf("[LOOT] compact removed %u dupes\n", (unsigned)n);
     return n;
+}
+
+bool removeCapture(const char* name) {
+    if (!s_mounted || !name || !name[0]) return false;
+    const char* base = baseName(name);
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%s", DIR_HS, base);
+    bool ok = SD.remove(path);
+    dropCompanion(DIR_HS, base);
+    return ok;
 }
 
 } // namespace Storage
