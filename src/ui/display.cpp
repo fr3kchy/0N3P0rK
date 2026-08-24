@@ -572,10 +572,10 @@ void Display::drawBottomBar() {
         // surface both so the user sees what they configured AND what is live.
         const char* pack = "STK";
         switch ((RadioPack)Config::radio().pack) {
-            case RadioP::STOCK:  pack = "STK"; break;
-            case RadioP::OURS:   pack = "OUR"; break;
-            case RadioP::PAN:    pack = "PAN"; break;
-            case RadioP::CUSTOM: pack = "CST"; break;
+            case RadioPack::STOCK:  pack = "STK"; break;
+            case RadioPack::OURS:   pack = "OUR"; break;
+            case RadioPack::PAN:    pack = "PAN"; break;
+            case RadioPack::CUSTOM: pack = "CST"; break;
         }
         const char* m = c.methodTag[0] ? c.methodTag : "OURS";
         snprintf(rightName, sizeof(rightName), "%s%s/P:%s M:%s HS:%02u CH:%02u",
