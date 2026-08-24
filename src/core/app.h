@@ -15,7 +15,8 @@ enum class AppMode : uint8_t {
     BLE,
     IR,
     SPECTRUM,
-    USBSD
+    USBSD,
+    FILEMGR
 };
 
 namespace App {

@@ -666,29 +666,9 @@ static void maybeRotateMethod() {
     uint32_t waitMs = (uint32_t)s_fallbackSec * 1000u;
     if (waitMs < 10000) waitMs = 10000;
     if (millis() - s_methodStartMs < waitMs) return;
-    // AUTO rotates only between OURS and PAN — the two real capture
-    // methods. CSA is a herd trick driven by r.csaHerd, not a stand-alone
-    // capture strategy, so it stays out of the rotation and never lands on
-    // M: in the status bar.
-    static const char* const kAutoCycle[] = { "OURS", "PAN" };
-    static const uint8_t kAutoCycleLen = sizeof(kAutoCycle) / sizeof(kAutoCycle[0]);
-    const char* cur = methodTable()[s_activeMethod].name;
-    uint8_t step = 0;
-    for (uint8_t i = 0; i < kAutoCycleLen; i++) {
-        if (strcmp(cur, kAutoCycle[i]) == 0) { step = (uint8_t)(i + 1); break; }
-    }
-    if (step == 0) {
-        // Current method isn't in the AUTO cycle (e.g. CSA). Jump to OURS.
-        s_activeMethod = 0;
-        for (uint8_t i = 0; i < s_methodCount; i++) {
-            if (strcmp(methodTable()[i].name, "OURS") == 0) { s_activeMethod = i; break; }
-        }
-    } else {
-        const char* next = kAutoCycle[step % kAutoCycleLen];
-        for (uint8_t i = 0; i < s_methodCount; i++) {
-            if (strcmp(methodTable()[i].name, next) == 0) { s_activeMethod = i; break; }
-        }
-    }
+    // Round-robin through every method in the table. The first entry is
+    // the AUTO default; every other entry gets a turn after fallbackSec.
+    s_activeMethod = (uint8_t)((s_activeMethod + 1) % s_methodCount);
     s_methodStartMs = millis();
     s_pairAtSwitch = pairs;
     setMethodTag();
@@ -752,32 +732,18 @@ static void startCommon(RunMode mode) {
     s_deauthReason = Config::radio().deauthReason;
     s_fatPcap = Config::radio().fatPcap;
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
-    // Explicit non-AUTO values resolve to the table row with the same name;
-    // unknown names (e.g. legacy NVS value) fall back to 0 so the device
-    // still boots instead of getting stuck on an out-of-range index.
-    // AUTO should rotate between the two real capture methods (OURS, PAN),
-    // not between every registered kick routine — CSA is a per-target herd
-    // trick (driven by r.csaHerd), not a standalone capture method, and
-    // sticking it into the rotation made M: in the status bar show "CSA"
-    // right after starting even though the user picked AUTO expecting
-    // OURS-then-PAN behaviour. Start on OURS for the same reason.
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
-    auto findByName = [](const char* want) -> uint8_t {
-        for (uint8_t i = 0; i < s_methodCount; i++) {
-            if (strcmp(methodTable()[i].name, want) == 0) return i;
-        }
-        return 0;
-    };
-    if ((HsMethod)s_hsMethod == HsMethod::AUTO) {
-        s_activeMethod = findByName("OURS");
+    // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
+    // This must match hsMethodName()/hsMethodIndex() (settings_menu.cpp,
+    // config.cpp) exactly, or the method the user picked in the Radio menu
+    // (which can be ANY registered method, not just OURS/PAN) silently
+    // resolves to table index 0 instead - that's what caused the bottom
+    // bar's P:/M: tags to disagree with what was actually running.
+    if (s_hsMethod == (uint8_t)HsMethod::AUTO || s_methodCount == 0) {
+        s_activeMethod = 0;
     } else {
-        const char* want = nullptr;
-        switch ((HsMethod)s_hsMethod) {
-            case HsMethod::OURS: want = "OURS"; break;
-            case HsMethod::PAN:  want = "PAN";  break;
-            default: break;
-        }
-        s_activeMethod = want ? findByName(want) : 0;
+        uint8_t idx = (uint8_t)(s_hsMethod - 1);
+        s_activeMethod = (idx < s_methodCount) ? idx : 0;
     }
     s_methodStartMs = millis();
     s_pairAtSwitch = Hc22000::pairCount();

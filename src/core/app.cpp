@@ -10,6 +10,7 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
+#include "../modes/filemgr.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../piglet/wolf.h"
@@ -36,7 +37,8 @@ bool overlayMode() {
     return s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||
            s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
            s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
-           s_mode == AppMode::USBSD || s_mode == AppMode::PIG ||
+           s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR ||
+           s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
 }
 
@@ -70,6 +72,7 @@ const char* modeName() {
         case AppMode::IR:       return "IR";
         case AppMode::SPECTRUM: return "SPEC";
         case AppMode::USBSD:    return "USB";
+        case AppMode::FILEMGR:  return "FILES";
         default:                return "?";
     }
 }
@@ -85,6 +88,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::IR && IrPortMode::isRunning()) IrPortMode::stop();
     if (s_mode == AppMode::SPECTRUM && SpectrumMode::isRunning()) SpectrumMode::stop();
     if (s_mode == AppMode::USBSD && UsbSdMode::isRunning()) UsbSdMode::stop();
+    if (s_mode == AppMode::FILEMGR && FileMgrMode::isRunning()) FileMgrMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -95,6 +99,7 @@ void setMode(AppMode m) {
     if (m == AppMode::IR) IrPortMode::start();
     if (m == AppMode::SPECTRUM) SpectrumMode::start();
     if (m == AppMode::USBSD) UsbSdMode::start();
+    if (m == AppMode::FILEMGR) FileMgrMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -286,6 +291,9 @@ void loop() {
     } else if (s_mode == AppMode::USBSD) {
         UsbSdMode::update();
         if (!UsbSdMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::FILEMGR) {
+        FileMgrMode::update();
+        if (!FileMgrMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();

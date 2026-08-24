@@ -21,6 +21,7 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
+#include "../modes/filemgr.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -631,6 +632,9 @@ void Display::drawBottomBar() {
             case AppMode::USBSD:
                 UsbSdMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::FILEMGR:
+                FileMgrMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -721,6 +725,7 @@ void Display::update() {
         else if (App::mode() == AppMode::IR) IrPortMode::draw(mainCanvas);
         else if (App::mode() == AppMode::SPECTRUM) SpectrumMode::draw(mainCanvas);
         else if (App::mode() == AppMode::USBSD) UsbSdMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::FILEMGR) FileMgrMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

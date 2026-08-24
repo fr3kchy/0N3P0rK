@@ -16,6 +16,7 @@
 #include "../modes/irport.h"
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
+#include "../modes/filemgr.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -84,6 +85,10 @@ static const char* const H_CONN[] = {
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
     "PLUG USB. EJECT THEN `."
+};
+static const char* const H_FILEMGR[] = {
+    "SD + INTERNAL MEM. TXT VIEW/EDIT.",
+    "V VOL  ENT OPEN  N NEW  X DEL."
 };
 static const char* const H_KEYS[] = {
     "BIND FARM / MENU SHORTCUTS.",
@@ -164,7 +169,8 @@ static const Item G_SET[] = {
     {"BT", "BLE",     12, H_BLESET, 2},
     {"))", "CONNECT",  6, H_CONN,   2},
     {"**", "KEYS",    18, H_KEYS,   2},
-    {"U:", "USB SD",  17, H_USB,    2}
+    {"U:", "USB SD",  17, H_USB,    2},
+    {"[:", "FILES",   20, H_FILEMGR,2}
 };
 
 static uint8_t s_rootIdx = 0;
@@ -193,7 +199,7 @@ static const Item* groupItems(GroupId g) {
 
 static uint8_t groupSize(GroupId g) {
     if (g == GroupId::ATTACK) return 8;
-    if (g == GroupId::SET) return 7;
+    if (g == GroupId::SET) return 8;
     return 0;
 }
 
@@ -276,6 +282,10 @@ static void doAction(uint8_t id) {
         case 17:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::USBSD);
+            break;
+        case 20:
+            if (Cap::isRunning()) Cap::stop();
+            App::setMode(AppMode::FILEMGR);
             break;
         case 9:
             if (Cap::isRunning()) Cap::stop();
