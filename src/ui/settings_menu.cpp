@@ -531,14 +531,13 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
     if (s_page == SettingsPage::RADIO) {
-        // PACK (id=18) selects a preset. CUSTOM is a read-only flag for the
-        // UI — the user can't pick it directly; it only flips on when they
-        // hand-tune a knob below. Skip it here so the rotary wraps around
-        // the three real presets (STOCK / OURS / PAN).
+        // PACK (id=18) — CUSTOM is a real, user-pickable value in the cycle.
+        // The previous "skip to STOCK" hack made the rotary feel stuck when
+        // PACK was already CUSTOM: pressing down landed on CUSTOM then was
+        // bounced back to STOCK, so nothing appeared to change. Letting the
+        // user pick CUSTOM directly is fine — applyRadioPack() already treats
+        // it as a no-op (it preserves the user's hand-tuned knobs).
         if (it.id == 18) {
-            if (v == (int)RadioPack::CUSTOM) {
-                v = (int)RadioPack::STOCK;
-            }
             Config::applyRadioPack((uint8_t)v);
             Display::showToast(radioPackName((uint8_t)v), 900);
             return true;

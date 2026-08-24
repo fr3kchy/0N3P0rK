@@ -200,10 +200,17 @@ static uint8_t hsMethodIndex(const char* name) {
 
 void Config::applyRadioPack(uint8_t pack) {
     if (pack >= RADIO_PACK_COUNT) pack = 0;
-    // CUSTOM is a UI-side flag, not a preset. Setting PACK=CUSTOM from the
-    // menu is a no-op — CUSTOM only flips when the user hand-tunes a knob
-    // (see markRadioCustom()).
-    if (pack == (uint8_t)RadioPack::CUSTOM) return;
+    // CUSTOM means "keep your current hand-tuned knobs" — but we still need
+    // to record that the user picked CUSTOM, otherwise the menu's rotary
+    // wrap can't tell the difference between "stuck on 3" and "really on 3"
+    // and the picker appears to spin past into values 4, 5, 6... while
+    // r.pack silently stays on CUSTOM. So: write the flag, save, return
+    // without touching the rest of the radio knobs.
+    if (pack == (uint8_t)RadioPack::CUSTOM) {
+        radioConfig.pack = pack;
+        save();
+        return;
+    }
     RadioConfig r;
     if (pack == (uint8_t)RadioPack::OURS) {
         r.hsMethod = hsMethodIndex("OURS");
