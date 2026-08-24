@@ -71,11 +71,23 @@ static const uint8_t HOP_SET_COUNT = 3;
 // OURS = current greedy EAPOL + broadcast kick
 // PAN  = extra stack (bidir kick, EAPOL-Start, PMKID probe, optional CSA/flood)
 // AUTO = OURS first, then PAN if no pair lands
+//
+// The enum values are the on-disk format for the radio.hsMethod byte:
+//   0      -> AUTO (special, not a real method)
+//   1..N   -> Methods::name(idx - 1) from cap/methods/method_registry.cpp
+// Adding a new method no longer requires touching this enum — just add a
+// row to METHOD_LIST() in method_ctx.h and the new entry shows up in the
+// radio settings UI at the next index. Values written by older firmware
+// (OURS=1, PAN=2) keep resolving to the same name because the first two
+// registry rows are still OURS and PAN in that order.
 enum class HsMethod : uint8_t { AUTO = 0, OURS = 1, PAN = 2 };
-static const uint8_t HS_METHOD_COUNT = 3;
+// Runtime count for the UI is 1 + Cap::Methods::count(); see
+// HS_METHOD_COUNT below. Use HS_METHOD_COUNT for legacy code that needs a
+// constexpr upper bound (the registry isn't visible from config.h).
+static const uint8_t HS_METHOD_COUNT_MAX = 8;
 
-enum class RadioPack : uint8_t { STOCK = 0, OURS = 1, PAN = 2 };
-static const uint8_t RADIO_PACK_COUNT = 3;
+enum class RadioPack : uint8_t { STOCK = 0, OURS = 1, PAN = 2, CUSTOM = 3 };
+static const uint8_t RADIO_PACK_COUNT = 4;
 
 // Knobs for LIGHT / AGGRO / EVILPIG — same code, different tune.
 struct RadioConfig {
@@ -118,6 +130,11 @@ public:
     static bool save();
     static void applyRadioPack(uint8_t pack);
     static void resetRadio();
+    // Mark the current radio config as hand-tuned: PACK in the UI flips to
+    // CUSTOM, future applyRadioPack() calls from presets stop auto-overwriting
+    // the user's knobs. Called by the settings UI whenever any radio knob
+    // (other than PACK / HS METHOD) is edited.
+    static void markRadioCustom();
 
     static PersonalityConfig& personality() { return personalityConfig; }
     static RadioConfig& radio() { return radioConfig; }

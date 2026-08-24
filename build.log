@@ -1,0 +1,62 @@
+﻿Processing m5cardputer (platform: espressif32@6.12.0; board: m5stack-stamps3; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+[pre_build] wrote C:\Users\L3xik0\Documents\PlatformIO\Projects\OneLPig TEST\src\build_info.h (v=1.2.5 build=2026-08-23 13:17 UTC)
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/m5stack-stamps3.html
+PLATFORM: Espressif 32 (6.12.0) > M5Stack StampS3
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-builtin, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+ - tool-esptoolpy @ 2.40900.250804 (4.9.0) 
+ - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 
+ - toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 38 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- M5Unified @ 0.2.19
+|-- M5Cardputer @ 1.1.1
+|-- ArduinoJson @ 7.4.3
+|-- SD @ 2.0.0
+|-- WiFi @ 2.0.0
+|-- Preferences @ 2.0.0
+|-- ESP32 BLE Arduino @ 2.0.0
+|-- ESPmDNS @ 2.0.0
+|-- SPI @ 2.0.0
+|-- WiFiClientSecure @ 2.0.0
+|-- FS @ 2.0.0
+|-- DNSServer @ 2.0.0
+|-- WebServer @ 2.0.0
+Building in release mode
+Compiling .pio\build\m5cardputer\src\core\app.cpp.o
+Compiling .pio\build\m5cardputer\src\core\xp.cpp.o
+pio : <command-line>: warning: "ARDUINO_USB_MODE" redefined
+строка:4 знак:168
++ ... ;C:\Users\L3xik0\.platformio\penv;" + $env:PATH; pio run 2>&1 | Out-F ...
++                                                      ~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (<command-line>:...MODE" redefined:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+<command-line>: note: this is the location of the previous definition
+Compiling .pio\build\m5cardputer\src\main.cpp.o
+Compiling .pio\build\m5cardputer\src\modes\blepig.cpp.o
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+Compiling .pio\build\m5cardputer\src\modes\evilpig.cpp.o
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+Compiling .pio\build\m5cardputer\src\modes\irport.cpp.o
+Compiling .pio\build\m5cardputer\src\modes\pigpass.cpp.o
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition
+Compiling .pio\build\m5cardputer\src\modes\spectrum.cpp.o
+<command-line>: warning: "ARDUINO_USB_MODE" redefined
+<command-line>: note: this is the location of the previous definition

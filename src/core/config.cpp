@@ -1,5 +1,6 @@
 #include "config.h"
 #include "../storage/littlefs_ops.h"
+#include "../cap/methods/method_ctx.h"
 #include <Preferences.h>
 #include <string.h>
 
@@ -108,7 +109,7 @@ bool Config::init() {
     if (r.minRssi < -90) r.minRssi = -90;
     if (r.minRssi > -50) r.minRssi = -50;
     if (r.hopSet >= HOP_SET_COUNT) r.hopSet = 0;
-    if (r.hsMethod >= HS_METHOD_COUNT) r.hsMethod = 0;
+    if (r.hsMethod >= HS_METHOD_COUNT_MAX) r.hsMethod = 0;
     if (r.fallbackSec < 10) r.fallbackSec = 10;
     if (r.fallbackSec > 90) r.fallbackSec = 90;
     if (r.kickBurst < 1) r.kickBurst = 1;
@@ -186,11 +187,26 @@ void Config::setPersonality(const PersonalityConfig& cfg) {
     save();
 }
 
+// Resolve a method name to its enum index (1-based, slot 0 is AUTO).
+// Returns 1 (OURS) as a safe fallback if the registry doesn't have it.
+static uint8_t hsMethodIndex(const char* name) {
+    uint8_t n = 0;
+    const Cap::Methods::Entry* tbl = Cap::Methods::table(&n);
+    for (uint8_t i = 0; i < n; i++) {
+        if (strcmp(tbl[i].name, name) == 0) return (uint8_t)(i + 1);
+    }
+    return 1;
+}
+
 void Config::applyRadioPack(uint8_t pack) {
     if (pack >= RADIO_PACK_COUNT) pack = 0;
+    // CUSTOM is a UI-side flag, not a preset. Setting PACK=CUSTOM from the
+    // menu is a no-op — CUSTOM only flips when the user hand-tunes a knob
+    // (see markRadioCustom()).
+    if (pack == (uint8_t)RadioPack::CUSTOM) return;
     RadioConfig r;
     if (pack == (uint8_t)RadioPack::OURS) {
-        r.hsMethod = (uint8_t)HsMethod::OURS;
+        r.hsMethod = hsMethodIndex("OURS");
         r.bidirKick = false;
         r.eapolTx = false;
         r.pmkidProbe = false;
@@ -199,7 +215,7 @@ void Config::applyRadioPack(uint8_t pack) {
         r.kickBurst = 2;
         r.pauseMs = 1200;
     } else if (pack == (uint8_t)RadioPack::PAN) {
-        r.hsMethod = (uint8_t)HsMethod::PAN;
+        r.hsMethod = hsMethodIndex("PAN");
         r.bidirKick = true;
         r.eapolTx = true;
         r.pmkidProbe = true;
@@ -212,6 +228,16 @@ void Config::applyRadioPack(uint8_t pack) {
     }
     r.pack = pack;
     radioConfig = r;
+    save();
+}
+
+void Config::markRadioCustom() {
+    // Called when the user edits any radio knob except PACK / HS METHOD.
+    // Flips the PACK indicator to CUSTOM so the UI shows that the current
+    // parameters no longer match any preset, without overwriting anything
+    // the user just set.
+    if ((RadioPack)radioConfig.pack == RadioPack::CUSTOM) return;
+    radioConfig.pack = (uint8_t)RadioPack::CUSTOM;
     save();
 }
 

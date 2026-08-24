@@ -21,6 +21,8 @@ struct Hs {
     uint8_t essidLen;
     uint8_t anonce[32];     // from M1
     uint8_t anonce3[32];    // from M3 (M2+M3 fallback)
+    uint8_t anonceReplay[8];  // M1's EAPOL key replay counter
+    uint8_t m2Replay[8];      // M2's own EAPOL key replay counter (must equal M1's)
     uint8_t pmkid[16];
     uint8_t m2[MAX_EAPOL];
     uint16_t m2Len;
@@ -133,7 +135,10 @@ static void maybeWrite(Hs* h) {
     if (!h->wroteEapol && h->haveM2 && h->m2Len >= 97) {
         uint8_t pair = 0xFF;
         const uint8_t* nonce = nullptr;
-        if (h->haveAnonce) {
+        // Pair 00 requires M1 and M2 to belong to the same exchange (matching
+        // replay counter) — otherwise anonce and MIC come from different
+        // attempts and hashcat will never recover the key.
+        if (h->haveAnonce && memcmp(h->anonceReplay, h->m2Replay, 8) == 0) {
             pair = 0x00;
             nonce = h->anonce;
         } else if (h->haveAnonce3) {
@@ -316,10 +321,20 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     memcpy(h->sta, sta, 6);
 
     // First copy of each message wins — retransmit can change nonce/MIC.
+    // Key replay counter (e[9..16]) ties M1 and M2 to the *same* handshake attempt:
+    // an AP retry sends a new M1 with a bumped counter, and a stale M1/M2 pair
+    // produces a PMK/MIC that will never crack. Only pair when counters match.
     if (msg == 1) {
         if (!h->haveAnonce) {
             memcpy(h->anonce, e + 17, 32);
+            memcpy(h->anonceReplay, e + 9, 8);
             h->haveAnonce = true;
+        } else if (h->haveM2 && !h->wroteEapol &&
+                   memcmp(h->anonceReplay, h->m2Replay, 8) != 0 &&
+                   memcmp(e + 9, h->m2Replay, 8) == 0) {
+            // Earlier M1 didn't match the M2 we're holding; this one does — replace it.
+            memcpy(h->anonce, e + 17, 32);
+            memcpy(h->anonceReplay, e + 9, 8);
         }
         s_lastM1Ms = millis();
         uint8_t pmk[16];
@@ -335,6 +350,7 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     } else if (msg == 2 && !h->haveM2) {
         memcpy(h->m2, e, total);
         h->m2Len = total;
+        memcpy(h->m2Replay, e + 9, 8);
         h->haveM2 = true;
     }
     maybeWrite(h);

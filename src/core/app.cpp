@@ -24,6 +24,13 @@ static AppMode s_mode = AppMode::FARM;
 static bool s_g0Was = false;
 static bool s_winHid = false;
 static bool s_minLatch = false;
+static bool s_capBarLatch = false;
+static bool s_capWasRunning = false;
+// Bottom-bar detail mode used while Cap::isRunning() and no overlay is open.
+// 0 = full 8-widget carousel (the "big info" we had by default),
+// 1 = simple one-liner (LITE/PIN/AGG + CH + HS),
+// 2 = line 2 hidden entirely.
+static uint8_t s_capBarMode = 0;
 
 bool overlayMode() {
     return s_mode == AppMode::LOOT || s_mode == AppMode::EVILPIG ||

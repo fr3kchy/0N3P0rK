@@ -11,6 +11,7 @@
 #include "../audio/sfx.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
+#include "../cap/methods/method_ctx.h"
 #include "../board/board.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
@@ -63,7 +64,7 @@ static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, RADIO_PACK_COUNT - 1, 1},
-    {"HS METHOD", Kind::VALUE,  7,  0, HS_METHOD_COUNT - 1, 1},
+    {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
     {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
@@ -130,7 +131,7 @@ static const char* const H_SYSTEM[] = {
     "0 = SCREEN OFF WHEN DIM."
 };
 static const char* const H_RADIO[] = {
-    "STOCK / OURS / PAN. LOADS ALL.",
+    "STOCK / OURS / PAN. TUNE -> CUST.",
     "AUTO TRIES OURS THEN PAN.",
     "AUTO: SECONDS THEN OTHER METHOD.",
     "DEAUTH ROUNDS PER AP.",
@@ -254,19 +255,21 @@ static const char* hopSetName(uint8_t s) {
         default: return "?";
     }
 }
+// HsMethod layout for the saved value (kept stable across versions so old
+// NVS blobs still parse): 0 = AUTO (special), then explicit methods use
+// 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
+// AUTO so the user can still tweak something without bricking the radio.
 static const char* hsMethodName(uint8_t s) {
-    switch ((HsMethod)s) {
-        case HsMethod::AUTO: return "AUTO";
-        case HsMethod::OURS: return "OURS";
-        case HsMethod::PAN:  return "PAN";
-        default: return "?";
-    }
+    if (s == 0) return "AUTO";
+    const char* n = Cap::Methods::name((uint8_t)(s - 1));
+    return n ? n : "AUTO";
 }
 static const char* radioPackName(uint8_t s) {
     switch ((RadioPack)s) {
-        case RadioPack::STOCK: return "STOCK";
-        case RadioPack::OURS:  return "OURS";
-        case RadioPack::PAN:   return "PAN";
+        case RadioPack::STOCK:  return "STOCK";
+        case RadioPack::OURS:   return "OURS";
+        case RadioPack::PAN:    return "PAN";
+        case RadioPack::CUSTOM: return "CUSTOM";
         default: return "?";
     }
 }
@@ -396,6 +399,19 @@ static bool setValue(const Item& it, int v) {
     PersonalityConfig& p = Config::personality();
     RadioConfig& r = Config::radio();
     BleConfig& b = Config::ble();
+
+    // HS METHOD (RADIO id 7) is the only item whose max grows with the
+    // method registry — clamp it explicitly so the rest of the function
+    // can keep using a single minV/maxV range.
+    if (s_page == SettingsPage::RADIO && it.id == 7) {
+        int maxV = (int)Cap::Methods::count(); // AUTO takes slot 0
+        if (v < 0) v = maxV;
+        if (v > maxV) v = 0;
+        r.hsMethod = (uint8_t)v;
+        Config::save();
+        return true;
+    }
+
     if (v < it.minV) v = it.maxV;
     if (v > it.maxV) v = it.minV;
 
@@ -515,6 +531,18 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
     if (s_page == SettingsPage::RADIO) {
+        // PACK (id=18) selects a preset. CUSTOM is a read-only flag for the
+        // UI — the user can't pick it directly; it only flips on when they
+        // hand-tune a knob below. Skip it here so the rotary wraps around
+        // the three real presets (STOCK / OURS / PAN).
+        if (it.id == 18) {
+            if (v == (int)RadioPack::CUSTOM) {
+                v = (int)RadioPack::STOCK;
+            }
+            Config::applyRadioPack((uint8_t)v);
+            Display::showToast(radioPackName((uint8_t)v), 900);
+            return true;
+        }
         switch (it.id) {
             case 0: r.hopMs = (uint16_t)v; break;
             case 1: r.lockMs = (uint16_t)v; break;
@@ -534,12 +562,12 @@ static bool setValue(const Item& it, int v) {
             case 15: r.deauthReason = (uint8_t)v; break;
             case 16: r.pauseMs = (uint16_t)v; break;
             case 17: r.fatPcap = v != 0; break;
-            case 18:
-                Config::applyRadioPack((uint8_t)v);
-                Display::showToast(radioPackName((uint8_t)v), 900);
-                return true;
             default: return false;
         }
+        // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that
+        // the active parameters no longer match a preset. HS METHOD (id=7)
+        // is excluded above — switching methods alone isn't "customising".
+        Config::markRadioCustom();
         Config::save();
         return true;
     }

