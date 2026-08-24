@@ -666,9 +666,29 @@ static void maybeRotateMethod() {
     uint32_t waitMs = (uint32_t)s_fallbackSec * 1000u;
     if (waitMs < 10000) waitMs = 10000;
     if (millis() - s_methodStartMs < waitMs) return;
-    // Round-robin through every method in the table. The first entry is
-    // the AUTO default; every other entry gets a turn after fallbackSec.
-    s_activeMethod = (uint8_t)((s_activeMethod + 1) % s_methodCount);
+    // AUTO rotates only between OURS and PAN — the two real capture
+    // methods. CSA is a herd trick driven by r.csaHerd, not a stand-alone
+    // capture strategy, so it stays out of the rotation and never lands on
+    // M: in the status bar.
+    static const char* const kAutoCycle[] = { "OURS", "PAN" };
+    static const uint8_t kAutoCycleLen = sizeof(kAutoCycle) / sizeof(kAutoCycle[0]);
+    const char* cur = methodTable()[s_activeMethod].name;
+    uint8_t step = 0;
+    for (uint8_t i = 0; i < kAutoCycleLen; i++) {
+        if (strcmp(cur, kAutoCycle[i]) == 0) { step = (uint8_t)(i + 1); break; }
+    }
+    if (step == 0) {
+        // Current method isn't in the AUTO cycle (e.g. CSA). Jump to OURS.
+        s_activeMethod = 0;
+        for (uint8_t i = 0; i < s_methodCount; i++) {
+            if (strcmp(methodTable()[i].name, "OURS") == 0) { s_activeMethod = i; break; }
+        }
+    } else {
+        const char* next = kAutoCycle[step % kAutoCycleLen];
+        for (uint8_t i = 0; i < s_methodCount; i++) {
+            if (strcmp(methodTable()[i].name, next) == 0) { s_activeMethod = i; break; }
+        }
+    }
     s_methodStartMs = millis();
     s_pairAtSwitch = pairs;
     setMethodTag();
@@ -735,9 +755,21 @@ static void startCommon(RunMode mode) {
     // Explicit non-AUTO values resolve to the table row with the same name;
     // unknown names (e.g. legacy NVS value) fall back to 0 so the device
     // still boots instead of getting stuck on an out-of-range index.
+    // AUTO should rotate between the two real capture methods (OURS, PAN),
+    // not between every registered kick routine — CSA is a per-target herd
+    // trick (driven by r.csaHerd), not a standalone capture method, and
+    // sticking it into the rotation made M: in the status bar show "CSA"
+    // right after starting even though the user picked AUTO expecting
+    // OURS-then-PAN behaviour. Start on OURS for the same reason.
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
+    auto findByName = [](const char* want) -> uint8_t {
+        for (uint8_t i = 0; i < s_methodCount; i++) {
+            if (strcmp(methodTable()[i].name, want) == 0) return i;
+        }
+        return 0;
+    };
     if ((HsMethod)s_hsMethod == HsMethod::AUTO) {
-        s_activeMethod = 0;
+        s_activeMethod = findByName("OURS");
     } else {
         const char* want = nullptr;
         switch ((HsMethod)s_hsMethod) {
@@ -745,12 +777,7 @@ static void startCommon(RunMode mode) {
             case HsMethod::PAN:  want = "PAN";  break;
             default: break;
         }
-        s_activeMethod = 0;
-        if (want) {
-            for (uint8_t i = 0; i < s_methodCount; i++) {
-                if (strcmp(methodTable()[i].name, want) == 0) { s_activeMethod = i; break; }
-            }
-        }
+        s_activeMethod = want ? findByName(want) : 0;
     }
     s_methodStartMs = millis();
     s_pairAtSwitch = Hc22000::pairCount();
