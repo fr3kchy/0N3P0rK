@@ -28,7 +28,7 @@ static const Preset kStealthPreset{
     /* hopMs      */ 400,    // sweep all channels in ~5s
 };
 
-CAP_PACK_REGISTER(stealth, "STEALTH", "PORKCHOP", kStealthPreset)
+CAP_PACK_REGISTER(stealth, "STE", "PORK", kStealthPreset)
 
 } // namespace Packs
 } // namespace Cap

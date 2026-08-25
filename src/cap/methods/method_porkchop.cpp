@@ -255,7 +255,7 @@ void porkchop(const Ctx& ctx) {
     se->lastKickMs = now;
 }
 
-CAP_METHOD_REGISTER("PORKCHOP", porkchop, pmkidProbePorkchop, resetPorkchopState)
+CAP_METHOD_REGISTER("PORK", porkchop, pmkidProbePorkchop, resetPorkchopState)
 
 } // namespace Methods
 } // namespace Cap

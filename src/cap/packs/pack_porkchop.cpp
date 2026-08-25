@@ -25,7 +25,7 @@ static const Preset kPorkchopPreset{
     /* hopMs      */ 250,    // ~4 channels/sec
 };
 
-CAP_PACK_REGISTER(porkchop, "PORKCHOP", "PORKCHOP", kPorkchopPreset)
+CAP_PACK_REGISTER(porkchop, "PORK", "PORK", kPorkchopPreset)
 
 } // namespace Packs
 } // namespace Cap
