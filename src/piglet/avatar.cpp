@@ -836,41 +836,51 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         P(2, -13, O); P(3, -14, O); P(4, -14, O); P(5, -13, O);
         P(3, -13, B); P(4, -13, B);
     } else if (happySquint) {
-        // ^_^ squint smile eyes — clearly "happy", not open scary whites
+        // ^_^ squint smile eyes — same closed arc as blink, but with our
+        // signature twinkle sitting just ABOVE the curve (mirrors the
+        // "extra star glint" trick used on EXCITED) instead of punching
+        // a single stray white pixel into the middle of the black arc
         P(2, -13, O); P(3, -14, O); P(4, -14, O); P(5, -13, O);
         P(3, -13, B); P(4, -13, B);
-        // tiny glint on the arc
-        P(3, -14, EG);
+        P(3, -15, EG); P(4, -15, EG);
     } else if (sniff) {
-        // Soft half-open, pupil shifted toward snout (curious sniff)
-        P(2, -14, O); P(3, -14, O); P(4, -14, O); P(5, -14, O);
-        P(2, -13, O); P(3, -13, EW); P(4, -13, EP); P(5, -13, O);
+        // Half-open lid, but full white+iris+pupil showing — "curious
+        // focus", not a flat black bar on top
+        P(2, -14, O); P(3, -14, EW); P(4, -14, EW); P(5, -14, O);
+        P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
         // content brow
         P(2, -15, S); P(5, -15, S);
     } else if (isSleepy) {
-        // Heavy lids, soft half-moon eye
-        P(2, -14, O); P(3, -14, O); P(4, -14, O); P(5, -14, O);
+        // Heavy lids — mostly shadowed, just a sliver of white+pupil peeking
+        // through (distinct from sniff: no iris ring, barely open) — but
+        // still a visible sliver, not a solid black bar
+        P(2, -14, O); P(3, -14, S); P(4, -14, S); P(5, -14, O);
         P(2, -13, O); P(3, -13, EW); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
     } else if (isSad) {
-        // Small watery eyes + downturned brows
+        // Big watery eyes (full sclera+iris+pupil, like neutral) + downturned
+        // brow, with a tear that actually hangs off the bottom rim instead
+        // of floating beside the eye
         P(2, -15, O); P(3, -15, S);                 // brow down-in
         P(2, -14, O); P(3, -14, EW); P(4, -14, EW); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
-        // tear sparkle
-        P(5, -12, zombie ? EG : EW);
+        // tear — attached directly under the bottom rim, drips down
+        P(4, -11, zombie ? EG : EW);
     } else if (isAngry) {
-        // Soft slant brows (cute mad, not demon cones) + focused round eye
+        // Soft slant brows (cute mad, not demon cones) + narrowed glaring
+        // eye — thin white base under the iris so it still reads as an
+        // eye, not a solid black/iris smear
         P(2, -15, O); P(3, -15, O); P(4, -16, O);   // / brow
         P(2, -14, O); P(3, -14, EW); P(4, -14, EI); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
     } else if (isHunt) {
-        // Determined narrowed eye + slight brow
+        // Determined narrowed eye + slight brow — white sclera stays
+        // visible above the iris instead of a flat black bar
         P(2, -15, S); P(3, -15, S);
-        P(2, -14, O); P(3, -14, O); P(4, -14, O); P(5, -14, O);
+        P(2, -14, O); P(3, -14, EW); P(4, -14, EI); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
     } else if (isExcited) {
