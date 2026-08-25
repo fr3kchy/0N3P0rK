@@ -60,7 +60,7 @@ void resetPmkidState();
 
 // ---- Registry ------------------------------------------------------------
 // Single source of truth for every capture method. sniffer.cpp, settings
-// menu, AUTO-rotation and applyRadioPack() all read from this table.
+// menu and AUTO-rotation all read from this table.
 //
 // Adding a method now means ONE line at the bottom of a .cpp — no edits
 // to this header, no edits to the registry source, no edits to sniffer/
@@ -72,6 +72,11 @@ void resetPmkidState();
 // Order in the UI / AUTO rotation is the link order of .cpp files (left
 // to right, OURS first because it lives next to the README). Rename the
 // file if you ever need a specific slot.
+//
+// Want the new method selectable as its own "Pack" in the Radio menu too
+// (a named knob bundle, not just the bare method)? See pack_ctx.h -
+// CAP_PACK_REGISTER() is the same one-line pattern, fully independent of
+// this table (a pack can point at any method by name, or none at all).
 struct Entry {
     const char* name;                       // 4..7 chars, fits in Counters::methodTag[8]
     void      (*kick) (const Ctx& ctx);     // required, runs every kick tick

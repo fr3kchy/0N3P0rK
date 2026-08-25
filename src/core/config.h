@@ -86,8 +86,23 @@ enum class HsMethod : uint8_t { AUTO = 0, OURS = 1, PAN = 2 };
 // constexpr upper bound (the registry isn't visible from config.h).
 static const uint8_t HS_METHOD_COUNT_MAX = 8;
 
-enum class RadioPack : uint8_t { STOCK = 0, OURS = 1, PAN = 2, CUSTOM = 3 };
-static const uint8_t RADIO_PACK_COUNT = 4;
+// pack on-disk layout (RadioConfig::pack byte) mirrors hsMethod above, but
+// walks the independent Cap::Packs table (cap/packs/), not the Methods one:
+//   0      -> STOCK  (factory-default knobs, hsMethod left on AUTO)
+//   1..N   -> Cap::Packs::table()[idx-1] - a named knob bundle that can
+//              point at any capture method by name (or none, for AUTO).
+//              Dropping a pack_yourname.cpp file into src/cap/packs/ (see
+//              its README.md) adds a new numbered slot here automatically,
+//              same plug-and-play pattern as capture methods.
+//   0xFF   -> CUSTOM (fixed sentinel, deliberately NOT N+1 - if it were
+//              N+1 it would silently mean a different thing after a
+//              firmware update that adds/removes a pack; a fixed byte
+//              keeps a saved CUSTOM pack CUSTOM forever)
+enum class RadioPack : uint8_t { STOCK = 0, CUSTOM = 0xFF };
+static const uint8_t RADIO_PACK_CUSTOM = 0xFF;
+// Sanity-clamp bound for NVS load, same role as HS_METHOD_COUNT_MAX above
+// (the Packs registry isn't visible from config.h either).
+static const uint8_t RADIO_PACK_COUNT_MAX = 8;
 
 // Knobs for LIGHT / AGGRO / EVILPIG — same code, different tune.
 struct RadioConfig {
@@ -117,10 +132,10 @@ struct BleConfig {
     uint16_t advMs = 100;      // 50..200 per advertisement
 };
 
-static const uint8_t HOTKEY_COUNT = 9;
-// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT RADIO
+static const uint8_t HOTKEY_COUNT = 10;
+// Slots: AGGRO LIGHT PIGPASS EVILPIG BLE IR SPECTRUM LOOT RADIO FILES
 struct HotkeyConfig {
-    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r' };
+    char key[HOTKEY_COUNT] = { 'a', 'l', 'p', 'e', 'b', 'i', 's', 'h', 'r', 'f' };
 };
 static const uint8_t HOTKEY_RADIO = 8;
 

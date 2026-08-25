@@ -13,6 +13,12 @@ public:
     static void draw(M5Canvas& canvas);
     static bool isRunning() { return running; }
     static void getStatusLine(char* buf, size_t n);
+    // True while EDIT phase is consuming keystrokes as text input (typing,
+    // Backspace-to-delete, cursor moves). Global app.cpp checks this the
+    // same way it checks SettingsMenu::isTyping(), so Backspace inside the
+    // editor deletes a character instead of also being read as the global
+    // "minimize window" hotkey (Backspace doubles as both - see keys.h).
+    static bool isTyping() { return running && phase == Phase::EDIT; }
 
 private:
     enum class Phase : uint8_t { BROWSE, VIEW, EDIT, CONFIRM_DEL };

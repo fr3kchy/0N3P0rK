@@ -257,7 +257,7 @@ void loop() {
 
     if (s_mode == AppMode::FARM || windowHidden()) farmPoll();
 
-    if (overlayMode() && !SettingsMenu::isTyping()) {
+    if (overlayMode() && !SettingsMenu::isTyping() && !FileMgrMode::isTyping()) {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
                 s_winHid = !s_winHid;

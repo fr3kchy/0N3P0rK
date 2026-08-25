@@ -13,6 +13,7 @@
 #include "../piglet/scene_layers.h"
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
+#include "../cap/packs/pack_ctx.h"
 #include "loot_menu.h"
 #include "settings_menu.h"
 #include "../modes/evilpig.h"
@@ -567,16 +568,20 @@ void Display::drawBottomBar() {
         const char* tag = "LITE";
         if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "AGG";
         else if (Cap::runMode() == Cap::RunMode::Pinned) tag = "PIN";
-        // PACK = preset the user picked in Radio menu (STOCK/OURS/PAN/CUSTOM).
+        // PACK = preset the user picked in Radio menu (STOCK/<pack name>/CUSTOM).
         // methodTag = capture method actually running right now (AUTO/OURS/PAN/PMKID...).
         // When AUTO rotates or the user has CUSTOM knobs, the two can differ -
         // surface both so the user sees what they configured AND what is live.
-        const char* pack = "STK";
-        switch ((RadioPack)Config::radio().pack) {
-            case RadioPack::STOCK:  pack = "STK"; break;
-            case RadioPack::OURS:   pack = "OUR"; break;
-            case RadioPack::PAN:    pack = "PAN"; break;
-            case RadioPack::CUSTOM: pack = "CST"; break;
+        // pack's name comes from the independent Cap::Packs registry
+        // (cap/packs/) - a newly-dropped pack_*.cpp shows up here with no
+        // changes needed in this file.
+        uint8_t packVal = Config::radio().pack;
+        const char* pack = "STOCK";
+        if (packVal == RADIO_PACK_CUSTOM) {
+            pack = "CUSTOM";
+        } else if (packVal != 0) {
+            const char* n = Cap::Packs::name((uint8_t)(packVal - 1));
+            if (n) pack = n;
         }
         const char* m = c.methodTag[0] ? c.methodTag : "OURS";
         snprintf(rightName, sizeof(rightName), "%s%s/P:%s M:%s HS:%02u CH:%02u",

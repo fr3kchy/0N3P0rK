@@ -1,6 +1,7 @@
 #include "config.h"
 #include "../storage/littlefs_ops.h"
 #include "../cap/methods/method_ctx.h"
+#include "../cap/packs/pack_ctx.h"
 #include <Preferences.h>
 #include <string.h>
 
@@ -118,7 +119,10 @@ bool Config::init() {
     if (r.deauthReason > 8) r.deauthReason = 7;
     if (r.pauseMs < 400) r.pauseMs = 400;
     if (r.pauseMs > 3000) r.pauseMs = 3000;
-    if (r.pack >= RADIO_PACK_COUNT) r.pack = 0;
+    // pack lives in its own registry (Cap::Packs), separate bound from
+    // hsMethod's - CUSTOM is the one value allowed above that bound
+    // (fixed sentinel).
+    if (r.pack != RADIO_PACK_CUSTOM && r.pack >= RADIO_PACK_COUNT_MAX) r.pack = 0;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -187,51 +191,57 @@ void Config::setPersonality(const PersonalityConfig& cfg) {
     save();
 }
 
-// Resolve a method name to its enum index (1-based, slot 0 is AUTO).
-// Returns 1 (OURS) as a safe fallback if the registry doesn't have it.
-static uint8_t hsMethodIndex(const char* name) {
+// Resolves a Cap::Methods table name to the on-disk hsMethod byte (0 =
+// AUTO, 1..N = that table's index + 1). Used when applying a pack, since
+// a pack names its method by string (see cap/packs/pack_ctx.h) rather
+// than by table index — packs and methods are independent registries, so
+// a pack can't just reuse its own slot number the way it could when the
+// two tables were coupled 1:1.
+static uint8_t hsMethodIndexForName(const char* name) {
+    if (!name || !name[0]) return 0; // AUTO
     uint8_t n = 0;
     const Cap::Methods::Entry* tbl = Cap::Methods::table(&n);
     for (uint8_t i = 0; i < n; i++) {
         if (strcmp(tbl[i].name, name) == 0) return (uint8_t)(i + 1);
     }
-    return 1;
+    return 0; // unknown method name -> safe fallback to AUTO
 }
 
+// pack byte layout: 0 = STOCK, 1..N = Cap::Packs::table()[idx-1], 0xFF =
+// CUSTOM (see config.h). Packs live in their own registry (cap/packs/),
+// completely independent from the Methods registry - dropping a new
+// pack_yourname.cpp file there adds a slot here with nothing else to
+// touch, same plug-and-play pattern as capture methods.
 void Config::applyRadioPack(uint8_t pack) {
-    if (pack >= RADIO_PACK_COUNT) pack = 0;
     // CUSTOM means "keep your current hand-tuned knobs" — but we still need
     // to record that the user picked CUSTOM, otherwise the menu's rotary
-    // wrap can't tell the difference between "stuck on 3" and "really on 3"
-    // and the picker appears to spin past into values 4, 5, 6... while
-    // r.pack silently stays on CUSTOM. So: write the flag, save, return
-    // without touching the rest of the radio knobs.
-    if (pack == (uint8_t)RadioPack::CUSTOM) {
+    // wrap can't tell the difference between "stuck on custom" and "really
+    // on custom" and the picker appears to spin past it while r.pack
+    // silently stays on CUSTOM. So: write the flag, save, return without
+    // touching the rest of the radio knobs.
+    if (pack == RADIO_PACK_CUSTOM) {
         radioConfig.pack = pack;
         save();
         return;
     }
-    RadioConfig r;
-    if (pack == (uint8_t)RadioPack::OURS) {
-        r.hsMethod = hsMethodIndex("OURS");
-        r.bidirKick = false;
-        r.eapolTx = false;
-        r.pmkidProbe = false;
-        r.csaHerd = false;
-        r.authFlood = false;
-        r.kickBurst = 2;
-        r.pauseMs = 1200;
-    } else if (pack == (uint8_t)RadioPack::PAN) {
-        r.hsMethod = hsMethodIndex("PAN");
-        r.bidirKick = true;
-        r.eapolTx = true;
-        r.pmkidProbe = true;
-        r.csaHerd = false;
-        r.authFlood = false;
-        r.kickBurst = 3;
-        r.pauseMs = 1500;
-        r.lockMs = 10000;
-        r.hopMs = 250;
+    uint8_t packCount = 0;
+    const Cap::Packs::Entry* tbl = Cap::Packs::table(&packCount);
+    if (pack > packCount) pack = 0; // out of range -> STOCK
+
+    RadioConfig r; // starts from RadioConfig's own defaults (= STOCK)
+    if (pack != 0) {
+        const Cap::Packs::Entry& pk = tbl[pack - 1];
+        const Cap::Packs::Preset& pr = pk.preset;
+        r.hsMethod   = hsMethodIndexForName(pk.methodName);
+        r.bidirKick  = pr.bidirKick;
+        r.eapolTx    = pr.eapolTx;
+        r.pmkidProbe = pr.pmkidProbe;
+        r.csaHerd    = pr.csaHerd;
+        r.authFlood  = pr.authFlood;
+        r.kickBurst  = pr.kickBurst;
+        r.pauseMs    = pr.pauseMs;
+        r.lockMs     = pr.lockMs;
+        r.hopMs      = pr.hopMs;
     }
     r.pack = pack;
     radioConfig = r;
@@ -243,8 +253,8 @@ void Config::markRadioCustom() {
     // Flips the PACK indicator to CUSTOM so the UI shows that the current
     // parameters no longer match any preset, without overwriting anything
     // the user just set.
-    if ((RadioPack)radioConfig.pack == RadioPack::CUSTOM) return;
-    radioConfig.pack = (uint8_t)RadioPack::CUSTOM;
+    if (radioConfig.pack == RADIO_PACK_CUSTOM) return;
+    radioConfig.pack = RADIO_PACK_CUSTOM;
     save();
 }
 

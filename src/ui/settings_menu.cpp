@@ -12,6 +12,7 @@
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
 #include "../cap/methods/method_ctx.h"
+#include "../cap/packs/pack_ctx.h"
 #include "../board/board.h"
 #include "../build_info.h"
 #include <M5Cardputer.h>
@@ -63,7 +64,7 @@ static const Item SYSTEM[] = {
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 
 static const Item RADIO[] = {
-    {"PACK",      Kind::VALUE,  18, 0, RADIO_PACK_COUNT - 1, 1},
+    {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
     {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
     {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
@@ -102,6 +103,7 @@ static const Item KEYS[] = {
     {"SPECTRUM", Kind::BIND, 6, 0, 0, 0},
     {"LOOT",     Kind::BIND, 7, 0, 0, 0},
     {"RADIO",    Kind::BIND, 8, 0, 0, 0},
+    {"FILES",    Kind::BIND, 9, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
 
@@ -264,14 +266,14 @@ static const char* hsMethodName(uint8_t s) {
     const char* n = Cap::Methods::name((uint8_t)(s - 1));
     return n ? n : "AUTO";
 }
+// PACK layout mirrors hsMethodName() just above but walks the independent
+// Cap::Packs table: 0 = STOCK, 1..N = Packs::name(idx-1), RADIO_PACK_CUSTOM
+// (0xFF) = CUSTOM.
 static const char* radioPackName(uint8_t s) {
-    switch ((RadioPack)s) {
-        case RadioPack::STOCK:  return "STOCK";
-        case RadioPack::OURS:   return "OURS";
-        case RadioPack::PAN:    return "PAN";
-        case RadioPack::CUSTOM: return "CUSTOM";
-        default: return "?";
-    }
+    if (s == (uint8_t)RadioPack::STOCK) return "STOCK";
+    if (s == RADIO_PACK_CUSTOM) return "CUSTOM";
+    const char* n = Cap::Packs::name((uint8_t)(s - 1));
+    return n ? n : "STOCK";
 }
 
 static int getValue(const Item& it) {
@@ -412,6 +414,29 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
 
+    // PACK (RADIO id 18): 0 = STOCK, 1..N = Cap::Packs::name(idx-1) (its
+    // own independent registry, see cap/packs/), RADIO_PACK_CUSTOM (0xFF)
+    // = CUSTOM. CUSTOM is a fixed sentinel rather than "N+1" on disk (see
+    // config.h), so it can't be reached by the usual +/-1 wrap the way
+    // HS METHOD's slots are - instead we map the current value to a
+    // contiguous logical slot (0..N+1, CUSTOM last), step that, then map
+    // back. `v` is `getValue()+/-step` in the RAW on-disk domain, so its
+    // direction relative to the current raw value tells us which way the
+    // user pressed even when the raw jump (e.g. off of 0xFF) isn't +/-1.
+    if (s_page == SettingsPage::RADIO && it.id == 18) {
+        int packCount = (int)Cap::Packs::count();
+        int lastSlot = packCount + 1; // logical slot for CUSTOM
+        int curSlot = (r.pack == RADIO_PACK_CUSTOM) ? lastSlot : (int)r.pack;
+        bool wantUp = v > (int)r.pack;
+        int nextSlot = curSlot + (wantUp ? 1 : -1);
+        if (nextSlot < 0) nextSlot = lastSlot;
+        if (nextSlot > lastSlot) nextSlot = 0;
+        uint8_t resolved = (nextSlot == lastSlot) ? RADIO_PACK_CUSTOM : (uint8_t)nextSlot;
+        Config::applyRadioPack(resolved);
+        Display::showToast(radioPackName(resolved), 900);
+        return true;
+    }
+
     if (v < it.minV) v = it.maxV;
     if (v > it.maxV) v = it.minV;
 
@@ -531,17 +556,7 @@ static bool setValue(const Item& it, int v) {
         return true;
     }
     if (s_page == SettingsPage::RADIO) {
-        // PACK (id=18) — CUSTOM is a real, user-pickable value in the cycle.
-        // The previous "skip to STOCK" hack made the rotary feel stuck when
-        // PACK was already CUSTOM: pressing down landed on CUSTOM then was
-        // bounced back to STOCK, so nothing appeared to change. Letting the
-        // user pick CUSTOM directly is fine — applyRadioPack() already treats
-        // it as a no-op (it preserves the user's hand-tuned knobs).
-        if (it.id == 18) {
-            Config::applyRadioPack((uint8_t)v);
-            Display::showToast(radioPackName((uint8_t)v), 900);
-            return true;
-        }
+        // PACK (id 18) is handled above, before the generic minV/maxV clamp.
         switch (it.id) {
             case 0: r.hopMs = (uint16_t)v; break;
             case 1: r.lockMs = (uint16_t)v; break;
