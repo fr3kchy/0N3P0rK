@@ -106,7 +106,7 @@ static bool     s_fatPcap = true;
 // from the RADIO menu.
 static uint8_t  s_jitterMs = 0;       // 0..20 random ms between mgmt frames
 static uint8_t  s_cooldownSec = 0;    // 0..30 seconds per-AP cooldown after kick
-static int8_t   s_scoreThr = 0;        // -100..200, PORKCHOP method min score
+static int16_t  s_scoreThr = 0;        // -100..200, PORKCHOP method min score
 static uint16_t s_dwellMinMs = 120;    // 50..600 minimum channel dwell
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;

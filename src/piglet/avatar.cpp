@@ -845,8 +845,10 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         P(3, -15, EG); P(4, -15, EG);
     } else if (sniff) {
         // Half-open lid, but full white+iris+pupil showing — "curious
-        // focus", not a flat black bar on top
-        P(2, -14, O); P(3, -14, EW); P(4, -14, EW); P(5, -14, O);
+        // focus", not a flat black bar on top. Top row gets a bright glint
+        // instead of a flat two-pixel sclera stripe, so the eye reads as
+        // "lit up with interest" rather than a blank white bar.
+        P(2, -14, O); P(3, -14, EG); P(4, -14, EW); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
         // content brow
@@ -861,9 +863,12 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
     } else if (isSad) {
         // Big watery eyes (full sclera+iris+pupil, like neutral) + downturned
         // brow, with a tear that actually hangs off the bottom rim instead
-        // of floating beside the eye
+        // of floating beside the eye. Top row mirrors NEUTRAL's glint+iris
+        // treatment (matches the "like neutral" shape below) instead of a
+        // flat sclera stripe, so the eye still reads as a proper eye even
+        // when it's brimming with a tear.
         P(2, -15, O); P(3, -15, S);                 // brow down-in
-        P(2, -14, O); P(3, -14, EW); P(4, -14, EW); P(5, -14, O);
+        P(2, -14, O); P(3, -14, EG); P(4, -14, EI); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);
         // tear — attached directly under the bottom rim, drips down
@@ -892,9 +897,11 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
         // extra star glint
         P(3, -15, EG);
     } else {
-        // NEUTRAL — soft round eye: outline circle, sclera, iris, pupil, glint
+        // NEUTRAL — soft round eye: outline circle, sclera, iris, pupil, glint.
+        // Top cap uses a small iris peek + sclera instead of two flat white
+        // pixels, so the resting eye still has depth instead of a plain bar.
         P(2, -15, O); P(5, -15, O);
-        P(3, -15, EW); P(4, -15, EW);
+        P(3, -15, EI); P(4, -15, EW);
         P(2, -14, O); P(3, -14, EG); P(4, -14, EI); P(5, -14, O);
         P(2, -13, O); P(3, -13, EI); P(4, -13, EP); P(5, -13, O);
         P(3, -12, O); P(4, -12, O);

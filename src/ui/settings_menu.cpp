@@ -591,7 +591,7 @@ static bool setValue(const Item& it, int v) {
             // Porkchop-style knobs (IDs 20..23).
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;
-            case 22: r.scoreThr = (int8_t)v; break;
+            case 22: r.scoreThr = (int16_t)v; break;
             case 23: r.dwellMinMs = (uint16_t)v; break;
             default: return false;
         }

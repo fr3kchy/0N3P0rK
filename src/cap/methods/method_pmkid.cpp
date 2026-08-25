@@ -39,7 +39,5 @@ void pmkidProbe(const Ctx& ctx) {
     }
 }
 
-CAP_METHOD_REGISTER("PMKID", ours, pmkidProbe, resetPmkidState)
-
 } // namespace Methods
 } // namespace Cap

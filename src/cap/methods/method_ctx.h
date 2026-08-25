@@ -48,7 +48,7 @@ struct Ctx {
     // to reach back into Config::radio() on its own.
     uint8_t  jitterMs;        // 0..20: random ms between mgmt frames
     uint8_t  cooldownSec;     // 0..30: per-AP cooldown after kick (seconds)
-    int8_t   scoreThr;        // -100..200: minimum score to attack
+    int16_t  scoreThr;        // -100..200: minimum score to attack
     uint16_t dwellMinMs;      // 50..600: minimum channel dwell
 };
 

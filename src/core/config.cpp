@@ -77,6 +77,11 @@ bool Config::init() {
     r.pauseMs = s_prefs.getUShort("pausems", r.pauseMs);
     r.fatPcap = s_prefs.getBool("fatpcap", r.fatPcap);
     r.pack = s_prefs.getUChar("rpack", r.pack);
+    // Porkchop-style knobs — same load pattern as everything above.
+    r.jitterMs = s_prefs.getUChar("jitms", r.jitterMs);
+    r.cooldownMs = s_prefs.getUChar("cdms", r.cooldownMs);
+    r.scoreThr = (int16_t)s_prefs.getShort("scthr", r.scoreThr);
+    r.dwellMinMs = s_prefs.getUShort("dwlms", r.dwellMinMs);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -174,6 +179,11 @@ bool Config::save() {
     s_prefs.putUShort("pausems", r.pauseMs);
     s_prefs.putBool("fatpcap", r.fatPcap);
     s_prefs.putUChar("rpack", r.pack);
+    // Porkchop-style knobs — same save pattern as everything above.
+    s_prefs.putUChar("jitms", r.jitterMs);
+    s_prefs.putUChar("cdms", r.cooldownMs);
+    s_prefs.putShort("scthr", r.scoreThr);
+    s_prefs.putUShort("dwlms", r.dwellMinMs);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);

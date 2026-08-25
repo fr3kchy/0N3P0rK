@@ -100,9 +100,9 @@ CAP_PACK_REGISTER(mypack, "MYPACK", "OURS",
 | `OURS`     | `OURS`     | Broadcast kick, никаких трюков. Самый тихий и предсказуемый                 |
 | `PAN`      | `PAN`      | Bidir + EAPOL-Start/Logoff + PMKID probe. Сбалансированный                  |
 | `WOLF`     | `PAN`      | PAN + CSA-herd + auth-flood. Агрессивный                                    |
-| `PORKCHOP` | `PORKCHOP` | Porkchop-style: scoring одной цели, EMA по RSSI/клиентам, бир-бир jitter  |
-| `STEALTH`  | `PORKCHOP` | Только PMKID probe, ноль deauth. Тихий сбор, как DONOHAM                    |
-| `AGGRO`    | `PORKCHOP` | Всё вкл + CSA + auth-flood + 5-frame bursts. Самый громкий                  |
+| `PORKCHOP` | `PORK`     | Porkchop-style: scoring одной цели, EMA по RSSI/клиентам, бир-бир jitter  |
+| `STEALTH`  | `PORK`     | Только PMKID probe, ноль deauth. Тихий сбор, как DONOHAM                    |
+| `AGGRO`    | `PORK`     | Всё вкл + CSA + auth-flood + 5-frame bursts. Самый громкий                  |
 | `CUSTOM`   | (текущая)  | Взводится автоматически когда юзер крутит ручки вручную                     |
 
 В меню **RADIO → PACK** пак идёт в порядке: `STOCK` → пользовательские (по
