@@ -76,6 +76,13 @@ static const Item RADIO[] = {
     {"REASON",    Kind::VALUE,  15, 1, 8, 1},
     {"PAUSE MS",  Kind::VALUE,  16, 400, 3000, 200},
     {"FAT PCAP",  Kind::TOGGLE, 17, 0, 1, 1},
+    // Porkchop-style knobs. ID 20+ keeps them out of the way of the
+    // legacy IDs already on disk; legacy fields stay exactly the same
+    // bytes for backwards compatibility with saved NVS configs.
+    {"JITTER MS", Kind::VALUE,  20, 0, 20, 1},     // random ms between mgmt frames
+    {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
+    {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
+    {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
     {"RESET",     Kind::ACTION, 19, 0, 0, 0},
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
@@ -330,6 +337,11 @@ static int getValue(const Item& it) {
             case 16: return r.pauseMs;
             case 17: return r.fatPcap ? 1 : 0;
             case 18: return r.pack;
+            // Porkchop-style knobs (IDs 20..23).
+            case 20: return r.jitterMs;
+            case 21: return r.cooldownMs;
+            case 22: return r.scoreThr;
+            case 23: return r.dwellMinMs;
             default: return 0;
         }
     }
@@ -576,6 +588,11 @@ static bool setValue(const Item& it, int v) {
             case 15: r.deauthReason = (uint8_t)v; break;
             case 16: r.pauseMs = (uint16_t)v; break;
             case 17: r.fatPcap = v != 0; break;
+            // Porkchop-style knobs (IDs 20..23).
+            case 20: r.jitterMs = (uint8_t)v; break;
+            case 21: r.cooldownMs = (uint8_t)v; break;
+            case 22: r.scoreThr = (int8_t)v; break;
+            case 23: r.dwellMinMs = (uint16_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

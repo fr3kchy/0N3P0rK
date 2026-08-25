@@ -101,12 +101,32 @@ static bool     s_csaHerd = false;
 static bool     s_authFlood = false;
 static uint8_t  s_deauthReason = 7;
 static bool     s_fatPcap = true;
+// Porkchop-style knobs. All start at 0 (= "off / use legacy behavior")
+// so existing installs behave exactly as before until the user opts in
+// from the RADIO menu.
+static uint8_t  s_jitterMs = 0;       // 0..20 random ms between mgmt frames
+static uint8_t  s_cooldownSec = 0;    // 0..30 seconds per-AP cooldown after kick
+static int8_t   s_scoreThr = 0;        // -100..200, PORKCHOP method min score
+static uint16_t s_dwellMinMs = 120;    // 50..600 minimum channel dwell
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
 static uint8_t  s_pinBssid[6] = {};
 static uint8_t  s_pinCh = 6;
 static char     s_pinSsid[33] = {};
+
+// ---- Lock-on-BSSID (Porkchop-style) -----------------------------------
+// When the first EAPOL M1 is seen for a target BSSID we want M2 (or M3/M4)
+// from the same handshake. M2 is sent by the STATION back to the AP, on the
+// same channel the AP is on — which may not be the channel we're currently
+// hopping through. Standard lock-on-channel (s_lockUntil) blocks hopping but
+// can still hop AWAY if the radio's channel happens to switch. Lock-on-BSSID
+// instead parks us on the target BSSID's known channel until either M2 is
+// seen, hasPair() goes true, or lockMs elapses. Drop-in: s_lockUntil still
+// works, but lock-on-BSSID wins while it's armed.
+static uint8_t  s_lockBssid[6] = {};      // BSSID we are parked on (zeroed when idle)
+static uint8_t  s_lockBssidCh = 0;        // channel that BSSID was last seen on
+static uint32_t s_lockBssidUntil = 0;     // millis() deadline; 0 = not armed
 
 static const uint8_t* hopTable(uint8_t* count) {
     if (s_hopSet == (uint8_t)HopSet::CORE) {
@@ -180,19 +200,56 @@ static void noteClient(const uint8_t* bssid, const uint8_t* sta) {
     if (sta[0] & 0x01) return;
     BeaconSlot* b = findBeacon(bssid);
     if (!b) return;
+    // Linear-scan dedup against the live client count, not the hard cap.
+    // Cheap (20 * memcmp(6B) worst case) and correct even after rollover.
+    uint8_t cap = (uint8_t)(sizeof(b->clients) / sizeof(b->clients[0]));
     for (uint8_t i = 0; i < b->clientN; i++) {
         if (memcmp(b->clients[i], sta, 6) == 0) return;
     }
-    if (b->clientN < 4) {
+    if (b->clientN < cap) {
         memcpy(b->clients[b->clientN], sta, 6);
         b->clientN++;
         return;
     }
-    memcpy(b->clients[s_beaconClock % 4], sta, 6);
+    // Pool full - LRU-ish eviction by clock counter so we don't churn the
+    // same four slots forever in a busy room.
+    memcpy(b->clients[s_beaconClock % cap], sta, 6);
 }
 
 static bool hopLocked() {
     return s_lockUntil != 0 && millis() < s_lockUntil;
+}
+
+// Returns true while we are parked on a target BSSID's channel waiting for
+// the rest of its 4-way handshake (M2/M3/M4). Callers should treat this as
+// 'do not hop away'.
+static bool bssidLocked() {
+    if (s_lockBssid[0] == 0 || s_lockBssidUntil == 0) return false;
+    return millis() < s_lockBssidUntil;
+}
+
+// Arm lock-on-BSSID. Called from the promiscuous callback the first time an
+// EAPOL M1 (or any EAPOL at all) is seen for `bssid`. We remember the
+// BSSID, the channel we saw it on, and a deadline of `lockMs` from now. If
+// we're already armed for the same BSSID, refresh the deadline only — no
+// spurious channel jumps.
+static void armLockOnBssid(const uint8_t* bssid, uint8_t channel) {
+    if (!bssid || bssid[0] == 0) return;
+    if (s_lockOnHs && s_lockMs > 0) {
+        bool same = (memcmp(s_lockBssid, bssid, 6) == 0);
+        if (!same) memcpy(s_lockBssid, bssid, 6);
+        if (channel >= 1 && channel <= 13) s_lockBssidCh = channel;
+        s_lockBssidUntil = millis() + s_lockMs;
+    }
+}
+
+// Disarm lock-on-BSSID once a complete pair is on file (or after timeout).
+// Clearing the BSSID bytes to zero is what bssidLocked() looks at, so this
+// is the single off-switch.
+static void disarmLockOnBssid() {
+    memset(s_lockBssid, 0, 6);
+    s_lockBssidCh = 0;
+    s_lockBssidUntil = 0;
 }
 
 static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
@@ -338,6 +395,13 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     s_cnt.framesEapol++;
     if (s_lockOnHs && s_lockMs > 0) {
         s_lockUntil = millis() + s_lockMs;
+    }
+    // Porkchop-style: arm lock-on-BSSID so we don't hop away from this
+    // AP's channel before M2/M3/M4 arrive. BSSID-side pair check
+    // (Hc22000::hasPair) releases the lock early when the .22000 lands.
+    if (s_lockOnHs && s_lockMs > 0 && bssid && bssid[0] != 0 &&
+        !Hc22000::hasPair(bssid)) {
+        armLockOnBssid(bssid, s_cnt.currentChannel);
     }
 
     uint8_t next = (uint8_t)((s_write + 1) % RING_SLOTS);
@@ -622,6 +686,12 @@ static Methods::Ctx buildMethodCtx() {
     ctx.skipPin       = skipPin;
     ctx.sendRawMgmt   = sendRawMgmt;
     ctx.framesDeauth  = &s_cnt.framesDeauth;
+    // Porkchop-style knobs - methods that don't read these just ignore
+    // them, no behavior change. PORKCHOP method picks them up.
+    ctx.jitterMs      = s_jitterMs;
+    ctx.cooldownSec   = s_cooldownSec;
+    ctx.scoreThr      = s_scoreThr;
+    ctx.dwellMinMs    = s_dwellMinMs;
     return ctx;
 }
 
@@ -731,6 +801,12 @@ static void startCommon(RunMode mode) {
     s_authFlood = Config::radio().authFlood;
     s_deauthReason = Config::radio().deauthReason;
     s_fatPcap = Config::radio().fatPcap;
+    // Porkchop-style knobs.
+    s_jitterMs = Config::radio().jitterMs;
+    s_cooldownSec = Config::radio().cooldownMs;
+    s_scoreThr = Config::radio().scoreThr;
+    s_dwellMinMs = Config::radio().dwellMinMs;
+    if (s_dwellMinMs < 50) s_dwellMinMs = 50;
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
     // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
@@ -848,8 +924,33 @@ void loop() {
     drainRing();
     maybeRotateMethod();
 
+    // Auto-release lock-on-BSSID once a complete pair (.22000) is on disk,
+    // or once the deadline has passed. Parked or not, hop logic below
+    // decides what to do next.
+    if (bssidLocked()) {
+        if (s_lockBssid[0] != 0 && Hc22000::hasPair(s_lockBssid)) {
+            disarmLockOnBssid();
+        } else if (millis() >= s_lockBssidUntil) {
+            disarmLockOnBssid();
+        }
+    }
+
     uint32_t now = millis();
     if (isLocked()) {
+        if (now - s_lastHopMs >= 400) {
+            s_lastHopMs = now;
+            kickOnThisChannel();
+        }
+        return;
+    }
+
+    // Porkchop-style lock-on-BSSID: if we caught an EAPOL and the target's
+    // pair isn't on file yet, park on its channel so M2 (sent back from the
+    // station on the SAME channel the AP is on) actually reaches us.
+    if (bssidLocked() && s_lockBssidCh >= 1 && s_lockBssidCh <= 13 &&
+        s_cnt.currentChannel != s_lockBssidCh) {
+        esp_wifi_set_channel(s_lockBssidCh, WIFI_SECOND_CHAN_NONE);
+        s_cnt.currentChannel = s_lockBssidCh;
         if (now - s_lastHopMs >= 400) {
             s_lastHopMs = now;
             kickOnThisChannel();

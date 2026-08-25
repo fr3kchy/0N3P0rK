@@ -39,6 +39,17 @@ struct Ctx {
     void (*sendRawMgmt)(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest);
 
     uint32_t* framesDeauth; // counter to bump on every injected frame
+
+    // ----- Porkchop-style knobs ------------------------------------------
+    // All default to 0 (= off / use the legacy behavior baked into OURS,
+    // PAN, CSA, PMKID). Existing methods don't read these — they're here
+    // so new methods (e.g. PORKCHOP, KARMA, PASSIVE) can opt into the
+    // Porkchop tunables from the RADIO menu without each method having
+    // to reach back into Config::radio() on its own.
+    uint8_t  jitterMs;        // 0..20: random ms between mgmt frames
+    uint8_t  cooldownSec;     // 0..30: per-AP cooldown after kick (seconds)
+    int8_t   scoreThr;        // -100..200: minimum score to attack
+    uint16_t dwellMinMs;      // 50..600: minimum channel dwell
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.

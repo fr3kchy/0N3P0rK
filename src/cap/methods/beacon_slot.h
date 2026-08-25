@@ -16,7 +16,12 @@ struct BeaconSlot {
     int8_t   rssi;
     uint16_t len;
     char     ssid[33];
-    uint8_t  clients[4][6];
+    // Per-AP client list. Bumped from 4 -> 20 to match M5PORKCHOP's
+    // MAX_CLIENTS_PER_NETWORK; busy APs (offices, cafes, classrooms) easily
+    // have more than 4 active stations and we don't want to ignore them.
+    // 20 * 6 = 120 bytes per slot; 16 slots in the sniffer pool = +1536 B
+    // of BSS, still comfortable on the StampS3's internal SRAM.
+    uint8_t  clients[20][6];
     uint8_t  clientN;
     bool     pmfCapable;   // MFPC/MFPR bit seen in RSN IE -> deauth/disassoc ignored
     uint8_t  frame[BEACON_MAX];

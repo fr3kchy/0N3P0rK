@@ -125,6 +125,12 @@ struct RadioConfig {
     uint16_t pauseMs = 1200;   // listen after M1, don't kick
     bool fatPcap = true;       // radiotap with ch / rate / rssi
     uint8_t pack = 0;          // RadioPack last applied
+    // Porkchop-style knobs. All default off / safe so existing installs
+    // keep their old behavior unless a user opts in.
+    uint8_t jitterMs = 0;      // 0..20: random ms between deauth/disassoc (anti-WIDS)
+    uint8_t cooldownMs = 0;    // 0..30s: per-AP cooldown after kick (PORKCHOP method)
+    int8_t  scoreThr = 0;      // -100..200: min score to attack in PORKCHOP method (0 = score all)
+    uint16_t dwellMinMs = 120; // 50..600: minimum channel dwell (for PASSIVE-like adaptive hop)
 };
 
 struct BleConfig {
