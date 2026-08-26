@@ -26,7 +26,7 @@ namespace Cap {
 
 static const uint16_t FRAME_MAX = 512;
 static const uint8_t  RING_SLOTS = 12;
-static const uint32_t MAX_FILE_SIZE = 50 * 1024;
+static const uint32_t MAX_FILE_SIZE = 50UL * 1024UL * 1024UL; // 50 MB per pcap
 static const uint16_t MAX_FILES = 200;
 static const uint8_t HOP_ALL[]  = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 static const uint8_t HOP_CORE[] = {1, 6, 11};
@@ -783,7 +783,7 @@ static void kickOnThisChannel() {
         }
     }
     Methods::Ctx ctx = buildMethodCtx();
-    m.kick(ctx);
+    if (m.kick) m.kick(ctx);
     if (m.probe) m.probe(ctx);
 }
 
@@ -988,6 +988,11 @@ void loop() {
     if (!s_running) return;
 
     drainRing();
+    // Hc22000::feed() runs from the WiFi promiscuous IRQ; it only fills
+    // in-memory slots and marks them dirty. flushPending() is where the
+    // actual .22000 / .pmkid files are written to SD - safe to do here,
+    // never inside the ISR.
+    Hc22000::flushPending();
     maybeRotateMethod();
 
     // Auto-release lock-on-BSSID once HS DEPTH's requirement is met (see

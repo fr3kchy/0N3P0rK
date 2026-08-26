@@ -8,6 +8,12 @@ namespace Hc22000 {
 
 void reset();
 void feed(const uint8_t* frame, uint16_t len);
+// Drains the in-memory dirty slots built up by feed() and writes any
+// .22000 / .pmkid files to SD. Must be called from loop() context - it
+// is the only place Hc22000 is allowed to do file I/O. Cheap to call
+// every loop tick; it iterates at most MAX_HS slots and short-circuits
+// when nothing is dirty.
+void flushPending();
 bool shouldPauseDeauth();
 bool hasPair(const uint8_t* bssid);
 uint16_t pairCount();

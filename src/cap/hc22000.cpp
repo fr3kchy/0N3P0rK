@@ -35,6 +35,12 @@ struct Hs {
     bool haveM4;      // M4 carries no nonce we need, just note it arrived
     bool wrotePmkid;
     bool wroteEapol;
+    // Set true by feed() (which can run from the WiFi promiscuous IRQ) when
+    // an in-memory slot field changed. Cleared by flushPending() in loop()
+    // after maybeWrite() has had a chance to actually open the SD file.
+    // Without this, maybeWrite() would SD.open()/write()/close() straight
+    // from the ISR on every beacon/EAPOL - guaranteed WDT/panic under load.
+    bool dirty;
 };
 
 static Hs s_hs[MAX_HS];
@@ -229,7 +235,8 @@ static void parseAssoc(const uint8_t* f, uint16_t len) {
                 memcpy(h->sta, sta, 6);
                 memcpy(h->pmkid, pmk, 16);
                 h->havePmkid = true;
-                maybeWrite(h);
+                // No SD I/O from the IRQ - flushPending() handles it.
+                h->dirty = true;
             }
         }
         off = (uint16_t)(off + 2 + l);
@@ -251,7 +258,9 @@ static void parseBeacon(const uint8_t* f, uint16_t len) {
             memcpy(h->essid, f + off + 2, l);
             h->essidLen = l;
             h->haveEssid = true;
-            maybeWrite(h);
+            // No SD I/O here - this runs from the WiFi promiscuous IRQ.
+            // flushPending() in loop() will call maybeWrite() shortly.
+            h->dirty = true;
             return;
         }
         off = (uint16_t)(off + 2 + l);
@@ -356,12 +365,35 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
     } else if (msg == 4) {
         h->haveM4 = true;
     }
-    maybeWrite(h);
+    // No SD I/O here - this runs from the WiFi promiscuous IRQ on every
+    // EAPOL frame. Mark the slot dirty and let flushPending() in loop()
+    // call maybeWrite() instead.
+    h->dirty = true;
 }
 
 void reset() {
     memset(s_hs, 0, sizeof(s_hs));
     s_lastM1Ms = 0;
+}
+
+void flushPending() {
+    // Loop-context only. Walks every slot and, for the ones feed() marked
+    // dirty from the IRQ, runs maybeWrite() to actually open/close the
+    // .22000 files on SD. Without this, parseBeacon/parseEapol/parseAssoc
+    // would have to do SD I/O directly from the promiscuous callback -
+    // SD isn't ISR-safe and the radio would WDT the moment any beacon or
+    // EAPOL arrived under load.
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (!s_hs[i].used) continue;
+        if (!s_hs[i].dirty) continue;
+        s_hs[i].dirty = false;
+        // haveEssid is required by maybeWrite() anyway, and we want to
+        // drop the dirty bit even if no write was actually performed,
+        // otherwise we'd re-check the same slot every loop tick forever.
+        if (s_hs[i].haveEssid && s_hs[i].essidLen > 0) {
+            maybeWrite(&s_hs[i]);
+        }
+    }
 }
 
 bool shouldPauseDeauth() {
