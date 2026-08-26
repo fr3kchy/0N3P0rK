@@ -108,6 +108,7 @@ static uint8_t  s_jitterMs = 0;       // 0..20 random ms between mgmt frames
 static uint8_t  s_cooldownSec = 0;    // 0..30 seconds per-AP cooldown after kick
 static int16_t  s_scoreThr = 0;        // -100..200, PORKCHOP method min score
 static uint16_t s_dwellMinMs = 120;    // 50..600 minimum channel dwell
+static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -127,6 +128,29 @@ static char     s_pinSsid[33] = {};
 static uint8_t  s_lockBssid[6] = {};      // BSSID we are parked on (zeroed when idle)
 static uint8_t  s_lockBssidCh = 0;        // channel that BSSID was last seen on
 static uint32_t s_lockBssidUntil = 0;     // millis() deadline; 0 = not armed
+// When the CURRENT continuous streak of locking onto s_lockBssid began -
+// set once when the streak starts, deliberately NOT refreshed on every
+// repeat EAPOL/M1. Backs the hard cap below.
+static uint32_t s_lockBssidArmedMs = 0;
+
+// Hard ceiling on how long we'll sit locked on one target. Without this,
+// an AP whose client never completes the handshake (often *because* we're
+// actively deauthing it mid-handshake) just keeps retransmitting M1 every
+// second or two forever - and since every M1 refreshes s_lockUntil AND
+// s_lockBssidUntil, the lock would otherwise never expire on its own,
+// permanently pinning the radio on one BSSID/channel ("stops on one
+// client and doesn't move on"). This forces a release after a few
+// multiples of the user's LOCK MS setting no matter how often M1 repeats.
+static uint32_t lockHardCapMs() {
+    uint32_t cap = (uint32_t)s_lockMs * 4;
+    if (cap < 15000) cap = 15000;
+    if (cap > 60000) cap = 60000;
+    return cap;
+}
+
+static bool lockStreakExpired() {
+    return s_lockBssidArmedMs != 0 && (millis() - s_lockBssidArmedMs) >= lockHardCapMs();
+}
 
 static const uint8_t* hopTable(uint8_t* count) {
     if (s_hopSet == (uint8_t)HopSet::CORE) {
@@ -225,6 +249,7 @@ static bool hopLocked() {
 // 'do not hop away'.
 static bool bssidLocked() {
     if (s_lockBssid[0] == 0 || s_lockBssidUntil == 0) return false;
+    if (lockStreakExpired()) return false;
     return millis() < s_lockBssidUntil;
 }
 
@@ -237,7 +262,10 @@ static void armLockOnBssid(const uint8_t* bssid, uint8_t channel) {
     if (!bssid || bssid[0] == 0) return;
     if (s_lockOnHs && s_lockMs > 0) {
         bool same = (memcmp(s_lockBssid, bssid, 6) == 0);
-        if (!same) memcpy(s_lockBssid, bssid, 6);
+        if (!same) {
+            memcpy(s_lockBssid, bssid, 6);
+            s_lockBssidArmedMs = millis(); // new streak - starts the hard-cap clock
+        }
         if (channel >= 1 && channel <= 13) s_lockBssidCh = channel;
         s_lockBssidUntil = millis() + s_lockMs;
     }
@@ -250,6 +278,7 @@ static void disarmLockOnBssid() {
     memset(s_lockBssid, 0, 6);
     s_lockBssidCh = 0;
     s_lockBssidUntil = 0;
+    s_lockBssidArmedMs = 0;
 }
 
 static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
@@ -393,14 +422,23 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     if (s_pinOk && bssid && memcmp(bssid, s_pinBssid, 6) != 0) return;
 
     s_cnt.framesEapol++;
-    if (s_lockOnHs && s_lockMs > 0) {
+    // Only arm/refresh the lock for a target we're still actually chasing.
+    // "Chasing" now respects HS DEPTH (RADIO menu): at the default depth
+    // (0) this is just hasPair() as before (M1+M2, already crackable). At
+    // depth 1/2 we keep the lock/kick going past that point specifically
+    // to pull in M3 and/or M4 too, instead of releasing the moment the
+    // pair alone is ready.
+    bool stillChasing = bssid && bssid[0] != 0 && !Hc22000::hasHandshake(bssid, s_hsDepth);
+    if (s_lockOnHs && s_lockMs > 0 && stillChasing) {
         s_lockUntil = millis() + s_lockMs;
     }
     // Porkchop-style: arm lock-on-BSSID so we don't hop away from this
-    // AP's channel before M2/M3/M4 arrive. BSSID-side pair check
-    // (Hc22000::hasPair) releases the lock early when the .22000 lands.
-    if (s_lockOnHs && s_lockMs > 0 && bssid && bssid[0] != 0 &&
-        !Hc22000::hasPair(bssid)) {
+    // AP's channel before M2 (and, per HS DEPTH, M3/M4) arrive.
+    // Hc22000::hasHandshake() releases the lock early once that depth is
+    // met; lockStreakExpired() is the hard backstop if it never is (e.g.
+    // our own kicks keep interrupting the handshake, so it never
+    // completes and M1 just keeps retransmitting forever).
+    if (s_lockOnHs && s_lockMs > 0 && stillChasing) {
         armLockOnBssid(bssid, s_cnt.currentChannel);
     }
 
@@ -465,6 +503,25 @@ static bool openFileForBssid(const uint8_t* bssid) {
     snprintf(path, sizeof(path), "%s%s", PREFIX, name);
 
     bool exists = SD.exists(path);
+    // A file smaller than the 24-byte pcap global header can only be a
+    // remnant of a PREVIOUS header write that got cut short mid-write
+    // (SD timeout/contention while the radio is also actively TXing
+    // deauth bursts on the same core - the classic "pcap files that are
+    // sometimes 1-50 bytes" symptom). Appending to it would just bolt
+    // packet records onto a broken/missing header forever, since the
+    // "s_fileSize == 0" check below only fires for a truly empty file and
+    // would otherwise never re-write the header. Treat it as unusable and
+    // start clean instead of silently perpetuating the corruption.
+    if (exists) {
+        File probe = SD.open(path, "r");
+        size_t sz = probe ? probe.size() : 0;
+        if (probe) probe.close();
+        if (sz > 0 && sz < sizeof(Pcap::FileHeader)) {
+            SD.remove(path);
+            exists = false;
+            Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)sz, name);
+        }
+    }
     if (!exists && st.handshakes >= MAX_FILES) {
         Serial.println("[CAP] handshake cap (200 files) reached");
         return false;
@@ -490,7 +547,12 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.snaplen      = 65535;
         fh.linktype     = 127;
         if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
+            // Partial write already landed on the SD card (close() doesn't
+            // un-write bytes that already went out) - remove it now rather
+            // than leaving a sub-24-byte corrupt file for the NEXT capture
+            // on this BSSID to silently inherit and keep appending to.
             s_file.close();
+            SD.remove(path);
             return false;
         }
         s_fileSize = sizeof(fh);
@@ -692,6 +754,7 @@ static Methods::Ctx buildMethodCtx() {
     ctx.cooldownSec   = s_cooldownSec;
     ctx.scoreThr      = s_scoreThr;
     ctx.dwellMinMs    = s_dwellMinMs;
+    ctx.hsDepth       = s_hsDepth;
     return ctx;
 }
 
@@ -777,6 +840,7 @@ static void startCommon(RunMode mode) {
     s_lastHopMs = millis();
     s_channelIdx = 0;
     s_lockUntil = 0;
+    disarmLockOnBssid();
     s_kickStaOk = false;
     s_mode = mode;
     s_hopEnabled = (mode == RunMode::Aggressive);
@@ -806,6 +870,8 @@ static void startCommon(RunMode mode) {
     s_cooldownSec = Config::radio().cooldownMs;
     s_scoreThr = Config::radio().scoreThr;
     s_dwellMinMs = Config::radio().dwellMinMs;
+    s_hsDepth = Config::radio().hsDepth;
+    if (s_hsDepth > 2) s_hsDepth = 2;
     if (s_dwellMinMs < 50) s_dwellMinMs = 50;
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
@@ -914,7 +980,7 @@ void stop() {
 
 bool isRunning() { return s_running; }
 RunMode runMode() { return s_mode; }
-bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil; }
+bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil && !lockStreakExpired(); }
 
 const Counters& counters() { return s_cnt; }
 
@@ -924,33 +990,38 @@ void loop() {
     drainRing();
     maybeRotateMethod();
 
-    // Auto-release lock-on-BSSID once a complete pair (.22000) is on disk,
-    // or once the deadline has passed. Parked or not, hop logic below
-    // decides what to do next.
+    // Auto-release lock-on-BSSID once HS DEPTH's requirement is met (see
+    // Hc22000::hasHandshake()), or once the deadline (or the
+    // lockStreakExpired() hard cap) has passed - this just clears the
+    // now-stale bssid/channel bytes so they don't linger. Also releases
+    // the plain s_lockUntil at the same moment, instead of coasting on it
+    // for the rest of lockMs.
     if (bssidLocked()) {
-        if (s_lockBssid[0] != 0 && Hc22000::hasPair(s_lockBssid)) {
+        if (s_lockBssid[0] != 0 && Hc22000::hasHandshake(s_lockBssid, s_hsDepth)) {
             disarmLockOnBssid();
-        } else if (millis() >= s_lockBssidUntil) {
-            disarmLockOnBssid();
+            s_lockUntil = 0;
         }
+    } else if (s_lockBssid[0] != 0) {
+        disarmLockOnBssid();
     }
 
     uint32_t now = millis();
-    if (isLocked()) {
-        if (now - s_lastHopMs >= 400) {
-            s_lastHopMs = now;
-            kickOnThisChannel();
-        }
-        return;
-    }
 
     // Porkchop-style lock-on-BSSID: if we caught an EAPOL and the target's
     // pair isn't on file yet, park on its channel so M2 (sent back from the
-    // station on the SAME channel the AP is on) actually reaches us.
+    // station on the SAME channel the AP is on) actually reaches us. This
+    // MUST run before the plain isLocked() check below: s_lockUntil and
+    // s_lockBssidUntil are armed together (same event, same lockMs), so
+    // isLocked() is almost always true whenever bssidLocked() is - if its
+    // early `return` came first, this channel park would never get a
+    // chance to run at all.
     if (bssidLocked() && s_lockBssidCh >= 1 && s_lockBssidCh <= 13 &&
         s_cnt.currentChannel != s_lockBssidCh) {
         esp_wifi_set_channel(s_lockBssidCh, WIFI_SECOND_CHAN_NONE);
         s_cnt.currentChannel = s_lockBssidCh;
+    }
+
+    if (isLocked()) {
         if (now - s_lastHopMs >= 400) {
             s_lastHopMs = now;
             kickOnThisChannel();

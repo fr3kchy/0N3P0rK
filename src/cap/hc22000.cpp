@@ -32,6 +32,7 @@ struct Hs {
     bool haveAnonce3;
     bool havePmkid;
     bool haveM2;
+    bool haveM4;      // M4 carries no nonce we need, just note it arrived
     bool wrotePmkid;
     bool wroteEapol;
 };
@@ -352,6 +353,8 @@ static void parseEapol(const uint8_t* f, uint16_t len) {
         h->m2Len = total;
         memcpy(h->m2Replay, e + 9, 8);
         h->haveM2 = true;
+    } else if (msg == 4) {
+        h->haveM4 = true;
     }
     maybeWrite(h);
 }
@@ -382,6 +385,32 @@ uint16_t pairCount() {
         if (s_hs[i].wroteEapol || s_hs[i].wrotePmkid) n++;
     }
     return n;
+}
+
+uint8_t handshakeMask(const uint8_t* bssid) {
+    if (!bssid) return 0;
+    for (uint8_t i = 0; i < MAX_HS; i++) {
+        if (s_hs[i].used && memcmp(s_hs[i].bssid, bssid, 6) == 0) {
+            uint8_t m = 0;
+            if (s_hs[i].haveAnonce)  m |= 0x01; // M1
+            if (s_hs[i].haveM2)      m |= 0x02; // M2
+            if (s_hs[i].haveAnonce3) m |= 0x04; // M3
+            if (s_hs[i].haveM4)      m |= 0x08; // M4
+            return m;
+        }
+    }
+    return 0;
+}
+
+bool hasHandshake(const uint8_t* bssid, uint8_t depth) {
+    // M1+M2 (validated, crackable) is the floor no matter what depth asks
+    // for - depth only ever adds stricter requirements on top of it.
+    if (!hasPair(bssid)) return false;
+    if (depth == 0) return true;
+    uint8_t m = handshakeMask(bssid);
+    if (depth >= 1 && !(m & 0x04)) return false; // +M3
+    if (depth >= 2 && !(m & 0x08)) return false; // +M4 (full 4-way)
+    return true;
 }
 
 void feed(const uint8_t* frame, uint16_t len) {

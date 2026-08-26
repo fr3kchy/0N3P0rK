@@ -82,6 +82,7 @@ bool Config::init() {
     r.cooldownMs = s_prefs.getUChar("cdms", r.cooldownMs);
     r.scoreThr = (int16_t)s_prefs.getShort("scthr", r.scoreThr);
     r.dwellMinMs = s_prefs.getUShort("dwlms", r.dwellMinMs);
+    r.hsDepth = s_prefs.getUChar("hsdep", r.hsDepth);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -184,6 +185,7 @@ bool Config::save() {
     s_prefs.putUChar("cdms", r.cooldownMs);
     s_prefs.putShort("scthr", r.scoreThr);
     s_prefs.putUShort("dwlms", r.dwellMinMs);
+    s_prefs.putUChar("hsdep", r.hsDepth);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);

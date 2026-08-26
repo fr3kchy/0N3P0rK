@@ -50,6 +50,7 @@ struct Ctx {
     uint8_t  cooldownSec;     // 0..30: per-AP cooldown after kick (seconds)
     int16_t  scoreThr;        // -100..200: minimum score to attack
     uint16_t dwellMinMs;      // 50..600: minimum channel dwell
+    uint8_t  hsDepth;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4) - see Hc22000::hasHandshake()
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.

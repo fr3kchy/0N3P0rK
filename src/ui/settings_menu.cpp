@@ -83,6 +83,7 @@ static const Item RADIO[] = {
     {"COOLDOWN",  Kind::VALUE,  21, 0, 30, 1},     // seconds per-AP after kick
     {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
     {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
+    {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
     {"RESET",     Kind::ACTION, 19, 0, 0, 0},
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
@@ -264,6 +265,17 @@ static const char* hopSetName(uint8_t s) {
         default: return "?";
     }
 }
+// HS DEPTH (RADIO id 24): how much of the 4-way handshake to insist on
+// before the lock-on-BSSID logic gives up on a target and moves on. See
+// RadioConfig::hsDepth (config.h) and Hc22000::hasHandshake().
+static const char* hsDepthName(uint8_t s) {
+    switch (s) {
+        case 0:  return "PAIR M1+2";
+        case 1:  return "+M3";
+        case 2:  return "FULL M1-4";
+        default: return "?";
+    }
+}
 // HsMethod layout for the saved value (kept stable across versions so old
 // NVS blobs still parse): 0 = AUTO (special), then explicit methods use
 // 1..N and resolve to Methods::name(idx-1). Unknown values fall back to
@@ -342,6 +354,7 @@ static int getValue(const Item& it) {
             case 21: return r.cooldownMs;
             case 22: return r.scoreThr;
             case 23: return r.dwellMinMs;
+            case 24: return r.hsDepth;
             default: return 0;
         }
     }
@@ -398,6 +411,8 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, hsMethodName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::RADIO && it.id == 18) {
         strncpy(raw, radioPackName((uint8_t)getValue(it)), sizeof(raw) - 1);
+    } else if (s_page == SettingsPage::RADIO && it.id == 24) {
+        strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::RADIO && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
     } else {
@@ -588,11 +603,12 @@ static bool setValue(const Item& it, int v) {
             case 15: r.deauthReason = (uint8_t)v; break;
             case 16: r.pauseMs = (uint16_t)v; break;
             case 17: r.fatPcap = v != 0; break;
-            // Porkchop-style knobs (IDs 20..23).
+            // Porkchop-style knobs (IDs 20..23) + handshake depth (24).
             case 20: r.jitterMs = (uint8_t)v; break;
             case 21: r.cooldownMs = (uint8_t)v; break;
             case 22: r.scoreThr = (int16_t)v; break;
             case 23: r.dwellMinMs = (uint16_t)v; break;
+            case 24: r.hsDepth = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

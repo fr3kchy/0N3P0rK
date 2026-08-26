@@ -131,6 +131,14 @@ struct RadioConfig {
     uint8_t cooldownMs = 0;    // 0..30s: per-AP cooldown after kick (PORKCHOP method)
     int16_t scoreThr = 0;      // -100..200: min score to attack in PORKCHOP method (0 = score all)
     uint16_t dwellMinMs = 120; // 50..600: minimum channel dwell (for PASSIVE-like adaptive hop)
+    // How much of the 4-way handshake to insist on before giving up on a
+    // target and moving to the next one. M1+M2 is already enough to crack
+    // (see Hc22000::hasPair()) - this only controls how patient the lock-
+    // on-BSSID logic is about waiting for more before releasing.
+    //   0 = PAIR (M1+M2, fastest - default/legacy behavior)
+    //   1 = +M3  (also wait for the AP's M3 retransmit)
+    //   2 = FULL (wait for the complete M1..M4 exchange)
+    uint8_t hsDepth = 0;
 };
 
 struct BleConfig {

