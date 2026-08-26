@@ -218,6 +218,20 @@ void porkchop(const Ctx& ctx) {
 
     if (n == 0) return;
 
+    // Global stealth guard. STEALTH pack (bidirKick=false, authFlood=false)
+    // means "zero deauth, ever" - we MUST honor that and not send a single
+    // mgmt frame from this method, regardless of which AP scored highest
+    // or how the lockedBssid* path would normally pick a target. The one
+    // exception is the locked-BSSID path: if we're parked on a target
+    // waiting for M2/M3/M4, the lock is already on the air (we're
+    // hopping with the radio) and dropping kicks here would just stall
+    // the in-flight handshake with no stealth benefit. The user picked
+    // STEALTH to avoid *initiating* kicks, not to abandon a handshake
+    // already in progress.
+    if (!ctx.bidirKick && !ctx.authFlood && !ctx.lockedBssidActive) {
+        return;
+    }
+
     // COOLDOWN (RADIO menu, seconds): 0 = off / use the method's own
     // built-in default (COOLDOWN_MS). A nonzero user value overrides it,
     // same "0 = legacy behavior" convention as the other Porkchop knobs.
