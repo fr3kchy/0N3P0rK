@@ -97,6 +97,23 @@ static bool writeLine(Hs* h, const char* suffix, const char* line) {
     Storage::ensureDir(Storage::DIR_HS);
     char path[80];
     makePath(h, suffix, path, sizeof(path));
+
+    // Same rule as pcap: if a good file is already on SD, do not open "w"
+    // (that truncates). A real WPA*01 / WPA*02 line is well over 64 bytes.
+    // Returning true marks wroteEapol/wrotePmkid so we stop retrying.
+    if (SD.exists(path)) {
+        File probe = SD.open(path, "r");
+        size_t sz = probe ? probe.size() : 0;
+        if (probe) probe.close();
+        if (sz >= 64) {
+            Serial.printf("[22000] keep existing %s (%u bytes)\n",
+                          Storage::baseName(path), (unsigned)sz);
+            return true;
+        }
+        // Tiny/corrupt leftover — safe to replace.
+        if (sz > 0 && sz < 64) SD.remove(path);
+    }
+
     File f = SD.open(path, "w");
     if (!f) return false;
     f.println(line);

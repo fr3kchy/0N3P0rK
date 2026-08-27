@@ -25,6 +25,11 @@ bool isRunning();
 RunMode runMode();
 bool isLocked();
 
+// Session-only: stop attacking this BSSID until Cap::stop()/start.
+// Prefer locked target, else last kicked. Returns true if a BSSID was skipped.
+bool skipCurrent();
+bool isSkipped(const uint8_t* bssid);
+
 void loop();
 
 struct Counters {

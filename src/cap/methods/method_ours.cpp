@@ -20,6 +20,7 @@ void ours(const Ctx& ctx) {
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
+        if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         if (b.pmfCapable) continue; // deauth/disassoc will be dropped, don't waste airtime
@@ -44,7 +45,7 @@ void ours(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("OURS", ours, nullptr, nullptr)
+CAP_METHOD_REGISTER("ALL", ours, nullptr, nullptr)
 
 } // namespace Methods
 } // namespace Cap

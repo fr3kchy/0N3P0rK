@@ -11,6 +11,8 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../core/wsl_bypasser.h"
+#include "../ui/display.h"
+#include <M5Cardputer.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
 #include <freertos/portmacro.h>  // portENTER_CRITICAL for s_pendingLearn race
@@ -146,6 +148,36 @@ static uint32_t s_lockBssidUntil = 0;     // millis() deadline; 0 = not armed
 // repeat EAPOL/M1. Backs the hard cap below.
 static uint32_t s_lockBssidArmedMs = 0;
 
+// Session-only skip list: Z drops a stuck target until Cap::stop()/start.
+static const uint8_t SKIP_MAX = 16;
+static uint8_t s_skipList[SKIP_MAX][6];
+static uint8_t s_skipN = 0;
+static bool    s_skipKeyWas = false;
+
+static bool isSessionSkipped(const uint8_t* bssid) {
+    if (!bssid || bssid[0] == 0) return false;
+    for (uint8_t i = 0; i < s_skipN; i++) {
+        if (memcmp(s_skipList[i], bssid, 6) == 0) return true;
+    }
+    return false;
+}
+
+static void clearSkipList() {
+    s_skipN = 0;
+    memset(s_skipList, 0, sizeof(s_skipList));
+}
+
+static bool addSkip(const uint8_t* bssid) {
+    if (!bssid || (bssid[0] == 0 && bssid[1] == 0)) return false;
+    if (isSessionSkipped(bssid)) return true;
+    if (s_skipN >= SKIP_MAX) {
+        memmove(s_skipList[0], s_skipList[1], (SKIP_MAX - 1) * 6);
+        s_skipN = SKIP_MAX - 1;
+    }
+    memcpy(s_skipList[s_skipN++], bssid, 6);
+    return true;
+}
+
 // Hard ceiling on how long we'll sit locked on one target. Without this,
 // an AP whose client never completes the handshake (often *because* we're
 // actively deauthing it mid-handshake) just keeps retransmitting M1 every
@@ -273,6 +305,7 @@ static bool bssidLocked() {
 // spurious channel jumps.
 static void armLockOnBssid(const uint8_t* bssid, uint8_t channel) {
     if (!bssid || bssid[0] == 0) return;
+    if (isSessionSkipped(bssid)) return;
     if (s_lockOnHs && s_lockMs > 0) {
         bool same = (memcmp(s_lockBssid, bssid, 6) == 0);
         if (!same) {
@@ -451,7 +484,9 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
     // depth 1/2 we keep the lock/kick going past that point specifically
     // to pull in M3 and/or M4 too, instead of releasing the moment the
     // pair alone is ready.
-    bool stillChasing = bssid && bssid[0] != 0 && !Hc22000::hasHandshake(bssid, s_hsDepth);
+    bool stillChasing = bssid && bssid[0] != 0 &&
+                        !isSessionSkipped(bssid) &&
+                        !Hc22000::hasHandshake(bssid, s_hsDepth);
     if (s_lockOnHs && s_lockMs > 0 && stillChasing) {
         s_lockUntil = millis() + s_lockMs;
     }
@@ -526,23 +561,30 @@ static bool openFileForBssid(const uint8_t* bssid) {
     snprintf(path, sizeof(path), "%s%s", PREFIX, name);
 
     bool exists = SD.exists(path);
-    // A file smaller than the 24-byte pcap global header can only be a
-    // remnant of a PREVIOUS header write that got cut short mid-write
-    // (SD timeout/contention while the radio is also actively TXing
-    // deauth bursts on the same core - the classic "pcap files that are
-    // sometimes 1-50 bytes" symptom). Appending to it would just bolt
-    // packet records onto a broken/missing header forever, since the
-    // "s_fileSize == 0" check below only fires for a truly empty file and
-    // would otherwise never re-write the header. Treat it as unusable and
-    // start clean instead of silently perpetuating the corruption.
+    // Probe size BEFORE any write open. A file smaller than the 24-byte
+    // pcap global header is a remnant of a cut-short header write - delete
+    // and start clean. A file that already has a full header (+ preferably
+    // at least one packet) is a finished capture for this BSSID: do NOT
+    // reopen it. Reopening with "a" after a flaky size()==0 has been seen
+    // to rewrite the header / remove on failed write and zero a good pcap.
+    size_t preSize = 0;
     if (exists) {
         File probe = SD.open(path, "r");
-        size_t sz = probe ? probe.size() : 0;
+        preSize = probe ? probe.size() : 0;
         if (probe) probe.close();
-        if (sz > 0 && sz < sizeof(Pcap::FileHeader)) {
+        if (preSize > 0 && preSize < sizeof(Pcap::FileHeader)) {
+            Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)preSize, name);
             SD.remove(path);
             exists = false;
-            Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)sz, name);
+            preSize = 0;
+        } else if (preSize >= sizeof(Pcap::FileHeader)) {
+            // Keep existing good capture. User deletes the file manually to recapture.
+            if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
+                Serial.printf("[CAP] keep existing pcap (%u bytes): %s\n",
+                              (unsigned)preSize, name);
+                memcpy(s_fullLoggedBssid, bssid, 6);
+            }
+            return false;
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -554,13 +596,17 @@ static bool openFileForBssid(const uint8_t* bssid) {
     if (!s_file) return false;
 
     s_fileSize = s_file.size();
+    // Safety: if the card reported a non-empty file above but open shows 0,
+    // something is wrong with the FS handle - do not write, do not remove.
+    if (preSize >= sizeof(Pcap::FileHeader) && s_fileSize < preSize) {
+        Serial.printf("[CAP] size mismatch (pre=%u open=%u), refuse write: %s\n",
+                      (unsigned)preSize, (unsigned)s_fileSize, name);
+        s_file.close();
+        return false;
+    }
     bool createdNew = false;
     if (s_fileSize >= MAX_FILE_SIZE) {
         s_file.close();
-        // One-shot log per BSSID: we'd otherwise print this on every
-        // EAPOL for the rest of the session (10/sec in a busy room).
-        // writeFrameToFile() bumps s_cnt.framesDropped, so the user can
-        // still see the loss count climb even if they miss the log.
         if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
             Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
                           (unsigned)s_fileSize, name);
@@ -568,13 +614,13 @@ static bool openFileForBssid(const uint8_t* bssid) {
         }
         return false;
     }
-    // Successfully (re)opening for a different BSSID - clear the dedup so
-    // the next time this BSSID hits the cap, we'll log once for it too.
     if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
         memset(s_fullLoggedBssid, 0, sizeof(s_fullLoggedBssid));
     }
 
-    if (s_fileSize == 0) {
+    // Only brand-new empty files get a header. Never rewrite header onto
+    // an existing stream (preSize already gated above).
+    if (s_fileSize == 0 && preSize == 0) {
         Pcap::FileHeader fh;
         fh.magic        = 0xA1B2C3D4;
         fh.versionMajor = 2;
@@ -584,10 +630,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.snaplen      = 65535;
         fh.linktype     = 127;
         if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
-            // Partial write already landed on the SD card (close() doesn't
-            // un-write bytes that already went out) - remove it now rather
-            // than leaving a sub-24-byte corrupt file for the NEXT capture
-            // on this BSSID to silently inherit and keep appending to.
             s_file.close();
             SD.remove(path);
             return false;
@@ -802,6 +844,7 @@ static Methods::Ctx buildMethodCtx() {
     ctx.bcast         = s_bcast;
     ctx.isOwnAp       = isOwnAp;
     ctx.skipPin       = skipPin;
+    ctx.isSkipped     = isSessionSkipped;
     ctx.sendRawMgmt   = sendRawMgmt;
     ctx.framesDeauth  = &s_cnt.framesDeauth;
     // Porkchop-style knobs - methods that don't read these just ignore
@@ -928,6 +971,8 @@ static void startCommon(RunMode mode) {
     // this keeps the stop()/startCommon() cycle symmetric.
     s_beaconCount = 0;
     s_beaconClock = 0;
+    clearSkipList();
+    s_skipKeyWas = false;
     s_mode = mode;
     s_hopEnabled = (mode == RunMode::Aggressive);
     s_deauthEnabled = (mode != RunMode::Light) && Config::radio().deauth;
@@ -1070,8 +1115,64 @@ bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil
 
 const Counters& counters() { return s_cnt; }
 
+bool isSkipped(const uint8_t* bssid) {
+    return isSessionSkipped(bssid);
+}
+
+bool skipCurrent() {
+    if (!s_running) return false;
+    const uint8_t* t = nullptr;
+    if (s_lockBssid[0] != 0) t = s_lockBssid;
+    else if (s_kickBssid[0] != 0) t = s_kickBssid;
+    else if (s_pinOk) t = s_pinBssid;
+    if (!t) return false;
+    if (!addSkip(t)) return false;
+    disarmLockOnBssid();
+    s_lockUntil = 0;
+
+    // Prefer network name over MAC on the toast.
+    char ssid[33];
+    ssidForBssid(t, ssid);
+    if (!ssid[0] && s_pinOk && memcmp(t, s_pinBssid, 6) == 0 && s_pinSsid[0])
+        strncpy(ssid, s_pinSsid, sizeof(ssid) - 1);
+    if (!ssid[0] && s_cnt.currentSsid[0])
+        strncpy(ssid, s_cnt.currentSsid, sizeof(ssid) - 1);
+    if (!ssid[0] && s_cnt.lastHsSsid[0])
+        strncpy(ssid, s_cnt.lastHsSsid, sizeof(ssid) - 1);
+    ssid[32] = '\0';
+
+    char msg[28];
+    if (ssid[0]) {
+        // "SKIP " + up to 10 chars of SSID fits a short toast.
+        char shortSsid[12];
+        size_t n = 0;
+        while (ssid[n] && n < 10) {
+            char ch = ssid[n];
+            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+            shortSsid[n++] = ch;
+        }
+        shortSsid[n] = '\0';
+        snprintf(msg, sizeof(msg), "SKIP %s", shortSsid);
+    } else {
+        snprintf(msg, sizeof(msg), "SKIP %02X:%02X:%02X", t[3], t[4], t[5]);
+    }
+    Display::showToast(msg, 1200);
+    Serial.printf("[CAP] session skip %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+                  ssid[0] ? ssid : "?",
+                  t[0], t[1], t[2], t[3], t[4], t[5]);
+    return true;
+}
+
 void loop() {
     if (!s_running) return;
+
+    // Z = skip current stuck target (session only, cleared on stop/start).
+    {
+        bool z = M5Cardputer.Keyboard.isKeyPressed('z') ||
+                 M5Cardputer.Keyboard.isKeyPressed('Z');
+        if (z && !s_skipKeyWas) skipCurrent();
+        s_skipKeyWas = z;
+    }
 
     drainRing();
     // Hc22000::feed() runs from the WiFi promiscuous IRQ; it only fills

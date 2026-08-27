@@ -17,7 +17,7 @@ static const Preset kPanPreset{
     /* hopMs      */ 250,
 };
 
-CAP_PACK_REGISTER(pan, "PAN", "PAN", kPanPreset)
+CAP_PACK_REGISTER(pan, "NORMAL", "CLIENTS", kPanPreset)
 
 } // namespace Packs
 } // namespace Cap

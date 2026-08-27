@@ -53,6 +53,7 @@ void csaHerd(const Ctx& ctx) {
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
+        if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (!b.ssid[0]) continue;             // hidden SSID - CSA with empty SSID is suspicious
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
@@ -67,7 +68,7 @@ void csaHerd(const Ctx& ctx) {
     }
 }
 
-CAP_METHOD_REGISTER("CSA", csaHerd, nullptr, resetCsaHerdState)
+CAP_METHOD_REGISTER("HERD", csaHerd, nullptr, resetCsaHerdState)
 
 } // namespace Methods
 } // namespace Cap

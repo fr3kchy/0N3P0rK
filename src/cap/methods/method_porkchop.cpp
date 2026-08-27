@@ -183,6 +183,7 @@ void pmkidProbePorkchop(const Ctx& ctx) {
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
+        if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (!b.ssid[0]) continue;
         if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
@@ -298,6 +299,7 @@ void porkchop(const Ctx& ctx) {
         if (b.channel != ctx.channel) continue;
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
+        if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         ScoreEntry* se = findOrCreateScore(b.bssid);
         se->lastSeenMs = now;
@@ -324,6 +326,7 @@ void porkchop(const Ctx& ctx) {
                 if (b.channel != ctx.channel) continue;
                 if (ctx.isOwnAp(b.bssid)) continue;
                 if (ctx.skipPin(b.bssid)) continue;
+                if (ctx.isSkipped && ctx.isSkipped(b.bssid)) continue;
                 if (b.rssi < ctx.minRssi) continue;
                 if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
                 WSLBypasser::sendAuthFlood(b.bssid, 8);
@@ -373,7 +376,7 @@ void porkchop(const Ctx& ctx) {
     if (ctx.csaHerd) csaHerd(ctx);
 }
 
-CAP_METHOD_REGISTER("PORK", porkchop, pmkidProbePorkchop, resetPorkchopState)
+CAP_METHOD_REGISTER("FOCUS", porkchop, pmkidProbePorkchop, resetPorkchopState)
 
 } // namespace Methods
 } // namespace Cap

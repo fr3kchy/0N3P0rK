@@ -554,9 +554,10 @@ void Display::drawBottomBar() {
         const Cap::Counters& c = Cap::counters();
         const char* net = c.lastHsSsid[0] ? c.lastHsSsid
                          : (c.currentSsid[0] ? c.currentSsid : nullptr);
+        // SSID left: keep short so right-side status always fits on 240px.
         if (net) {
             size_t n = 0;
-            while (net[n] && n < 16) {
+            while (net[n] && n < 10) {
                 char ch = net[n];
                 if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
                 left[n++] = ch;
@@ -565,30 +566,40 @@ void Display::drawBottomBar() {
         } else {
             strncpy(left, "SCAN", sizeof(left) - 1);
         }
-        const char* tag = "LITE";
-        if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "AGG";
-        else if (Cap::runMode() == Cap::RunMode::Pinned) tag = "PIN";
-        // PACK = preset the user picked in Radio menu (STOCK/<pack name>/CUSTOM).
-        // methodTag = capture method actually running right now (AUTO/OURS/PAN/PMKID...).
-        // When AUTO rotates or the user has CUSTOM knobs, the two can differ -
-        // surface both so the user sees what they configured AND what is live.
-        // pack's name comes from the independent Cap::Packs registry
-        // (cap/packs/) - a newly-dropped pack_*.cpp shows up here with no
-        // changes needed in this file.
+        const char* tag = "L";
+        if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "A";
+        else if (Cap::runMode() == Cap::RunMode::Pinned) tag = "P";
+        // Compact pack letter: QUIET/SOFT/NORMAL/FOCUS/LOUD/MAX/CUSTOM/STOCK
         uint8_t packVal = Config::radio().pack;
-        const char* pack = "STOCK";
+        char packCh = '-';
         if (packVal == RADIO_PACK_CUSTOM) {
-            pack = "CUSTOM";
+            packCh = 'C';
         } else if (packVal != 0) {
             const char* n = Cap::Packs::name((uint8_t)(packVal - 1));
-            if (n) pack = n;
+            if (n && n[0]) {
+                if (!strcmp(n, "QUIET"))       packCh = 'Q';
+                else if (!strcmp(n, "SOFT"))   packCh = 'S';
+                else if (!strcmp(n, "NORMAL")) packCh = 'N';
+                else if (!strcmp(n, "FOCUS"))  packCh = 'F';
+                else if (!strcmp(n, "LOUD"))   packCh = 'L';
+                else if (!strcmp(n, "MAX"))    packCh = 'X';
+                else packCh = (char)n[0]; // first letter fallback
+            }
         }
-        const char* m = c.methodTag[0] ? c.methodTag : "OURS";
-        snprintf(rightName, sizeof(rightName), "%s%s/P:%s M:%s HS:%02u CH:%02u",
+        // Compact method letter: ALL/CLIENTS/FOCUS/HERD (+ AUTO)
+        const char* mtag = c.methodTag[0] ? c.methodTag : "ALL";
+        char methCh = mtag[0] ? mtag[0] : '?';
+        if (!strcmp(mtag, "ALL"))          methCh = 'A';
+        else if (!strcmp(mtag, "CLIENTS")) methCh = 'C';
+        else if (!strcmp(mtag, "FOCUS"))   methCh = 'F';
+        else if (!strcmp(mtag, "HERD"))    methCh = 'H';
+        else if (!strcmp(mtag, "AUTO"))    methCh = '~';
+        // e.g. "A* Q/F 3#06" — always fits with short SSID on left
+        snprintf(rightName, sizeof(rightName), "%s%s %c/%c %u#%02u",
                  tag,
                  Cap::isLocked() ? "*" : "",
-                 pack,
-                 m,
+                 packCh,
+                 methCh,
                  (unsigned)c.framesEapol,
                  (unsigned)c.currentChannel);
     } else if (bottomHint[0]) {

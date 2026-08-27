@@ -22,7 +22,7 @@ static const Preset kWolfPreset{
     /* hopMs      */ 150,    // down from PAN's 250 - ~6-7 channels/sec
 };
 
-CAP_PACK_REGISTER(wolf, "WOLF", "PAN", kWolfPreset)
+CAP_PACK_REGISTER(wolf, "LOUD", "CLIENTS", kWolfPreset)
 
 } // namespace Packs
 } // namespace Cap

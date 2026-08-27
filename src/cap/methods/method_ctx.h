@@ -36,6 +36,9 @@ struct Ctx {
 
     bool (*isOwnAp)(const uint8_t* bssid);
     bool (*skipPin)(const uint8_t* bssid);
+    // Session skip list (Z key): true => do not attack this BSSID until
+    // Cap session restarts. May be nullptr on older callers.
+    bool (*isSkipped)(const uint8_t* bssid);
     void (*sendRawMgmt)(uint8_t fc0, const uint8_t* bssid, const uint8_t* dest);
 
     uint32_t* framesDeauth; // counter to bump on every injected frame
