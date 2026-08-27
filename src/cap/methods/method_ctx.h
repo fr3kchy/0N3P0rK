@@ -68,6 +68,17 @@ struct Ctx {
     // (OURS, PAN, CSA, PMKID) keep their existing behavior.
     uint8_t  lockedBssid[6];  // valid only when lockedBssidActive is true
     bool     lockedBssidActive;
+
+    // ----- FOCUS extras (RADIO knobs) ------------------------------------
+    // dataAct: true => activity term prefers BeaconSlot::dataRecent (data
+    // frames) over beacon-only bumps. false => legacy beacon activity.
+    bool     dataAct;
+    // strictLock: true => scoring methods MUST only kick lockedBssid while
+    // lockedBssidActive (ignore score). false => may drift by score.
+    bool     strictLock;
+    // depthHoldSec: passed through for methods that care; the sniffer
+    // also uses it to extend lock-on-BSSID after a pair lands.
+    uint8_t  depthHoldSec;
 };
 
 // Greedy broadcast/targeted deauth on every AP on the current channel.

@@ -28,18 +28,27 @@ namespace Packs {
 //   там), которую этот пак включит, или nullptr чтобы оставить AUTO.
 // Preset{...} — какие ручки радио выставить; поля не заданные явно
 //   остаются на безопасных дефолтах (см. Preset в pack_ctx.h).
-CAP_PACK_REGISTER(mypack, "MYPACK", "OURS",
-    (Cap::Packs::Preset{
-        /* bidirKick  */ true,
-        /* eapolTx    */ false,
-        /* pmkidProbe */ false,
-        /* csaHerd    */ false,
-        /* authFlood  */ false,
-        /* kickBurst  */ 4,
-        /* pauseMs    */ 900,
-        /* lockMs     */ 8000,
-        /* hopMs      */ 300,
-    }))
+// Полный список: bidir/eapol/pmkid/csa/auth + kick/pause/lock/hop
+// + jitter/cooldown/scoreThr/hsDepth/dataAct/strictLock/depthHold.
+static const Cap::Packs::Preset kMyPreset{
+    /* bidirKick     */ true,
+    /* eapolTx       */ false,
+    /* pmkidProbe    */ false,
+    /* csaHerd       */ false,
+    /* authFlood     */ false,
+    /* kickBurst     */ 4,
+    /* pauseMs       */ 900,
+    /* lockMs        */ 8000,
+    /* hopMs         */ 300,
+    /* jitterMs      */ 2,
+    /* cooldownSec   */ 0,
+    /* scoreThr      */ 0,
+    /* hsDepth       */ 0,
+    /* dataAct       */ 0,
+    /* strictLock    */ true,
+    /* depthHoldSec  */ 0,
+};
+CAP_PACK_REGISTER(mypack, "MYPACK", "ALL", kMyPreset)
 
 } // namespace Packs
 } // namespace Cap

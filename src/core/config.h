@@ -139,6 +139,20 @@ struct RadioConfig {
     //   1 = +M3  (also wait for the AP's M3 retransmit)
     //   2 = FULL (wait for the complete M1..M4 exchange)
     uint8_t hsDepth = 0;
+    // ----- FOCUS / Porkchop extras (separate RADIO knobs) ----------------
+    // DATA ACT: when 1, sniffer counts non-EAPOL data frames per BSSID and
+    // FOCUS uses that for the activity term instead of beacon-only bumps.
+    // 0 = legacy beacon activity (default, cheaper).
+    uint8_t dataAct = 0;
+    // STRICT LOCK: when true (default), FOCUS ignores score while a
+    // lock-on-BSSID is active and only kicks the locked target. When false,
+    // scoring may drift to a higher-scoring neighbor on the same channel.
+    bool strictLock = true;
+    // DEPTH HOLD: extra seconds to keep the lock after M1+M2 are already
+    // on file when hsDepth > 0, so M3/M4 still have a chance to land even
+    // if no further EAPOL refreshes the normal lockMs deadline.
+    // 0 = off (release on normal lockMs / hasHandshake only).
+    uint8_t depthHoldSec = 0;
 };
 
 struct BleConfig {

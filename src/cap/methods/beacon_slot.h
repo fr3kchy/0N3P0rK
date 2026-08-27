@@ -24,6 +24,10 @@ struct BeaconSlot {
     uint8_t  clients[20][6];
     uint8_t  clientN;
     bool     pmfCapable;   // MFPC/MFPR bit seen in RSN IE -> deauth/disassoc ignored
+    // Recent non-EAPOL data frames for this BSSID (sniffer bumps when
+    // RadioConfig::dataAct is on). FOCUS uses this for the activity term
+    // instead of beacon-only bumps. Decayed by the method / orchestrator.
+    uint16_t dataRecent;
     uint8_t  frame[BEACON_MAX];
 };
 

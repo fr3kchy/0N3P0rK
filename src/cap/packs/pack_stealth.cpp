@@ -1,33 +1,32 @@
-﻿// "STEALTH" pack - zero deauth. Only the PMKID probe runs (open auth +
-// association), and only if the user opted into it in the radio menu. This
-// is the radio-equivalent of DONOHAM mode: you sit on a channel, watch
-// EAPOL traffic, and gently knock on doors with auth frames to coax a PMKID
-// out of any AP that volunteers one in its M1.
-//
-// Pair it with PMKIDONLY or the default PORKCHOP method depending on
-// whether you want active EAPOL harvest (PORKCHOP) or just the quiet
-// passive collection that the dispatcher falls back to when bidirKick /
-// authFlood are both off.
-//
-// hopMs is short because we want to sweep every channel quickly; pauseMs
-// matches the PMKID probe interval so a probe actually fires between hops.
+// "QUIET" pack - zero deauth. Only PMKID probe (open auth + assoc). Radio
+// equivalent of DO NO HAM: sit, watch EAPOL, gently knock for PMKID.
+// No scoring, no depth hold, no jitter - pure passive + soft probe.
 #include "pack_ctx.h"
 
 namespace Cap {
 namespace Packs {
 
 static const Preset kStealthPreset{
-    /* bidirKick  */ false,  // absolutely no broadcast/targeted deauth
-    /* eapolTx    */ false,  // do not flood EAPOL-Start/Logoff
-    /* pmkidProbe */ true,   // the whole point - coax PMKID out of M1
-    /* csaHerd    */ false,  // clients don't need to be herded
-    /* authFlood  */ false,  // no auth spam
-    /* kickBurst  */ 1,      // ignored - no kick happens, kept for completeness
-    /* pauseMs    */ 2000,   // >= pmkidProbe interval, gives the probe room
-    /* lockMs     */ 8000,   // short - we don't really want to dwell
-    /* hopMs      */ 400,    // sweep all channels in ~5s
+    /* bidirKick     */ false,  // no deauth/disassoc
+    /* eapolTx       */ false,
+    /* pmkidProbe    */ true,   // the whole point
+    /* csaHerd       */ false,
+    /* authFlood     */ false,
+    /* kickBurst     */ 1,      // ignored (no kick)
+    /* pauseMs       */ 2000,
+    /* lockMs        */ 8000,
+    /* hopMs         */ 400,    // sweep channels
+    /* jitterMs      */ 0,
+    /* cooldownSec   */ 0,
+    /* scoreThr      */ 0,
+    /* hsDepth       */ 0,      // any pair is a win
+    /* dataAct       */ 0,
+    /* strictLock    */ true,   // if HS starts, stay put
+    /* depthHoldSec  */ 0,
 };
 
+// nullptr method = leave HS METHOD on AUTO / user's choice (quiet works
+// with ALL or FOCUS; both honor the no-TX stealth guard).
 CAP_PACK_REGISTER(stealth, "QUIET", nullptr, kStealthPreset)
 
 } // namespace Packs

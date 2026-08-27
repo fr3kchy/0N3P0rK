@@ -124,6 +124,9 @@ static uint8_t  s_cooldownSec = 0;    // 0..30 seconds per-AP cooldown after kic
 static int16_t  s_scoreThr = 0;        // -100..200, PORKCHOP method min score
 static uint16_t s_dwellMinMs = 120;    // 50..600 minimum channel dwell
 static uint8_t  s_hsDepth = 0;         // 0=PAIR(M1+M2) 1=+M3 2=FULL(M1-M4)
+static bool     s_dataAct = false;     // count data frames for FOCUS activity
+static bool     s_strictLock = true;   // FOCUS ignores score while lock-on-BSSID
+static uint8_t  s_depthHoldSec = 0;    // extra sec hold after pair when hsDepth>0
 static uint32_t s_methodStartMs = 0;
 static uint16_t s_pairAtSwitch = 0;
 static bool     s_pinOk = false;
@@ -475,6 +478,12 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
         for (uint16_t i = bodyOff; i + 1 < lim; i++) {
             if (f[i] == 0x88 && f[i + 1] == 0x8E) { eapol = true; break; }
         }
+    }
+    // DATA ACT (RADIO): count non-EAPOL data toward BeaconSlot::dataRecent
+    // so FOCUS can score real traffic instead of beacon-only activity.
+    if (!eapol && s_dataAct && bssid) {
+        BeaconSlot* bb = findBeacon(bssid);
+        if (bb && bb->dataRecent < 0xFFFF) bb->dataRecent++;
     }
     if (!eapol) return;
     if (s_pinOk && bssid && memcmp(bssid, s_pinBssid, 6) != 0) return;
@@ -872,6 +881,9 @@ static Methods::Ctx buildMethodCtx() {
     } else {
         ctx.lockedBssidActive = false;
     }
+    ctx.dataAct       = s_dataAct;
+    ctx.strictLock    = s_strictLock;
+    ctx.depthHoldSec  = s_depthHoldSec;
     return ctx;
 }
 
@@ -1012,6 +1024,10 @@ static void startCommon(RunMode mode) {
     s_hsDepth = Config::radio().hsDepth;
     if (s_hsDepth > 2) s_hsDepth = 2;
     if (s_dwellMinMs < 50) s_dwellMinMs = 50;
+    s_dataAct = Config::radio().dataAct != 0;
+    s_strictLock = Config::radio().strictLock;
+    s_depthHoldSec = Config::radio().depthHoldSec;
+    if (s_depthHoldSec > 30) s_depthHoldSec = 30;
     // AUTO starts on table index 0 and rotates via maybeRotateMethod().
     if (s_methodCount == 0) methodTable(); // populate s_methodCount
     // s_hsMethod on-disk layout: 0 = AUTO, 1..N = Methods::name(idx-1).
@@ -1203,10 +1219,20 @@ void loop() {
     // now-stale bssid/channel bytes so they don't linger. Also releases
     // the plain s_lockUntil at the same moment, instead of coasting on it
     // for the rest of lockMs.
+    //
+    // DEPTH HOLD (RADIO): when hsDepth > 0 and we already have a crackable
+    // pair but still want M3/M4, keep refreshing the lock deadline by
+    // depthHoldSec so the radio doesn't hop away just because lockMs
+    // expired without a new EAPOL refresh.
     if (bssidLocked()) {
         if (s_lockBssid[0] != 0 && Hc22000::hasHandshake(s_lockBssid, s_hsDepth)) {
             disarmLockOnBssid();
             s_lockUntil = 0;
+        } else if (s_lockBssid[0] != 0 && s_hsDepth > 0 && s_depthHoldSec > 0 &&
+                   Hc22000::hasPair(s_lockBssid)) {
+            uint32_t holdUntil = millis() + (uint32_t)s_depthHoldSec * 1000u;
+            if (s_lockBssidUntil < holdUntil) s_lockBssidUntil = holdUntil;
+            if (s_lockUntil < holdUntil) s_lockUntil = holdUntil;
         }
     } else if (s_lockBssid[0] != 0) {
         disarmLockOnBssid();

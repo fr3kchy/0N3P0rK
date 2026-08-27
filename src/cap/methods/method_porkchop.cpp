@@ -66,11 +66,19 @@ static int actSlotFor(const uint8_t* bssid) {
     return -1;
 }
 
-static void decayActivity(uint32_t now) {
+static void decayActivity(uint32_t now, const Ctx& ctx) {
     if (now - s_lastActDecayMs < 1000) return;
     s_lastActDecayMs = now;
     for (uint8_t i = 0; i < ACT_SLOTS; i++) {
         if (s_act[i].used) s_act[i].recent = (uint16_t)(s_act[i].recent >> 1);
+    }
+    // DATA ACT: decay sniffer-side dataRecent on every beacon slot we see.
+    if (ctx.dataAct && ctx.beacons) {
+        for (uint8_t i = 0; i < ctx.beaconCount; i++) {
+            if (ctx.beacons[i].dataRecent) {
+                ctx.beacons[i].dataRecent = (uint16_t)(ctx.beacons[i].dataRecent >> 1);
+            }
+        }
     }
 }
 
@@ -109,7 +117,7 @@ static ScoreEntry* findOrCreateScore(const uint8_t* bssid) {
     return &s_scores[worst];
 }
 
-static int32_t computeScore(const BeaconSlot& b, uint8_t hsDepth) {
+static int32_t computeScore(const BeaconSlot& b, uint8_t hsDepth, bool dataAct) {
     // Mirrors Porkchop's priority scoring in spirit, simplified for our
     // smaller beacon table:
     //   RSSI     -> 0..100  (clamped -100..-30 mapped to 0..100)
@@ -125,33 +133,28 @@ static int32_t computeScore(const BeaconSlot& b, uint8_t hsDepth) {
     s += (int32_t)((r + 100) * 100 / 70);
 
     // CLIENTS term is clamped to the documented 0..40 base (min(N,4)*10)
-    // plus a flat +40 "busy AP" bonus once N reaches 4. Without the clamp,
-    // this used to top out at 4*10=40 back when BeaconSlot::clients held
-    // at most 4 entries — but that array was bumped to 20 slots (see
-    // beacon_slot.h) so busy APs aren't ignored, and an unclamped `clientN
-    // * 10` now scales up to 200 on its own. That silently swamps the
-    // RSSI (max 100) and activity (max 40) terms, turning this into a
-    // near pure "most clients wins" scorer instead of the balanced one
-    // described above, and it also breaks the RADIO menu's SCORE THR
-    // knob, whose -100..200 range assumes the documented per-term caps.
+    // plus a flat +40 "busy AP" bonus once N reaches 4.
     int32_t clientTerm = (int32_t)b.clientN * 10;
     if (clientTerm > 40) clientTerm = 40;
     s += clientTerm;
     if (b.clientN >= 4) s += 40;
 
-    int a = actSlotFor(b.bssid);
-    if (a >= 0) {
-        uint16_t r2 = s_act[a].recent;
+    // ACTIVITY: DATA ACT on => use real data-frame hits (BeaconSlot::dataRecent).
+    // Off => legacy beacon-tick counter in s_act.
+    if (dataAct) {
+        uint16_t r2 = b.dataRecent;
         if (r2 > 40) r2 = 40;
-        s += r2;
+        s += (int32_t)r2;
+    } else {
+        int a = actSlotFor(b.bssid);
+        if (a >= 0) {
+            uint16_t r2 = s_act[a].recent;
+            if (r2 > 40) r2 = 40;
+            s += r2;
+        }
     }
 
-    // Already-captured APs rank at the very bottom of the list so we don't
-    // waste airtime on them - "captured" here respects HS DEPTH (RADIO
-    // menu): at the default depth (0) this is hasPair() (M1+M2), same as
-    // before. At depth 1/2 an AP that only has the pair doesn't get
-    // deprioritized yet, so this method keeps trying it until M3/M4 (per
-    // the configured depth) actually show up too.
+    // Already-captured APs rank at the very bottom (respects HS DEPTH).
     if (Hc22000::hasHandshake(b.bssid, hsDepth)) s = -1000;
 
     if (b.pmfCapable) s -= 50;
@@ -202,19 +205,21 @@ void pmkidProbePorkchop(const Ctx& ctx) {
 // busy ones don't starve.
 void porkchop(const Ctx& ctx) {
     uint32_t now = millis();
-    decayActivity(now);
+    decayActivity(now, ctx);
 
     // Refresh activity counters for every AP visible right now. This is the
     // cheap "is anyone talking to this AP" signal - we only see the AP when
     // it's beaconing, and every beacon tick on this channel counts as
-    // activity. Real packet counts would be better but require more plumbing
-    // through Ctx.
+    // activity. When DATA ACT is on, real data frames already bump
+    // BeaconSlot::dataRecent in the sniffer; beacon bumps stay for legacy.
     uint8_t n = ctx.beaconCount;
-    for (uint8_t i = 0; i < n; i++) {
-        const BeaconSlot& b = ctx.beacons[i];
-        if (b.channel != ctx.channel) continue;
-        if (b.rssi < ctx.minRssi) continue;
-        bumpActivity(b.bssid);
+    if (!ctx.dataAct) {
+        for (uint8_t i = 0; i < n; i++) {
+            const BeaconSlot& b = ctx.beacons[i];
+            if (b.channel != ctx.channel) continue;
+            if (b.rssi < ctx.minRssi) continue;
+            bumpActivity(b.bssid);
+        }
     }
 
     if (n == 0) {
@@ -241,13 +246,11 @@ void porkchop(const Ctx& ctx) {
 
     // Lock-on-BSSID focus: when the sniffer is parked on a target BSSID's
     // channel waiting for M2/M3/M4 of a 4-way handshake, we MUST keep
-    // kicking that BSSID and only that BSSID. Without this override, a
-    // higher-scoring neighbor on the same channel would steal our kicks
-    // and M2 would never land. We still respect HS DEPTH and RSSI: if the
-    // target already meets depth, or is below minRssi / off-channel /
-    // own-AP, the lock is essentially "lost" and we fall through to the
-    // normal scoring path so the radio can find something useful to do.
-    if (ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
+    // kicking that BSSID and only that BSSID. STRICT LK (default YES)
+    // enforces this; when OFF, scoring may drift to a neighbor.
+    // Without the override, a higher-scoring neighbor would steal kicks
+    // and M2 would never land.
+    if (ctx.strictLock && ctx.lockedBssidActive && ctx.lockedBssid[0] != 0) {
         for (uint8_t i = 0; i < n; i++) {
             const BeaconSlot& b = ctx.beacons[i];
             if (memcmp(b.bssid, ctx.lockedBssid, 6) != 0) continue;
@@ -262,7 +265,7 @@ void porkchop(const Ctx& ctx) {
             // score for this BSSID isn't a stale 0.
             ScoreEntry* se = findOrCreateScore(b.bssid);
             se->lastSeenMs = now;
-            se->score = (se->score * 3 + computeScore(b, ctx.hsDepth)) / 4;
+            se->score = (se->score * 3 + computeScore(b, ctx.hsDepth, ctx.dataAct)) / 4;
             se->lastKickMs = now; // suppress cooldown for this BSSID
             const BeaconSlot& target = b;
             uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
@@ -289,6 +292,9 @@ void porkchop(const Ctx& ctx) {
             if (ctx.csaHerd) csaHerd(ctx);
             return; // exit before the normal scoring loop
         }
+        // STRICT: locked target not usable this tick — do not score-drift.
+        if (ctx.csaHerd) csaHerd(ctx);
+        return;
     }
 
     // Compute / refresh scores; pick the best target this tick.
@@ -304,7 +310,7 @@ void porkchop(const Ctx& ctx) {
         ScoreEntry* se = findOrCreateScore(b.bssid);
         se->lastSeenMs = now;
         // EMA - new score pulls 25% toward the freshly-computed one.
-        int32_t fresh = computeScore(b, ctx.hsDepth);
+        int32_t fresh = computeScore(b, ctx.hsDepth, ctx.dataAct);
         se->score = (se->score * 3 + fresh) / 4;
 
         if (se->lastKickMs != 0 && (now - se->lastKickMs) < cooldownMs) continue;

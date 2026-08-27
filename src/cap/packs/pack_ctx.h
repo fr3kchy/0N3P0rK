@@ -5,7 +5,7 @@
 //
 // A pack = a display name + which capture method to select (by name, or
 // none for AUTO) + a bundle of general-radio knobs (bidir kick, EAPOL TX,
-// kick burst, pause/lock/hop timing...).
+// kick burst, pause/lock/hop timing, FOCUS extras...).
 //
 // To add a pack: create pack_yourname.cpp in this folder with one
 // CAP_PACK_REGISTER() line. Nothing else needs to change — see README.md.
@@ -36,14 +36,28 @@ struct Preset {
     uint16_t pauseMs;
     uint16_t lockMs;
     uint16_t hopMs;
+    // ----- FOCUS / Porkchop extras (same RADIO knobs) --------------------
+    uint8_t  jitterMs;       // 0..20 anti-WIDS gap between mgmt frames
+    uint8_t  cooldownSec;    // 0..30 per-AP cooldown after kick (FOCUS)
+    int16_t  scoreThr;       // -100..200 min score to attack (FOCUS)
+    uint8_t  hsDepth;        // 0=PAIR 1=+M3 2=FULL
+    uint8_t  dataAct;        // 0=beacon activity 1=data-frame activity (FOCUS)
+    bool     strictLock;     // FOCUS: only kick locked BSSID while lock active
+    uint8_t  depthHoldSec;   // extra sec hold after pair when hsDepth>0
 
     constexpr Preset(bool bk = false, bool et = false, bool pp = false,
                      bool ch = false, bool af = false, uint8_t kb = 2,
                      uint16_t pms = 1200, uint16_t lms = 8000,
-                     uint16_t hms = 300) noexcept
+                     uint16_t hms = 300,
+                     uint8_t jit = 0, uint8_t cd = 0, int16_t thr = 0,
+                     uint8_t depth = 0, uint8_t dact = 0,
+                     bool slock = true, uint8_t dhold = 0) noexcept
         : bidirKick(bk), eapolTx(et), pmkidProbe(pp), csaHerd(ch),
           authFlood(af), kickBurst(kb), pauseMs(pms), lockMs(lms),
-          hopMs(hms) {}
+          hopMs(hms),
+          jitterMs(jit), cooldownSec(cd), scoreThr(thr),
+          hsDepth(depth), dataAct(dact),
+          strictLock(slock), depthHoldSec(dhold) {}
 };
 
 // ---- Registry ------------------------------------------------------------

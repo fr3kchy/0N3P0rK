@@ -84,6 +84,9 @@ static const Item RADIO[] = {
     {"SCORE THR", Kind::VALUE,  22, -100, 200, 10}, // PORKCHOP method: min score to attack
     {"DWL MIN",   Kind::VALUE,  23, 50, 600, 10},  // min channel dwell (PASSIVE-style)
     {"HS DEPTH",  Kind::VALUE,  24, 0, 2, 1},      // 0=PAIR 1=+M3 2=FULL
+    {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
+    {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
+    {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
     {"RESET",     Kind::ACTION, 19, 0, 0, 0},
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
@@ -153,6 +156,14 @@ static const char* const H_RADIO[] = {
     "802.11 DEAUTH REASON CODE.",
     "LISTEN AFTER M1, NO KICK.",
     "RICH RADIOTAP CH/RSSI IN PCAP.",
+    "ANTI-WIDS GAP BETWEEN MGMT.",
+    "SEC COOLDOWN AFTER KICK/AP.",
+    "MIN SCORE TO ATTACK (FOCUS).",
+    "MIN CHANNEL DWELL MS.",
+    "PAIR / +M3 / FULL 4-WAY.",
+    "DATA FRAMES FEED FOCUS SCORE.",
+    "LOCK: ONLY KICK LOCKED BSSID.",
+    "EXTRA SEC HOLD AFTER PAIR.",
     "ENT = BACK TO STOCK RADIO.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
@@ -355,6 +366,9 @@ static int getValue(const Item& it) {
             case 22: return r.scoreThr;
             case 23: return r.dwellMinMs;
             case 24: return r.hsDepth;
+            case 25: return r.dataAct ? 1 : 0;
+            case 26: return r.strictLock ? 1 : 0;
+            case 27: return r.depthHoldSec;
             default: return 0;
         }
     }
@@ -415,6 +429,14 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         strncpy(raw, hsDepthName((uint8_t)getValue(it)), sizeof(raw) - 1);
     } else if (s_page == SettingsPage::RADIO && it.id == 8) {
         snprintf(raw, sizeof(raw), "%dS", getValue(it));
+    } else if (s_page == SettingsPage::RADIO && it.id == 27) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if (s_page == SettingsPage::RADIO && it.id == 21) {
+        int v = getValue(it);
+        if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
+        else snprintf(raw, sizeof(raw), "%dS", v);
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }
@@ -609,6 +631,9 @@ static bool setValue(const Item& it, int v) {
             case 22: r.scoreThr = (int16_t)v; break;
             case 23: r.dwellMinMs = (uint16_t)v; break;
             case 24: r.hsDepth = (uint8_t)v; break;
+            case 25: r.dataAct = (uint8_t)(v != 0 ? 1 : 0); break;
+            case 26: r.strictLock = v != 0; break;
+            case 27: r.depthHoldSec = (uint8_t)v; break;
             default: return false;
         }
         // Any hand-tuned knob flips PACK to CUSTOM so the UI reflects that

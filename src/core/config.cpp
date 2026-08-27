@@ -83,6 +83,9 @@ bool Config::init() {
     r.scoreThr = (int16_t)s_prefs.getShort("scthr", r.scoreThr);
     r.dwellMinMs = s_prefs.getUShort("dwlms", r.dwellMinMs);
     r.hsDepth = s_prefs.getUChar("hsdep", r.hsDepth);
+    r.dataAct = s_prefs.getUChar("dataact", r.dataAct);
+    r.strictLock = s_prefs.getBool("strlock", r.strictLock);
+    r.depthHoldSec = s_prefs.getUChar("dphold", r.depthHoldSec);
 
     BleConfig& b = bleConfig;
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
@@ -129,6 +132,9 @@ bool Config::init() {
     // hsMethod's - CUSTOM is the one value allowed above that bound
     // (fixed sentinel).
     if (r.pack != RADIO_PACK_CUSTOM && r.pack >= RADIO_PACK_COUNT_MAX) r.pack = 0;
+    if (r.hsDepth > 2) r.hsDepth = 2;
+    if (r.dataAct > 1) r.dataAct = 1;
+    if (r.depthHoldSec > 30) r.depthHoldSec = 30;
     if (b.burstMs < 50) b.burstMs = 50;
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
@@ -186,6 +192,9 @@ bool Config::save() {
     s_prefs.putShort("scthr", r.scoreThr);
     s_prefs.putUShort("dwlms", r.dwellMinMs);
     s_prefs.putUChar("hsdep", r.hsDepth);
+    s_prefs.putUChar("dataact", r.dataAct);
+    s_prefs.putBool("strlock", r.strictLock);
+    s_prefs.putUChar("dphold", r.depthHoldSec);
 
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
@@ -259,6 +268,15 @@ void Config::applyRadioPack(uint8_t pack) {
         r.pauseMs    = pr.pauseMs;
         r.lockMs     = pr.lockMs;
         r.hopMs      = pr.hopMs;
+        // FOCUS / Porkchop extras — every pack sets these so picking a pack
+        // gives a coherent targeting + lock profile, not just TX intensity.
+        r.jitterMs     = pr.jitterMs;
+        r.cooldownMs   = pr.cooldownSec; // config field is named *Ms but stores seconds
+        r.scoreThr     = pr.scoreThr;
+        r.hsDepth      = pr.hsDepth;
+        r.dataAct      = pr.dataAct;
+        r.strictLock   = pr.strictLock;
+        r.depthHoldSec = pr.depthHoldSec;
     }
     r.pack = pack;
     radioConfig = r;
