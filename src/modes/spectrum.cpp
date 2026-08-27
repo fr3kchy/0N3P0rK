@@ -245,14 +245,22 @@ static void parseAuth(const uint8_t* p, uint16_t len, Auth& auth, bool& pmf) {
         if (o + 2 + n > len) break;
         if (t == 0x30 && n >= 2) {
             rsn = true;
-            uint16_t q = o + 8;
-            uint16_t end = o + 2 + n;
+            // 32-bit offset/end on purpose: pc/ac are attacker-controlled
+            // (straight from a radio frame) and pc*4 can reach ~262KB.
+            // The old uint16_t q/end truncated that back into 16 bits on
+            // `q += 2 + pc*4`, so a crafted/corrupt beacon could wrap q to
+            // some unrelated small value that still passed the `q+2<=end`
+            // check, making p[q]/p[q+1] an out-of-bounds read past this
+            // IE (and potentially past the packet buffer). uint32_t just
+            // can't wrap at these magnitudes, so it can't happen here.
+            uint32_t q = (uint32_t)o + 8;
+            uint32_t end = (uint32_t)o + 2 + n;
             if (q + 2 <= end) {
                 uint16_t pc = p[q] | ((uint16_t)p[q + 1] << 8);
-                q += 2 + pc * 4;
+                q += 2 + (uint32_t)pc * 4;
                 if (q + 2 <= end) {
                     uint16_t ac = p[q] | ((uint16_t)p[q + 1] << 8);
-                    q += 2 + ac * 4;
+                    q += 2 + (uint32_t)ac * 4;
                     if (q + 2 <= end) {
                         uint16_t cap = p[q] | ((uint16_t)p[q + 1] << 8);
                         if (cap & 0x0080) pmf = true;
@@ -275,6 +283,7 @@ static void parseAuth(const uint8_t* p, uint16_t len, Auth& auth, bool& pmf) {
 
 static void onBeacon(const uint8_t* bssid, uint8_t rxCh, uint8_t ds, int8_t rssi,
                      const char* ssid, Auth auth, bool pmf, bool probe) {
+    (void)probe; // kept in the signature for call-site symmetry with onRx(); unused here
     if (s_busy) return;
     int idx = findNet(bssid);
     if (idx < 0) {
@@ -310,7 +319,6 @@ static void onBeacon(const uint8_t* bssid, uint8_t rxCh, uint8_t ds, int8_t rssi
         strncpy(n.ssid, ssid, 32);
         n.ssid[32] = 0;
         n.hidden = false;
-        if (probe) n.hidden = false;
     } else if (!n.ssid[0]) {
         n.hidden = true;
     }
@@ -848,9 +856,19 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextColor(fg);
     c.drawString(line, 4, 40);
 
-    bool pair = Hc22000::hasPair(s_monBssid);
+    bool pair = Hc22000::hasHandshake(s_monBssid, Config::radio().hsDepth);
+    uint8_t mask = Hc22000::handshakeMask(s_monBssid);
     c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
-    c.drawString(pair ? "PAIR  YES  saved" : "PAIR  no  waiting", 4, 54);
+    // Show which messages we've actually seen so the user can track progress
+    // toward the HS DEPTH they configured (PAIR / +M3 / FULL M1-4).
+    char pairLine[36];
+    snprintf(pairLine, sizeof(pairLine), "HS %s%s%s%s  %s",
+             (mask & 0x01) ? "M1" : "--",
+             (mask & 0x02) ? "+M2" : "---",
+             (mask & 0x04) ? "+M3" : "---",
+             (mask & 0x08) ? "+M4" : "---",
+             pair ? "saved" : "wait");
+    c.drawString(pairLine, 4, 54);
 
     if (cap.lastHsSsid[0]) {
         char got[36];
@@ -887,6 +905,8 @@ void start() {
     memset(s_chHit, 0, sizeof(s_chHit));
     memset(s_chSnap, 0, sizeof(s_chSnap));
     memset(s_chRate, 0, sizeof(s_chRate));
+    s_pktN = 0;
+    s_pps = 0;
     radioOn();
     s_run = true;
     s_keyWas = true;
@@ -917,12 +937,12 @@ void getStatusLine(char* out, size_t n) {
     bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
     if (s_phase == HUNT) {
         if (keys) {
-            snprintf(out, n, "SPC kick   ` stop");
+            snprintf(out, n, "auto-kicking   ` stop");
         } else {
             const Cap::Counters& cap = Cap::counters();
             snprintf(out, n, "HUNT HS:%u  %s",
                      (unsigned)cap.framesEapol,
-                     Hc22000::hasPair(s_monBssid) ? "PAIR" : "wait");
+                     Hc22000::hasHandshake(s_monBssid, Config::radio().hsDepth) ? "DONE" : "wait");
         }
     } else if (s_phase == LOCK) {
         if (keys) {
@@ -1004,9 +1024,15 @@ static void handleLock() {
 
 static void handleHunt() {
     if (M5Cardputer.Keyboard.isKeyPressed(' ')) {
-        int idx = findNet(s_monBssid);
-        uint8_t nc = (idx >= 0) ? s_net[idx].nCli : 0;
-        kick(nc ? s_cliSel : -1);
+        // Cap::loop() (called every update() tick in HUNT, just above) is
+        // ALREADY actively kicking s_monBssid via whatever method is
+        // selected - kick() here used to fire a second, fully redundant
+        // attack on top of it. It's also blocking (delay(2) x 3 frames x
+        // 6 rounds = ~36-50ms), which delays that tick's Cap::loop() call
+        // (ring buffer drain + Hc22000::flushPending()) for no benefit,
+        // since Cap is already handling this exact target. Surface that
+        // instead of duplicating the work.
+        Display::showToast("ALREADY KICKING");
     }
 }
 

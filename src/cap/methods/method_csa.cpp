@@ -39,7 +39,8 @@ void resetCsaHerdState() {
 }
 
 void csaHerd(const Ctx& ctx) {
-    if (!ctx.csaHerd) return;
+    // No ctx.csaHerd gate here: this is also the "CSA" method's kick().
+    // Callers that use it as a pack side-effect already check the flag.
     uint32_t now = millis();
     if (now - s_lastHerdMs < 500) return;
     uint8_t n = ctx.beaconCount;
@@ -54,7 +55,7 @@ void csaHerd(const Ctx& ctx) {
         if (ctx.skipPin(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (!b.ssid[0]) continue;             // hidden SSID - CSA with empty SSID is suspicious
-        if (Hc22000::hasPair(b.bssid)) continue; // already captured, leave it alone
+        if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
 
         // PMF-capable is the prime target - OURS/PAN can't touch those.
         // Non-PMF still benefits from CSA as a fallback kick.

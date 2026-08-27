@@ -30,7 +30,7 @@ void pmkidProbe(const Ctx& ctx) {
         if (ctx.skipPin(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (!b.ssid[0]) continue;
-        if (Hc22000::hasPair(b.bssid)) continue;
+        if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         WSLBypasser::sendAuthentication(b.bssid);
         WSLBypasser::sendAssociationRequest(b.bssid, b.ssid);
         s_lastProbeMs = now;

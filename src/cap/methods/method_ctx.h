@@ -84,6 +84,12 @@ void pan(const Ctx& ctx);
 void pmkidProbe(const Ctx& ctx);
 void resetPmkidState();
 
+// CSA-herd (also registered as its own method "CSA"). Callable from other
+// methods (e.g. PORK) when ctx.csaHerd is set, so packs like AGGRO work
+// with any targeting method without sniffer changes.
+void csaHerd(const Ctx& ctx);
+void resetCsaHerdState();
+
 // ---- Registry ------------------------------------------------------------
 // Single source of truth for every capture method. sniffer.cpp, settings
 // menu and AUTO-rotation all read from this table.
