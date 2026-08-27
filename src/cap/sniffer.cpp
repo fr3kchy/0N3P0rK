@@ -330,6 +330,8 @@ static void disarmLockOnBssid() {
 static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
     if (!bssid) return;
     if (s_pinOk && memcmp(bssid, s_pinBssid, 6) != 0) return;
+    // Session skip (Z): stop showing / chasing this BSSID in the bar.
+    if (isSessionSkipped(bssid)) return;
     snprintf(s_cnt.currentBssid, sizeof(s_cnt.currentBssid),
              "%02X:%02X:%02X:%02X:%02X:%02X",
              bssid[0], bssid[1], bssid[2],
@@ -661,6 +663,12 @@ static bool sameBssid(const uint8_t* a, const uint8_t* b) {
 }
 
 static void writeFrameToFile(const Slot& s) {
+    // Z-skip: ignore further EAPOL from this BSSID for the rest of the session
+    // (no pcap append, no UI "current network", no re-kick tracking).
+    if (isSessionSkipped(s.bssid)) {
+        if (s_fileOpen && sameBssid(s_fileBssid, s.bssid)) closeFile();
+        return;
+    }
     if (s_fileOpen && !sameBssid(s_fileBssid, s.bssid)) {
         closeFile();
     }
@@ -1127,23 +1135,30 @@ bool skipCurrent() {
     else if (s_pinOk) t = s_pinBssid;
     if (!t) return false;
     if (!addSkip(t)) return false;
+
+    // Full release so the bar and radio stop sitting on this target.
     disarmLockOnBssid();
     s_lockUntil = 0;
+    if (s_fileOpen && sameBssid(s_fileBssid, t)) closeFile();
+    memset(s_kickBssid, 0, 6);
+    memset(s_kickSta, 0, 6);
+    s_kickStaOk = false;
+    if (memcmp(s_lastHsBssid, t, 6) == 0) memset(s_lastHsBssid, 0, 6);
+    s_cnt.currentBssid[0] = '\0';
+    s_cnt.currentSsid[0] = '\0';
+    s_cnt.lastHsSsid[0] = '\0';
+    // Next hop ASAP — don't stay parked on the skipped AP's channel.
+    s_lastHopMs = 0;
 
     // Prefer network name over MAC on the toast.
     char ssid[33];
     ssidForBssid(t, ssid);
     if (!ssid[0] && s_pinOk && memcmp(t, s_pinBssid, 6) == 0 && s_pinSsid[0])
         strncpy(ssid, s_pinSsid, sizeof(ssid) - 1);
-    if (!ssid[0] && s_cnt.currentSsid[0])
-        strncpy(ssid, s_cnt.currentSsid, sizeof(ssid) - 1);
-    if (!ssid[0] && s_cnt.lastHsSsid[0])
-        strncpy(ssid, s_cnt.lastHsSsid, sizeof(ssid) - 1);
     ssid[32] = '\0';
 
     char msg[28];
     if (ssid[0]) {
-        // "SKIP " + up to 10 chars of SSID fits a short toast.
         char shortSsid[12];
         size_t n = 0;
         while (ssid[n] && n < 10) {

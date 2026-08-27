@@ -240,11 +240,16 @@ void Config::applyRadioPack(uint8_t pack) {
     const Cap::Packs::Entry* tbl = Cap::Packs::table(&packCount);
     if (pack > packCount) pack = 0; // out of range -> STOCK
 
+    // PACK independent of METHOD — never force hsMethod on pack pick.
+    const uint8_t keepMethod = radioConfig.hsMethod;
+
     RadioConfig r; // starts from RadioConfig's own defaults (= STOCK)
+    r.hsMethod = keepMethod;
     if (pack != 0) {
         const Cap::Packs::Entry& pk = tbl[pack - 1];
         const Cap::Packs::Preset& pr = pk.preset;
-        r.hsMethod   = hsMethodIndexForName(pk.methodName);
+        if (pk.methodName && pk.methodName[0])
+            r.hsMethod = hsMethodIndexForName(pk.methodName);
         r.bidirKick  = pr.bidirKick;
         r.eapolTx    = pr.eapolTx;
         r.pmkidProbe = pr.pmkidProbe;

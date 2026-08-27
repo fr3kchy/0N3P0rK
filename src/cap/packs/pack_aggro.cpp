@@ -24,7 +24,7 @@ static const Preset kAggroPreset{
     /* hopMs      */ 150,     // ~7 channels/sec
 };
 
-CAP_PACK_REGISTER(aggro, "MAX", "FOCUS", kAggroPreset)
+CAP_PACK_REGISTER(aggro, "MAX", nullptr, kAggroPreset)
 
 } // namespace Packs
 } // namespace Cap

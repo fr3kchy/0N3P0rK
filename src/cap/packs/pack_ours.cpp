@@ -18,7 +18,7 @@ static const Preset kOursPreset{
     /* hopMs      */ 300,
 };
 
-CAP_PACK_REGISTER(ours, "SOFT", "ALL", kOursPreset)
+CAP_PACK_REGISTER(ours, "SOFT", nullptr, kOursPreset)
 
 } // namespace Packs
 } // namespace Cap
