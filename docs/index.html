@@ -35,11 +35,7 @@
         radial-gradient(ellipse at 80% 100%, rgba(255, 45, 149, 0.07) 0%, transparent 50%);
     }
 
-    /* ===== HEADER ===== */
-    .header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+    .header { text-align: center; margin-bottom: 2.5rem; }
 
     .pig {
       font-size: 3.8rem;
@@ -72,14 +68,13 @@
       margin: 0 auto;
     }
 
-    /* ===== CARD ===== */
     .card {
       background: var(--card);
       border: 1px solid rgba(0, 245, 255, 0.18);
       border-radius: 20px;
       padding: 2.2rem 2rem;
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       box-shadow: 0 0 40px rgba(0, 245, 255, 0.06);
       position: relative;
       overflow: hidden;
@@ -93,38 +88,54 @@
       background: linear-gradient(90deg, var(--accent), var(--pink), var(--yellow));
     }
 
-    .version-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: rgba(0, 245, 255, 0.12);
-      border: 1px solid rgba(0, 245, 255, 0.25);
-      color: var(--accent);
+    .label {
       font-size: 0.78rem;
-      font-weight: 600;
-      padding: 0.3rem 0.85rem;
-      border-radius: 999px;
-      margin-bottom: 1.6rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+      text-align: left;
     }
 
-    .version-badge span {
-      width: 7px; height: 7px;
-      background: var(--green);
-      border-radius: 50%;
-      box-shadow: 0 0 8px var(--green);
+    select {
+      width: 100%;
+      background: #161632;
+      color: var(--text);
+      border: 1px solid rgba(0, 245, 255, 0.25);
+      border-radius: 12px;
+      padding: 0.85rem 1rem;
+      font-size: 0.95rem;
+      margin-bottom: 1.4rem;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2300f5ff'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 1rem center;
+      cursor: pointer;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
     }
 
     .install-area {
-      margin: 1.4rem 0 1.6rem;
+      margin-bottom: 1.5rem;
     }
 
-    /* кнопка ESP Web Tools */
     esp-web-install-button {
       --esp-tools-button-color: #00f5ff;
       --esp-tools-button-text-color: #07071a;
       --esp-tools-button-border-radius: 12px;
       width: 100%;
     }
+
+    .status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-height: 1.4em;
+      margin-bottom: 1rem;
+    }
+
+    .status.error { color: #ff6b6b; }
+    .status.loading { color: var(--yellow); }
 
     .hint {
       font-size: 0.8rem;
@@ -138,7 +149,6 @@
 
     .hint b { color: var(--text); }
 
-    /* ===== LINKS ===== */
     .links {
       display: flex;
       flex-wrap: wrap;
@@ -155,7 +165,6 @@
     }
     .links a:hover { color: var(--pink); }
 
-    /* ===== FOOTER ===== */
     footer {
       margin-top: 3rem;
       font-size: 0.72rem;
@@ -179,12 +188,15 @@
   </div>
 
   <div class="card">
-    <div class="version-badge">
-      <span></span> v1.3.0 · ESP32-S3
-    </div>
+    <div class="label">Выберите версию</div>
+    <select id="versionSelect" disabled>
+      <option>Загрузка релизов...</option>
+    </select>
+
+    <div class="status" id="status">Загружаем список релизов...</div>
 
     <div class="install-area">
-      <esp-web-install-button manifest="./manifest.json">
+      <esp-web-install-button id="installBtn" style="display:none">
         <button slot="activate">Установить прошивку</button>
       </esp-web-install-button>
     </div>
@@ -199,8 +211,7 @@
 
   <div class="links">
     <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank">GitHub</a>
-    <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Релизы</a>
-    <a href="https://github.com/lexilexiko/0N3P0rK/releases/download/1.3.0/0N3P0rK_v1.3.0_m5cardputer.bin" target="_blank">Скачать .bin</a>
+    <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Все релизы</a>
   </div>
 
   <footer>
@@ -208,5 +219,97 @@
     <a href="https://github.com/lexilexiko">lexilexiko</a>
   </footer>
 
+  <script>
+    const REPO = 'lexilexiko/0N3P0rK';
+    const select = document.getElementById('versionSelect');
+    const status = document.getElementById('status');
+    const installBtn = document.getElementById('installBtn');
+
+    let versions = [];
+
+    async function loadReleases() {
+      try {
+        status.textContent = 'Загружаем список релизов...';
+        status.className = 'status loading';
+
+        const res = await fetch(`https://api.github.com/repos/${REPO}/releases`);
+        if (!res.ok) throw new Error('Не удалось получить релизы');
+
+        const releases = await res.json();
+
+        // Ищем .bin файлы в каждом релизе
+        versions = [];
+        for (const rel of releases) {
+          const asset = rel.assets.find(a => a.name.endsWith('.bin'));
+          if (asset) {
+            versions.push({
+              tag: rel.tag_name,
+              name: rel.name || rel.tag_name,
+              url: asset.browser_download_url,
+              prerelease: rel.prerelease
+            });
+          }
+        }
+
+        if (versions.length === 0) {
+          throw new Error('В релизах не найдено .bin файлов');
+        }
+
+        // Заполняем селект
+        select.innerHTML = '';
+        versions.forEach((v, i) => {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.textContent = v.prerelease 
+            ? `${v.name} (pre-release)` 
+            : v.name;
+          select.appendChild(opt);
+        });
+
+        select.disabled = false;
+        status.textContent = `Найдено версий: ${versions.length}`;
+        status.className = 'status';
+        
+        updateInstallButton();
+        select.addEventListener('change', updateInstallButton);
+
+      } catch (err) {
+        status.textContent = 'Ошибка: ' + err.message;
+        status.className = 'status error';
+        select.innerHTML = '<option>Ошибка загрузки</option>';
+      }
+    }
+
+    function updateInstallButton() {
+      const idx = parseInt(select.value);
+      const v = versions[idx];
+      if (!v) return;
+
+      // Создаём манифест на лету
+      const manifest = {
+        name: "0N3P0rK",
+        version: v.tag,
+        new_install_prompt_erase: true,
+        builds: [{
+          chipFamily: "ESP32-S3",
+          parts: [{
+            path: v.url,
+            offset: 0
+          }]
+        }]
+      };
+
+      // Делаем blob URL для манифеста
+      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+      const manifestUrl = URL.createObjectURL(blob);
+
+      installBtn.setAttribute('manifest', manifestUrl);
+      installBtn.style.display = 'block';
+      
+      status.textContent = `Выбрана: ${v.name}`;
+    }
+
+    loadReleases();
+  </script>
 </body>
 </html>
