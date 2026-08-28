@@ -35,11 +35,7 @@
         radial-gradient(ellipse at 80% 100%, rgba(255, 45, 149, 0.07) 0%, transparent 50%);
     }
 
-    /* ===== HEADER ===== */
-    .header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+    .header { text-align: center; margin-bottom: 2.5rem; }
 
     .pig {
       font-size: 3.8rem;
@@ -72,14 +68,13 @@
       margin: 0 auto;
     }
 
-    /* ===== CARD ===== */
     .card {
       background: var(--card);
       border: 1px solid rgba(0, 245, 255, 0.18);
       border-radius: 20px;
       padding: 2.2rem 2rem;
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       box-shadow: 0 0 40px rgba(0, 245, 255, 0.06);
       position: relative;
       overflow: hidden;
@@ -93,38 +88,53 @@
       background: linear-gradient(90deg, var(--accent), var(--pink), var(--yellow));
     }
 
-    .version-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: rgba(0, 245, 255, 0.12);
-      border: 1px solid rgba(0, 245, 255, 0.25);
-      color: var(--accent);
+    .label {
       font-size: 0.78rem;
-      font-weight: 600;
-      padding: 0.3rem 0.85rem;
-      border-radius: 999px;
-      margin-bottom: 1.6rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+      text-align: left;
     }
 
-    .version-badge span {
-      width: 7px; height: 7px;
-      background: var(--green);
-      border-radius: 50%;
-      box-shadow: 0 0 8px var(--green);
+    select {
+      width: 100%;
+      background: #161632;
+      color: var(--text);
+      border: 1px solid rgba(0, 245, 255, 0.25);
+      border-radius: 12px;
+      padding: 0.85rem 1rem;
+      font-size: 0.95rem;
+      margin-bottom: 1.4rem;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2300f5ff'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 1rem center;
+      cursor: pointer;
     }
 
-    .install-area {
-      margin: 1.4rem 0 1.6rem;
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
     }
 
-    /* кнопка ESP Web Tools */
+    .install-area { margin-bottom: 1.5rem; }
+
     esp-web-install-button {
       --esp-tools-button-color: #00f5ff;
       --esp-tools-button-text-color: #07071a;
       --esp-tools-button-border-radius: 12px;
       width: 100%;
     }
+
+    .status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-height: 1.4em;
+      margin-bottom: 1rem;
+    }
+
+    .status.error { color: #ff6b6b; }
+    .status.loading { color: var(--yellow); }
+    .status.ok { color: var(--green); }
 
     .hint {
       font-size: 0.8rem;
@@ -138,7 +148,6 @@
 
     .hint b { color: var(--text); }
 
-    /* ===== LINKS ===== */
     .links {
       display: flex;
       flex-wrap: wrap;
@@ -155,7 +164,6 @@
     }
     .links a:hover { color: var(--pink); }
 
-    /* ===== FOOTER ===== */
     footer {
       margin-top: 3rem;
       font-size: 0.72rem;
@@ -179,12 +187,15 @@
   </div>
 
   <div class="card">
-    <div class="version-badge">
-      <span></span> v1.3.0 · ESP32-S3
-    </div>
+    <div class="label">Выберите версию</div>
+    <select id="versionSelect" disabled>
+      <option>Загрузка...</option>
+    </select>
+
+    <div class="status loading" id="status">Загружаем список версий...</div>
 
     <div class="install-area">
-      <esp-web-install-button manifest="./manifest.json">
+      <esp-web-install-button id="installBtn" style="display:none">
         <button slot="activate">Установить прошивку</button>
       </esp-web-install-button>
     </div>
@@ -199,8 +210,7 @@
 
   <div class="links">
     <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank">GitHub</a>
-    <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Релизы</a>
-    <a href="https://github.com/lexilexiko/0N3P0rK/releases/download/1.3.0/0N3P0rK_v1.3.0_m5cardputer.bin" target="_blank">Скачать .bin</a>
+    <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Все релизы</a>
   </div>
 
   <footer>
@@ -208,5 +218,84 @@
     <a href="https://github.com/lexilexiko">lexilexiko</a>
   </footer>
 
+  <script>
+    // Список версий — добавляй новые сюда, когда выкладываешь релиз
+    // filename должен точно совпадать с именем файла в docs/firmware/
+    const VERSIONS = [
+      {
+        name: "v1.3.0 (latest)",
+        tag: "1.3.0",
+        file: "0N3P0rK_v1.3.0_m5cardputer.bin"
+      },
+      {
+        name: "v1.2.9",
+        tag: "1.2.9",
+        file: "0N3P0rK_v1.2.9_m5cardputer.bin"
+      },
+      {
+        name: "v1.2.6",
+        tag: "1.2.6",
+        file: "0N3P0rK_v1.2.6_m5cardputer.bin"
+      },
+      {
+        name: "v1.2.5",
+        tag: "1.2.5",
+        file: "0N3P0rK_v1.2.5_m5cardputer.bin"
+      }
+    ];
+
+    const select = document.getElementById('versionSelect');
+    const status = document.getElementById('status');
+    const installBtn = document.getElementById('installBtn');
+
+    function init() {
+      select.innerHTML = '';
+      VERSIONS.forEach((v, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = v.name;
+        select.appendChild(opt);
+      });
+
+      select.disabled = false;
+      status.textContent = `Доступно версий: ${VERSIONS.length}`;
+      status.className = 'status ok';
+
+      updateInstallButton();
+      select.addEventListener('change', updateInstallButton);
+    }
+
+    function updateInstallButton() {
+      const idx = parseInt(select.value);
+      const v = VERSIONS[idx];
+      if (!v) return;
+
+      // Локальный путь — без CORS
+      const binPath = `./firmware/${v.file}`;
+
+      const manifest = {
+        name: "0N3P0rK",
+        version: v.tag,
+        new_install_prompt_erase: true,
+        builds: [{
+          chipFamily: "ESP32-S3",
+          parts: [{
+            path: binPath,
+            offset: 0
+          }]
+        }]
+      };
+
+      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+      const manifestUrl = URL.createObjectURL(blob);
+
+      installBtn.setAttribute('manifest', manifestUrl);
+      installBtn.style.display = 'block';
+      status.textContent = `Выбрана: ${v.name}`;
+      status.className = 'status ok';
+    }
+
+    init();
+  </script>
 </body>
 </html>
