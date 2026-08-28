@@ -1,0 +1,16 @@
+{
+  "name": "0N3P0rK",
+  "version": "1.3.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "https://github.com/lexilexiko/0N3P0rK/releases/download/1.3.0/0N3P0rK_v1.3.0_m5cardputer.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
