@@ -1,22 +1,22 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>0N3P0rK — Web Installer</title>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600;700&display=swap');
 
     :root {
-      --bg: #07071a;
-      --card: #0e0e28;
+      --bg: #05051a;
+      --card: #0c0c24;
       --accent: #00f5ff;
       --pink: #ff2d95;
       --yellow: #ffe566;
-      --green: #7cff6b;
-      --text: #e8e8ff;
-      --muted: #7a7a9a;
+      --green: #6bff8a;
+      --text: #eef0ff;
+      --muted: #8b8baa;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -26,56 +26,182 @@
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2.5rem 1rem 3rem;
-      background-image: 
-        radial-gradient(ellipse at 20% 0%, rgba(0, 245, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 100%, rgba(255, 45, 149, 0.07) 0%, transparent 50%);
+      overflow-x: hidden;
     }
 
-    .header { text-align: center; margin-bottom: 2.5rem; }
+    .stars {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        radial-gradient(1px 1px at 20px 30px, #fff, transparent),
+        radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.6), transparent),
+        radial-gradient(1px 1px at 50px 160px, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 90px 40px, rgba(0,245,255,0.8), transparent),
+        radial-gradient(1px 1px at 130px 80px, #fff, transparent),
+        radial-gradient(1px 1px at 160px 120px, rgba(255,45,149,0.7), transparent);
+      background-size: 200px 200px;
+      opacity: 0.45;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 2.2rem 1.1rem 3rem;
+    }
+
+    /* ===== FARM SCENE ===== */
+    .farm {
+      position: relative;
+      width: 100%;
+      height: 160px;
+      margin-bottom: 1.8rem;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(0,245,255,0.15);
+      box-shadow: 0 0 40px rgba(0,245,255,0.08);
+      background: linear-gradient(180deg, #0a0a2e 0%, #12123a 55%, #1a3a1a 55%, #163016 100%);
+    }
+
+    .farm::before {
+      content: '';
+      position: absolute;
+      top: -30px; left: 50%;
+      width: 180px; height: 80px;
+      transform: translateX(-50%);
+      background: radial-gradient(ellipse, rgba(0,245,255,0.15), transparent 70%);
+      pointer-events: none;
+    }
+
+    .moon {
+      position: absolute;
+      top: 18px; right: 28px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #e8e8ff;
+      box-shadow: 0 0 18px rgba(232,232,255,0.6);
+    }
+
+    .tree {
+      position: absolute;
+      bottom: 42px;
+      width: 0; height: 0;
+    }
+    .tree::before {
+      content: '';
+      position: absolute;
+      bottom: 0; left: -8px;
+      width: 16px; height: 22px;
+      background: #3d2b1f;
+    }
+    .tree::after {
+      content: '';
+      position: absolute;
+      bottom: 14px; left: -18px;
+      width: 0; height: 0;
+      border-left: 18px solid transparent;
+      border-right: 18px solid transparent;
+      border-bottom: 28px solid #1e6b3a;
+      filter: drop-shadow(0 0 6px rgba(30,107,58,0.5));
+    }
+    .tree.t1 { left: 18px; transform: scale(0.85); }
+    .tree.t2 { left: 58px; }
+    .tree.t3 { right: 70px; transform: scale(1.1); }
+    .tree.t4 { right: 22px; transform: scale(0.75); }
+
+    .bush {
+      position: absolute;
+      bottom: 40px;
+      width: 28px; height: 16px;
+      background: #1a5c32;
+      border-radius: 50% 50% 40% 40%;
+      box-shadow: 8px 2px 0 #164f2a, -6px 3px 0 #1a5c32;
+    }
+    .bush.b1 { left: 110px; }
+    .bush.b2 { right: 120px; }
+
+    .grass {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 42px;
+      background: repeating-linear-gradient(
+        90deg,
+        #1a4a22 0px, #1a4a22 3px,
+        #22602c 3px, #22602c 6px
+      );
+    }
+    .grass::after {
+      content: '';
+      position: absolute;
+      top: -6px; left: 0; right: 0;
+      height: 8px;
+      background: repeating-linear-gradient(
+        90deg,
+        transparent 0px, transparent 4px,
+        #2d7a3a 4px, #2d7a3a 5px,
+        transparent 5px, transparent 9px
+      );
+    }
+
+    .pig-wrap {
+      position: absolute;
+      bottom: 38px;
+      left: 0;
+      animation: run 7s linear infinite;
+    }
+
+    @keyframes run {
+      0%   { left: -50px; transform: scaleX(1); }
+      45%  { left: calc(100% - 40px); transform: scaleX(1); }
+      50%  { left: calc(100% - 40px); transform: scaleX(-1); }
+      95%  { left: -50px; transform: scaleX(-1); }
+      100% { left: -50px; transform: scaleX(1); }
+    }
 
     .pig {
-      font-size: 3.8rem;
+      font-size: 2rem;
       line-height: 1;
-      margin-bottom: 0.6rem;
-      filter: drop-shadow(0 0 18px rgba(255, 45, 149, 0.4));
-      animation: float 3.5s ease-in-out infinite;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+      animation: bounce 0.35s ease-in-out infinite alternate;
     }
 
-    @keyframes float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-8px); }
+    @keyframes bounce {
+      from { transform: translateY(0); }
+      to   { transform: translateY(-4px); }
+    }
+
+    /* ===== TITLE ===== */
+    .header {
+      text-align: center;
+      margin-bottom: 1.8rem;
     }
 
     .title {
       font-family: 'Press Start 2P', system-ui;
-      font-size: clamp(1.4rem, 5vw, 2rem);
+      font-size: clamp(1.35rem, 5.5vw, 1.9rem);
       letter-spacing: 1px;
       background: linear-gradient(90deg, var(--accent), var(--pink));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      margin-bottom: 0.7rem;
+      margin-bottom: 0.55rem;
     }
 
     .tagline {
       color: var(--muted);
-      font-size: 0.95rem;
-      max-width: 380px;
+      font-size: 0.92rem;
       line-height: 1.5;
-      margin: 0 auto;
     }
 
+    /* ===== CARD ===== */
     .card {
       background: var(--card);
       border: 1px solid rgba(0, 245, 255, 0.18);
       border-radius: 20px;
-      padding: 2.2rem 2rem;
-      width: 100%;
-      max-width: 440px;
-      box-shadow: 0 0 40px rgba(0, 245, 255, 0.06);
+      padding: 1.9rem 1.6rem;
+      box-shadow: 0 0 50px rgba(0, 245, 255, 0.07);
       position: relative;
       overflow: hidden;
     }
@@ -89,74 +215,67 @@
     }
 
     .label {
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       color: var(--muted);
-      margin-bottom: 0.5rem;
-      text-align: left;
+      margin-bottom: 0.45rem;
+      letter-spacing: 0.04em;
     }
 
     select {
       width: 100%;
-      background: #161632;
+      background: #141432;
       color: var(--text);
-      border: 1px solid rgba(0, 245, 255, 0.25);
+      border: 1px solid rgba(0, 245, 255, 0.28);
       border-radius: 12px;
       padding: 0.85rem 1rem;
       font-size: 0.95rem;
-      margin-bottom: 1.4rem;
+      margin-bottom: 1.25rem;
       appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2300f5ff'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 1rem center;
       cursor: pointer;
     }
-
     select:focus {
       outline: none;
       border-color: var(--accent);
     }
 
-    .install-area { margin-bottom: 1.5rem; }
+    .status {
+      font-size: 0.84rem;
+      color: var(--muted);
+      min-height: 1.35em;
+      margin-bottom: 1rem;
+    }
+    .status.ok { color: var(--green); }
+
+    .install-area { margin-bottom: 1.35rem; }
 
     esp-web-install-button {
       --esp-tools-button-color: #00f5ff;
-      --esp-tools-button-text-color: #07071a;
+      --esp-tools-button-text-color: #05051a;
       --esp-tools-button-border-radius: 12px;
       width: 100%;
     }
 
-    .status {
-      font-size: 0.85rem;
-      color: var(--muted);
-      min-height: 1.4em;
-      margin-bottom: 1rem;
-    }
-
-    .status.error { color: #ff6b6b; }
-    .status.loading { color: var(--yellow); }
-    .status.ok { color: var(--green); }
-
     .hint {
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: var(--muted);
-      line-height: 1.55;
+      line-height: 1.6;
       background: rgba(255,255,255,0.03);
       border-radius: 12px;
-      padding: 0.9rem 1rem;
-      text-align: left;
+      padding: 0.85rem 1rem;
     }
-
     .hint b { color: var(--text); }
 
     .links {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
-      gap: 0.8rem 1.4rem;
-      margin-top: 2.4rem;
+      gap: 0.7rem 1.5rem;
+      margin-top: 2.2rem;
       font-size: 0.88rem;
     }
-
     .links a {
       color: var(--accent);
       text-decoration: none;
@@ -165,113 +284,93 @@
     .links a:hover { color: var(--pink); }
 
     footer {
-      margin-top: 3rem;
+      margin-top: 2.6rem;
       font-size: 0.72rem;
       color: #4a4a6a;
       text-align: center;
-      line-height: 1.6;
+      line-height: 1.65;
     }
-
-    footer a { color: #6a6a8a; }
+    footer a { color: #6a6a8a; text-decoration: none; }
   </style>
 </head>
 <body>
+  <div class="stars"></div>
 
-  <div class="header">
-    <div class="pig">🐷</div>
-    <h1 class="title">0N3P0rK</h1>
-    <p class="tagline">
-      Свинка на ферме + сарай с инструментами<br>
-      для M5Cardputer &amp; Cardputer ADV
-    </p>
-  </div>
+  <div class="wrap">
 
-  <div class="card">
-    <div class="label">Выберите версию</div>
-    <select id="versionSelect" disabled>
-      <option>Загрузка...</option>
-    </select>
-
-    <div class="status loading" id="status">Загружаем список версий...</div>
-
-    <div class="install-area">
-      <esp-web-install-button id="installBtn" style="display:none">
-        <button slot="activate">Установить прошивку</button>
-      </esp-web-install-button>
+    <div class="farm">
+      <div class="moon"></div>
+      <div class="tree t1"></div>
+      <div class="tree t2"></div>
+      <div class="tree t3"></div>
+      <div class="tree t4"></div>
+      <div class="bush b1"></div>
+      <div class="bush b2"></div>
+      <div class="grass"></div>
+      <div class="pig-wrap">
+        <div class="pig">🐷</div>
+      </div>
     </div>
 
-    <div class="hint">
-      • Только <b>Chrome / Edge / Opera</b><br>
-      • Подключи Cardputer по USB-C<br>
-      • Выбери COM-порт (VID 303A)<br>
-      • SD-карту лучше вставить заранее
+    <div class="header">
+      <h1 class="title">0N3P0rK</h1>
+      <p class="tagline">
+        Tamagotchi pig on a tiny farm + barn of lab tools<br>
+        for M5Cardputer &amp; Cardputer ADV
+      </p>
     </div>
-  </div>
 
-  <div class="links">
-    <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank">GitHub</a>
-    <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Все релизы</a>
-  </div>
+    <div class="card">
+      <div class="label">SELECT VERSION</div>
+      <select id="versionSelect">
+        <option value="0">v1.3.0 (latest)</option>
+        <option value="1">v1.2.9</option>
+        <option value="2">v1.2.6</option>
+        <option value="3">v1.2.5</option>
+      </select>
 
-  <footer>
-    MIT License · Lab use only<br>
-    <a href="https://github.com/lexilexiko">lexilexiko</a>
-  </footer>
+      <div class="status ok" id="status">Ready to install</div>
+
+      <div class="install-area">
+        <esp-web-install-button id="installBtn">
+          <button slot="activate">Install Firmware</button>
+        </esp-web-install-button>
+      </div>
+
+      <div class="hint">
+        • <b>Chrome / Edge / Opera</b> only<br>
+        • Connect Cardputer via USB-C<br>
+        • Select the COM port (VID 303A)<br>
+        • Insert SD card before flashing if possible
+      </div>
+    </div>
+
+    <div class="links">
+      <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank">GitHub</a>
+      <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Releases</a>
+    </div>
+
+    <footer>
+      MIT License · Lab use only<br>
+      <a href="https://github.com/lexilexiko">lexilexiko</a>
+    </footer>
+  </div>
 
   <script>
-    // Список версий — добавляй новые сюда, когда выкладываешь релиз
-    // filename должен точно совпадать с именем файла в docs/firmware/
     const VERSIONS = [
-      {
-        name: "v1.3.0 (latest)",
-        tag: "1.3.0",
-        file: "0N3P0rK_v1.3.0_m5cardputer.bin"
-      },
-      {
-        name: "v1.2.9",
-        tag: "1.2.9",
-        file: "0N3P0rK_v1.2.9_m5cardputer.bin"
-      },
-      {
-        name: "v1.2.6",
-        tag: "1.2.6",
-        file: "0N3P0rK_v1.2.6_m5cardputer.bin"
-      },
-      {
-        name: "v1.2.5",
-        tag: "1.2.5",
-        file: "0N3P0rK_v1.2.5_m5cardputer.bin"
-      }
+      { name: "v1.3.0 (latest)", tag: "1.3.0", file: "0N3P0rK_v1.3.0_m5cardputer.bin" },
+      { name: "v1.2.9",          tag: "1.2.9", file: "0N3P0rK_v1.2.9_m5cardputer.bin" },
+      { name: "v1.2.6",          tag: "1.2.6", file: "0N3P0rK_v1.2.6_m5cardputer.bin" },
+      { name: "v1.2.5",          tag: "1.2.5", file: "0N3P0rK_v1.2.5_m5cardputer.bin" }
     ];
 
     const select = document.getElementById('versionSelect');
     const status = document.getElementById('status');
     const installBtn = document.getElementById('installBtn');
 
-    function init() {
-      select.innerHTML = '';
-      VERSIONS.forEach((v, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = v.name;
-        select.appendChild(opt);
-      });
-
-      select.disabled = false;
-      status.textContent = `Доступно версий: ${VERSIONS.length}`;
-      status.className = 'status ok';
-
-      updateInstallButton();
-      select.addEventListener('change', updateInstallButton);
-    }
-
-    function updateInstallButton() {
-      const idx = parseInt(select.value);
-      const v = VERSIONS[idx];
+    function update() {
+      const v = VERSIONS[parseInt(select.value)];
       if (!v) return;
-
-      // Локальный путь — без CORS
-      const binPath = `./firmware/${v.file}`;
 
       const manifest = {
         name: "0N3P0rK",
@@ -279,23 +378,18 @@
         new_install_prompt_erase: true,
         builds: [{
           chipFamily: "ESP32-S3",
-          parts: [{
-            path: binPath,
-            offset: 0
-          }]
+          parts: [{ path: `./firmware/${v.file}`, offset: 0 }]
         }]
       };
 
       const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-      const manifestUrl = URL.createObjectURL(blob);
-
-      installBtn.setAttribute('manifest', manifestUrl);
-      installBtn.style.display = 'block';
-      status.textContent = `Выбрана: ${v.name}`;
+      installBtn.setAttribute('manifest', URL.createObjectURL(blob));
+      status.textContent = `Selected: ${v.name}`;
       status.className = 'status ok';
     }
 
-    init();
+    select.addEventListener('change', update);
+    update();
   </script>
 </body>
 </html>
