@@ -92,62 +92,144 @@ static Hs* slotFor(const uint8_t* bssid) {
 
 static void maybeWrite(Hs* h);
 
+// True only when we positively read "WPA*" from the file.
+// False means "not confirmed" — caller must NOT treat that as "safe to delete".
+static bool fileStartsWithWpa(const char* path) {
+    if (!path || !SD.exists(path)) return false;
+    File p = SD.open(path, "r");
+    if (!p) return false;
+    char head[5] = {0, 0, 0, 0, 0};
+    size_t n = p.read((uint8_t*)head, 4);
+    p.close();
+    return n >= 4 && head[0] == 'W' && head[1] == 'P' && head[2] == 'A' && head[3] == '*';
+}
+
+// PORKCHOP model: once a capture is good, never touch it again.
+// They used hs.saved in RAM + a single FILE_WRITE. We persist the same rule
+// on disk: if the file already begins with WPA*, skip. Writes go to .tmp
+// first; only the tmp is removed on failure. Destination is removed ONLY
+// when we can prove it is empty (seek end == 0) — never based on size()
+// alone, and never when open/read is flaky.
 static bool writeLine(Hs* h, const char* suffix, const char* line) {
     if (!h || !line || !line[0]) return false;
-    // A real hashcat WPA*01/*02 line is hundreds of chars — refuse junk.
     size_t lineLen = strlen(line);
     if (lineLen < 64) return false;
+    if (!(line[0] == 'W' && line[1] == 'P' && line[2] == 'A' && line[3] == '*'))
+        return false;
 
     Storage::ensureDir(Storage::DIR_HS);
     char path[80];
     makePath(h, suffix, path, sizeof(path));
 
-    // Same rule as pcap: if a good file is already on SD, do not open "w"
-    // (that truncates). Returning true marks wroteEapol/wrotePmkid so we
-    // stop retrying.
-    if (SD.exists(path)) {
-        File probe = SD.open(path, "r");
-        size_t sz = probe ? probe.size() : 0;
-        if (probe) probe.close();
-        if (sz >= 64) {
-            Serial.printf("[22000] keep existing %s (%u bytes)\n",
-                          Storage::baseName(path), (unsigned)sz);
-            return true;
-        }
-        // 0-byte / tiny leftovers (failed write, empty create) — replace.
-        SD.remove(path);
+    // === PORKCHOP equivalent of `if (hs.saved) continue` ===
+    if (fileStartsWithWpa(path)) {
+        Serial.printf("[22000] keep existing %s\n", Storage::baseName(path));
+        return true;
     }
 
-    File f = SD.open(path, "w");
-    if (!f) return false;
+    char tmp[84];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (SD.exists(tmp)) SD.remove(tmp);
+
+    File f = SD.open(tmp, "w");
+    if (!f) {
+        Serial.printf("[22000] open tmp failed %s\n", Storage::baseName(tmp));
+        return false;
+    }
     size_t wrote = f.print(line);
-    // Explicit newline (print, not println) so we control byte count.
     if (wrote == lineLen) wrote += f.write((const uint8_t*)"\n", 1);
     f.flush();
-    size_t onCard = f.size();
     f.close();
 
-    // Must land a full line on the card. Otherwise delete the stub (0/1 byte
-    // files were showing up in LOOT after flaky SD writes).
-    if (wrote < lineLen + 1 || onCard < 64) {
-        Serial.printf("[22000] short write %s (wrote=%u size=%u) — remove\n",
-                      Storage::baseName(path), (unsigned)wrote, (unsigned)onCard);
-        SD.remove(path);
+    // Verify tmp by content, not size().
+    if (wrote < lineLen + 1 || !fileStartsWithWpa(tmp)) {
+        Serial.printf("[22000] bad tmp (wrote=%u) — drop tmp only\n", (unsigned)wrote);
+        SD.remove(tmp);
         return false;
+    }
+
+    // Destination handling — never delete unless proven empty.
+    if (SD.exists(path)) {
+        if (fileStartsWithWpa(path)) {
+            SD.remove(tmp);
+            Serial.printf("[22000] keep existing %s (race)\n", Storage::baseName(path));
+            return true;
+        }
+        // Not confirmed WPA*. Prove empty before remove; if uncertain, keep
+        // the destination and abandon this write (tmp goes away).
+        File pe = SD.open(path, "r");
+        if (!pe) {
+            Serial.printf("[22000] dest open fail — keep dest, drop tmp %s\n",
+                          Storage::baseName(path));
+            SD.remove(tmp);
+            return true; // treat as "already have something"
+        }
+        bool provenEmpty = false;
+        if (pe.seek(0, SeekEnd)) {
+            provenEmpty = (pe.position() == 0);
+        }
+        pe.close();
+        if (!provenEmpty) {
+            // Could be a good file size() lied about, or non-empty garbage.
+            // PORKCHOP would not delete either. Keep dest, drop tmp.
+            Serial.printf("[22000] dest not proven empty — keep, drop tmp %s\n",
+                          Storage::baseName(path));
+            SD.remove(tmp);
+            return true;
+        }
+        SD.remove(path); // only true 0-byte inode
+    }
+
+    if (!SD.rename(tmp, path)) {
+        File src = SD.open(tmp, "r");
+        File dst = SD.open(path, "w");
+        bool ok = false;
+        if (src && dst) {
+            uint8_t buf[128];
+            ok = true;
+            while (true) {
+                int n = src.read(buf, sizeof(buf));
+                if (n <= 0) break;
+                if ((int)dst.write(buf, n) != n) { ok = false; break; }
+            }
+        }
+        if (src) src.close();
+        if (dst) dst.close();
+        SD.remove(tmp);
+        if (!ok || !fileStartsWithWpa(path)) {
+            Serial.printf("[22000] rename/copy failed %s\n", Storage::baseName(path));
+            // Only scrub dest if it is still not WPA* AND proven empty.
+            if (SD.exists(path) && !fileStartsWithWpa(path)) {
+                File pe = SD.open(path, "r");
+                bool empty = false;
+                if (pe && pe.seek(0, SeekEnd)) empty = (pe.position() == 0);
+                if (pe) pe.close();
+                if (empty) SD.remove(path);
+            }
+            return false;
+        }
     }
 
     char ssid[33];
     essidOf(h, ssid);
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, Storage::baseName(path), ssid);
+
+    // Legacy dashed name: remove only if proven empty (never if WPA*).
     char legacy[64];
     snprintf(legacy, sizeof(legacy),
              "%s/%02X-%02X-%02X-%02X-%02X-%02X%s",
              Storage::DIR_HS,
              h->bssid[0], h->bssid[1], h->bssid[2],
              h->bssid[3], h->bssid[4], h->bssid[5], suffix);
-    if (strcmp(legacy, path) != 0 && SD.exists(legacy)) SD.remove(legacy);
-    Serial.printf("[22000] wrote %s (%u bytes)\n",
-                  Storage::baseName(path), (unsigned)onCard);
+    if (strcmp(legacy, path) != 0 && SD.exists(legacy) && !fileStartsWithWpa(legacy)) {
+        File pe = SD.open(legacy, "r");
+        bool empty = false;
+        if (pe && pe.seek(0, SeekEnd)) empty = (pe.position() == 0);
+        if (pe) pe.close();
+        if (empty) SD.remove(legacy);
+    }
+
+    Serial.printf("[22000] wrote %s\n", Storage::baseName(path));
     return true;
 }
 

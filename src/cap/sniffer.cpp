@@ -52,6 +52,7 @@ static File     s_file;
 static uint8_t  s_fileBssid[6];
 static uint8_t  s_lastHsBssid[6];
 static bool     s_fileOpen = false;
+static bool     s_fileOwned = false; // true only if WE created this path empty in this open
 static uint32_t s_fileSize = 0;
 static char     s_fileName[Storage::FILE_NAME_MAX];
 // One-shot log dedup for the "file is already at MAX_FILE_SIZE" branch
@@ -617,38 +618,90 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     return true;
 }
 
-// Scrub a pcap path if on-card size is below a full global header (24 bytes).
-// 0/1-byte stubs were landing in LOOT when open("a") created an inode but the
-// header never actually stuck on the SD card (RAM counter lied).
-static void scrubStubPcap(const char* path, const char* nameForLog) {
-    if (!path || !path[0] || !SD.exists(path)) return;
+// Classify an on-disk pcap WITHOUT trusting size() alone (FatFS on some
+// cards reports size()==0 for perfectly good multi-KB files — that used to
+// make us SD.remove() real captures).
+//   0 = missing
+//   1 = true empty/tiny stub (safe to replace only if we own the create)
+//   2 = valid / keep (has pcap magic OR size clearly past header)
+static int probePcapState(const char* path, size_t* outSize) {
+    if (outSize) *outSize = 0;
+    if (!path || !path[0] || !SD.exists(path)) return 0;
     File p = SD.open(path, "r");
-    size_t z = p ? p.size() : 0;
-    if (p) p.close();
-    if (z < sizeof(Pcap::FileHeader)) {
-        SD.remove(path);
-        Serial.printf("[CAP] scrubbed stub pcap (%u bytes): %s\n",
-                      (unsigned)z, nameForLog ? nameForLog : path);
+    if (!p) {
+        // Exists but cannot open — DO NOT delete; treat as keep.
+        return 2;
     }
+    size_t z = p.size();
+    if (outSize) *outSize = z;
+    uint8_t mag[4] = {0, 0, 0, 0};
+    size_t nr = p.read(mag, 4);
+    p.close();
+    if (nr >= 4) {
+        uint32_t m = (uint32_t)mag[0]
+                   | ((uint32_t)mag[1] << 8)
+                   | ((uint32_t)mag[2] << 16)
+                   | ((uint32_t)mag[3] << 24);
+        // LE write of 0xA1B2C3D4 → bytes D4 C3 B2 A1 → word 0xA1B2C3D4
+        if (m == 0xA1B2C3D4u || m == 0xD4C3B2A1u) return 2;
+    }
+    // No magic: only call it a stub if the file is truly tiny. A large
+    // size with weird header is still kept (better leave junk than erase loot).
+    if (z > 0 && z < sizeof(Pcap::FileHeader)) return 1;
+    if (z == 0) {
+        // Double-check: size()==0 is the flaky case. Try length via seek.
+        File p2 = SD.open(path, "r");
+        if (!p2) return 2;
+        if (p2.seek(0, SeekEnd)) {
+            size_t end = p2.position();
+            p2.close();
+            if (outSize) *outSize = end;
+            if (end >= sizeof(Pcap::FileHeader)) return 2;
+            if (end == 0) return 1;
+            return 1;
+        }
+        p2.close();
+        // Seek failed — refuse to delete.
+        return 2;
+    }
+    return 2;
+}
+
+// Remove ONLY confirmed stubs, and only when the caller knows we created
+// this path (or it was never a valid pcap). Never touch magic-bearing files.
+static void scrubOwnedStub(const char* path, const char* nameForLog) {
+    if (!path || !path[0]) return;
+    size_t z = 0;
+    int st = probePcapState(path, &z);
+    if (st != 1) {
+        Serial.printf("[CAP] scrub skip (state=%d size=%u): %s\n",
+                      st, (unsigned)z, nameForLog ? nameForLog : path);
+        return;
+    }
+    SD.remove(path);
+    Serial.printf("[CAP] scrubbed true stub (%u bytes): %s\n",
+                  (unsigned)z, nameForLog ? nameForLog : path);
 }
 
 static void closeFile() {
     if (!s_fileOpen) return;
     s_file.flush();
-    // Trust the card, not only the RAM byte counter — flaky SD can report
-    // write OK while size() stays 0/1.
-    size_t onCard = s_file.size();
     char path[80];
     path[0] = '\0';
     if (s_fileName[0])
         snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+    bool owned = s_fileOwned;
+    size_t tracked = s_fileSize;
     s_file.close();
     s_fileOpen = false;
-
-    size_t tracked = s_fileSize;
+    s_fileOwned = false;
     s_fileSize = 0;
-    if (path[0] && (onCard < sizeof(Pcap::FileHeader) || tracked < sizeof(Pcap::FileHeader))) {
-        scrubStubPcap(path, s_fileName);
+
+    // Only auto-delete if WE created this file in this open AND our RAM
+    // counter never reached a full header. Never delete based on size()
+    // alone — that was wiping good captures when FatFS lied with size=0.
+    if (path[0] && owned && tracked < sizeof(Pcap::FileHeader)) {
+        scrubOwnedStub(path, s_fileName);
         s_fileName[0] = '\0';
         memset(s_fileBssid, 0, 6);
         return;
@@ -665,80 +718,63 @@ static bool openFileForBssid(const uint8_t* bssid) {
     char path[80];
     snprintf(path, sizeof(path), "%s%s", PREFIX, name);
 
-    bool exists = SD.exists(path);
-    // Probe size BEFORE any write open. A file smaller than the 24-byte
-    // pcap global header is a remnant of a cut-short header write - delete
-    // and start clean. A file that already has a full header (+ preferably
-    // at least one packet) is a finished capture for this BSSID: do NOT
-    // reopen it. Reopening with "a" after a flaky size()==0 has been seen
-    // to rewrite the header / remove on failed write and zero a good pcap.
     size_t preSize = 0;
-    if (exists) {
-        File probe = SD.open(path, "r");
-        preSize = probe ? probe.size() : 0;
-        if (probe) probe.close();
-        // 0-byte and sub-header stubs are always safe to replace.
-        if (preSize < sizeof(Pcap::FileHeader)) {
-            if (preSize > 0 || exists) {
-                Serial.printf("[CAP] removed stub %u-byte pcap: %s\n", (unsigned)preSize, name);
-                SD.remove(path);
-            }
-            exists = false;
-            preSize = 0;
-        } else if (preSize >= sizeof(Pcap::FileHeader)) {
-            // Keep existing good capture. User deletes the file manually to recapture.
-            if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
-                Serial.printf("[CAP] keep existing pcap (%u bytes): %s\n",
-                              (unsigned)preSize, name);
-                memcpy(s_fullLoggedBssid, bssid, 6);
-            }
-            return false;
+    int state = probePcapState(path, &preSize);
+    if (state == 2) {
+        // Valid capture already on card — never reopen, never delete.
+        if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
+            Serial.printf("[CAP] keep existing pcap (%u bytes): %s\n",
+                          (unsigned)preSize, name);
+            memcpy(s_fullLoggedBssid, bssid, 6);
         }
+        return false;
     }
-    if (!exists && st.handshakes >= MAX_FILES) {
+    if (state == 1) {
+        // Confirmed empty/tiny stub only — safe to replace.
+        Serial.printf("[CAP] replacing stub %u-byte pcap: %s\n", (unsigned)preSize, name);
+        SD.remove(path);
+        preSize = 0;
+    }
+
+    if (state != 2 && st.handshakes >= MAX_FILES) {
         Serial.println("[CAP] handshake cap (200 files) reached");
         return false;
     }
 
-    s_file = SD.open(path, "a");
+    // Prefer exclusive create for brand-new files so we own the inode.
+    // Fall back to "a" if "w" is unavailable on this FS glue.
+    bool pathExisted = SD.exists(path);
+    s_file = SD.open(path, pathExisted ? "a" : "w");
     if (!s_file) {
-        // open("a") can still create a 0-byte inode on some cards when it
-        // later fails — probe and scrub if so.
-        if (SD.exists(path)) {
-            File p = SD.open(path, "r");
-            size_t z = p ? p.size() : 0;
-            if (p) p.close();
-            if (z < sizeof(Pcap::FileHeader)) SD.remove(path);
-        }
+        s_file = SD.open(path, "a");
+    }
+    if (!s_file) {
+        Serial.printf("[CAP] open failed: %s\n", name);
         return false;
     }
 
     s_fileSize = s_file.size();
-    // Safety: if the card reported a non-empty file above but open shows 0,
-    // something is wrong with the FS handle - do not write, do not remove.
-    if (preSize >= sizeof(Pcap::FileHeader) && s_fileSize < preSize) {
-        Serial.printf("[CAP] size mismatch (pre=%u open=%u), refuse write: %s\n",
-                      (unsigned)preSize, (unsigned)s_fileSize, name);
+    // If open somehow attached to a file that now looks big, do not write —
+    // and do NOT remove.
+    if (s_fileSize >= sizeof(Pcap::FileHeader)) {
+        Serial.printf("[CAP] open found existing %u bytes, refuse write: %s\n",
+                      (unsigned)s_fileSize, name);
         s_file.close();
+        memcpy(s_fullLoggedBssid, bssid, 6);
         return false;
     }
-    bool createdNew = false;
     if (s_fileSize >= MAX_FILE_SIZE) {
         s_file.close();
-        if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
-            Serial.printf("[CAP] pcap at cap (%u bytes), skipping %s\n",
-                          (unsigned)s_fileSize, name);
-            memcpy(s_fullLoggedBssid, bssid, 6);
-        }
+        memcpy(s_fullLoggedBssid, bssid, 6);
         return false;
     }
     if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
         memset(s_fullLoggedBssid, 0, sizeof(s_fullLoggedBssid));
     }
 
-    // Only brand-new empty files get a header. Never rewrite header onto
-    // an existing stream (preSize already gated above).
-    if (s_fileSize == 0 && preSize == 0) {
+    bool createdNew = false;
+    s_fileOwned = false;
+    if (s_fileSize == 0) {
         Pcap::FileHeader fh;
         fh.magic        = 0xA1B2C3D4;
         fh.versionMajor = 2;
@@ -749,15 +785,22 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.linktype     = 127;
         size_t nw = s_file.write((uint8_t*)&fh, sizeof(fh));
         s_file.flush();
-        size_t onCard = s_file.size();
-        if (nw != sizeof(fh) || onCard < sizeof(fh)) {
-            Serial.printf("[CAP] header write failed (nw=%u onCard=%u): %s\n",
-                          (unsigned)nw, (unsigned)onCard, name);
+        // Trust write return value, NOT size() — size() lying as 0 after a
+        // successful write used to delete the file we just created and, in
+        // the probe path, good older captures.
+        if (nw != sizeof(fh)) {
+            Serial.printf("[CAP] header write failed (nw=%u): %s\n",
+                          (unsigned)nw, name);
             s_file.close();
-            SD.remove(path);
+            // Only remove if the path was empty before we opened.
+            if (!pathExisted) {
+                size_t z = 0;
+                if (probePcapState(path, &z) == 1) SD.remove(path);
+            }
             return false;
         }
         s_fileSize = sizeof(fh);
+        s_fileOwned = true; // we created / wrote the header this open
         s_cnt.filesOpened++;
         createdNew = true;
         XP::addXP(XPEvent::HANDSHAKE);
