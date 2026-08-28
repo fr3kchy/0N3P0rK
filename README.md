@@ -4,7 +4,7 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.2.5** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.3.0** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -17,6 +17,8 @@ The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 Plug in the Cardputer, put an SD card in the slot, and you get a pig on a scrolling farm. She walks, eats, talks, levels up, and can turn into a zombie if you let her starve (or a wolf gets her). Behind the farm is a barn menu: sniff, capture, offline crack, BLE toys, IR, spectrum, loot sync.
 
 Think Tamagotchi first. The radio is in the barn.
+
+**v1.3.0** focuses the radio on smarter handshake hunting: packs & methods, FOCUS scoring, session skip, a clearer status bar, spectrum HS depth, and safer pcap writes.
 
 ---
 
@@ -47,7 +49,7 @@ Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / C
 3. Flash with any of:
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.5_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_m5cardputer.bin
 ```
 
 or PlatformIO:
@@ -65,7 +67,7 @@ pio run
 ```
 
 Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release name: `0N3P0rK_v1.2.5_m5cardputer.bin`
+Release name: `0N3P0rK_v1.3.0_m5cardputer.bin`
 
 ---
 
@@ -88,12 +90,13 @@ Release name: `0N3P0rK_v1.2.5_m5cardputer.bin`
 | `I` | IR PORT |
 | `S` | SPECTRUM |
 | `H` | LOOT |
+| `F` | FILES |
 
 ---
 
 ## Farm
 
-The pig lives here. Top bar: hearts, food apple, level, sky/season, battery. Bottom bar: dirt fringe + name.
+The pig lives here. Top bar: hearts, food apple, level, sky/season, battery. Bottom bar: dirt fringe + status.
 
 ### Move her
 
@@ -113,151 +116,188 @@ The pig lives here. Top bar: hearts, food apple, level, sky/season, battery. Bot
 
 - Hunger ticks down. When it hits empty, she loses a **heart**.
 - Eat fruit / berries from the farm to fill hunger. A full stomach can add a heart (up to 5).
-- **0 hearts** (wolf **or** hunger) → she becomes a **zombie**. No countdown toast — it is a surprise.
+- **0 hearts** (wolf **or** hunger) → she becomes a **zombie**.
 - **5 hearts** again → she turns back into a normal pig by herself ("PIG AGAIN").
-- You may change skin by hand only if she has **at least 1 heart**. Locked skins are skipped in the cycle.
-
-A leftover empty stomach used to eat the new heart instantly. After a zombify / a new heart, hunger is buffered so she does not flop straight back.
+- You may change skin by hand only if she has **at least 1 heart**.
 
 ### Wolf
 
-A night visitor. If **WOLF EAT** is on, a bite at 0 hearts can stash a random handshake into `/0N3P0rK/wolf/` (never keys). Hit the wolf or turn Am off to get loot back.
+A night visitor. If **WOLF EAT** is on, a bite at 0 hearts can stash a random handshake into `/0N3P0rK/wolf/` (never keys).
 
 ### Trees and bushes
-
-Always three plants, each on its own lane so they do not grow out of one spot:
 
 | Lane | What | Drops |
 | --- | --- | --- |
 | Left | fruit tree (changes with the season) | apples / cherries / cones |
-| Center | decorative (willow in spring, street lamp in NOIR, snowy tree in winter — never a second fir) | none |
-| Right | berry bush | berries, every season |
-
-They scroll with the grass. Jump on one three times to knock it down; decor and the bush grow back. The bush does **not** collapse by itself — only a kick. Berries (and fruit) fall, then grow again, then fall again.
+| Center | decorative | none |
+| Right | berry bush | berries |
 
 ### Seasons and sky
 
-**PIG → SEASON** or AUTO (AUTO rotates spring → summer → autumn → winter every 15 minutes; RETRO and NOIR stay manual).
+**PIG → SEASON** or AUTO (spring → summer → autumn → winter; RETRO and NOIR stay manual).
 
 | Season | Farm look |
 | --- | --- |
-| SPRING | sakura (left), weeping willow (center), bush (right), fresh grass |
+| SPRING | sakura, willow, bush |
 | SUMMER | apple tree, classic tree, bush |
-| AUTUMN | old apple tree, fall colors, leaves |
-| WINTER | fir (left), snowy classic (center), frost |
-| RETRO | silver-screen black and white (unlock) |
-| NOIR | night alley, stars, sodium lamp, moths (unlock) |
+| AUTUMN | fall colors, leaves |
+| WINTER | fir, snow, frost |
+| RETRO | black and white (unlock) |
+| NOIR | night alley, stars, lamp (unlock) |
 
-**SKY:** AUTO (clock / a living cycle), DAY, or NIGHT. NOIR is always night.
+**SKY:** AUTO, DAY, or NIGHT. NOIR is always night.
 
-### XP and secrets
-
-XP is a Tamagotchi grind. Each level costs more than the last:
-
-| Level-up | XP needed |
-| ---: | ---: |
-| 1 → 2 | 100 |
-| 2 → 3 | 250 |
-| 3 → 4 | 500 |
-| 4 → 5 | 1000 |
-| 5 → 6 | 2500 |
-| 6 → 7 | 5000 |
-| 7 → 8 | 7500 |
-| after that | +2500 each time |
-
-You earn XP by picking fruit, scaring the wolf, care (pet / feed, rate-limited), handshakes, PIGPASS, EVILPIG, night survive, and so on.
+### XP and unlocks
 
 | Unlock | At |
 | --- | --- |
 | BLUSH skin | lv 5 |
 | SHADOW skin | lv 8 |
-| Gold apples on the fruit tree | lv 10 |
+| Gold apples | lv 10 |
 | CANDY skin | lv 12 |
-| RETRO skin + RETRO season | lv 15 |
+| RETRO skin + season | lv 15 |
 | NOIR season | lv 18 |
 | GOLD skin | lv 20 |
 
-**PIG → CODE** — type `l3xik0` to unlock every skin and season at once.
+**PIG → CODE** — type `l3xik0` to unlock every skin and season.
 
 Skins: CLASSIC, BLUSH, HOG, ZOMBIE, RETRO, SHADOW, CANDY, GOLD.
 
-She talks in a bubble (Font0). Drop your own lines in `/0N3P0rK/talk/` (see SD below).
+Custom talk lines: `/0N3P0rK/talk/`.
 
 ---
 
 ## Barn menu
 
-`` ` `` from the farm. Four roots: **ATTACK**, **LOOT**, **PIG**, **SET**.
+`` ` `` from the farm. Roots: **ATTACK**, **LOOT**, **PIG**, **SET**.
 
 ### ATTACK
 
 | Item | What it does |
 | --- | --- |
-| LIGHT | Quiet sniff on the **current** channel. Incoming rings on the snout. UI stays calm. |
-| AGGRO | Hop channels 1–13, kick, catch EAPOL / PMKID. Outgoing rings. SSID hunt. |
-| EVILPIG | Lab portal: clone **your own** net, loot, kick. `ENT` clone, `V` loot, `D` kick. |
-| PIGPASS | Offline WPA from a wordlist or mask on the SD. Handshakes in `/handshakes/`, lists in `/Passworld/`. |
-| BLE | Apple / Win / Android frames. Own devices. `;` / `.` family. |
-| IR PORT | Point at a TV. `SPC` fire, `R` NA/EU, `E` file from `/0N3P0rK/ir`. |
-| SPECTRUM | 2.4 GHz sweep, lobes, waterfall. `ENT` lock, `SPC` kick, `W` wake. |
-| STOP | Radio sleep. Loot on the card stays. |
+| LIGHT | Quiet sniff on the **current** channel. No hop, no deauth. |
+| AGGRO | Hop 1–13, kick via **method + pack**, catch EAPOL / PMKID. |
+| EVILPIG | Lab portal on **your own** net. |
+| PIGPASS | Offline WPA from wordlist / mask on SD. |
+| BLE | Apple / Win / Android frames. |
+| IR PORT | IR blast; files in `/0N3P0rK/ir`. |
+| SPECTRUM | 2.4 GHz sweep. `ENT` lock, `A` hunt, **`D` HS depth**. |
+| FILES | Browse SD / MEM. **`X`** delete (Y confirm). |
+| STOP | Radio sleep. |
+
+### Capture: LIGHT vs AGGRO
+
+| | LIGHT | AGGRO |
+| --- | --- | --- |
+| Hop | No | Yes |
+| Deauth | Off | On if DEAUTH enabled |
+| **Z** session skip | Yes | Yes |
+| Bar tag | `L` | `A` (`*` = locked) |
+
+**Z** skips the current focus until the next LIGHT/AGGRO start (lock → kick → bar SSID → last HS → pin). Toast `SKIP <name>` or `SKIP NONE`.
+
+### Bottom bar (radio live)
+
+**Left** — real focus SSID only (never MAC). Else `SCAN#ch`.
+
+**Right** example: `A* F/F &3 #06`
+
+| Piece | Meaning |
+| --- | --- |
+| `A`/`L`/`P` | Aggressive / Light / Pinned |
+| `*` | Lock after EAPOL |
+| pack/method letters | Active pack & method |
+| **`&N`** | Unique networks with saved HS/PMKID |
+| `#ch` | Channel |
 
 ### LOOT
 
-One bag for **wpa-sec** and **pwncrack.org**. `,` / `/` switch tab. `S` sync all pending, `U` one file (then pulls `results.txt`), `Q` pull results only (no handshake upload), `D` delete, `R` reload list from SD, `T` test (scroll with `;` / `.`). Bottom bar cycles the key hints.
-
-Put API keys in **SET →** the matching key fields (they live in net NVS, not `pig.cfg`).
+wpa-sec + pwncrack. `S` sync all, `U` one file, `Q` results only, `D` delete, `R` reload.
 
 ### PIG
 
-Name, skin, season, sky, LIFE, scene layers (trees / grass / wolf / weather…), ANIM TEST, **CODE**, WOLF / WOLF EAT.
+Name, skin, season, sky, LIFE, layers, CODE, WOLF.
 
 ### SET
 
-1. **SYSTEM** — brightness, sound, dim after / dim level  
-2. **STATUS** — LVL, XP bar, board, battery, SD, Wi-Fi, WPA/PWN keys present, version. `;` / `.` scroll  
-3. **RADIO** — pack (STOCK / OURS / PAN), hop, lock, deauth, RSSI, MAC, PMKID, CSA, pcap…  
-4. **BLE** — burst / adv time  
-5. **CONNECT** — home Wi-Fi for sync (scan, type **only the password**)  
-6. **KEYS** — farm / menu shortcuts. `ENT` to bind, Backspace to clear  
-7. **USB SD** — the SD card as a disk on the PC. Eject on the PC, then `` ` ``
+SYSTEM · STATUS · **RADIO** · BLE · CONNECT · KEYS · USB SD
 
 ---
 
-## SD card
+## RADIO (v1.3)
 
-Root folder is always `/0N3P0rK/`. Created on boot if missing.
+Packs apply a preset of knobs + optional default method. Manual tweaks become CUSTOM.
 
-```
-/0N3P0rK
-  handshakes/     pcap + 22000 captures
-  wpa-sec/        key.txt  results.txt  uploaded.txt
-  pwncrack/       key.txt  results.txt  uploaded.txt
-  evilpig/        creds.csv
-  pigpass/        cracked.txt  checkpoint
-  Passworld/      wordlists for PIGPASS
-  ir/             IR files
-  wolf/           what the wolf stole (handshakes, never keys)
-  talk/           custom pig lines
-```
+### Methods
 
-**talk** — one file per mood, one line = one bubble, `#` starts a comment, keep lines around 24 characters:
+| Method | Behavior |
+| --- | --- |
+| ALL | Kick eligible APs on channel |
+| CLIENTS | Prefer APs with stations |
+| FOCUS | Score one AP (RSSI, clients, data activity); lock |
+| HERD / CSA | Channel-switch style where enabled |
+| AUTO | Rotate methods |
 
-`idle.txt` `happy.txt` `hungry.txt` `sad.txt` `sleepy.txt` `fed.txt` `pet.txt` `play.txt` `bird.txt`
+### Key knobs
+
+| Setting | Role |
+| --- | --- |
+| **HS DEPTH** | PAIR / +M3 / FULL — when lock may release |
+| **DEPTH HOLD** | Extra hold after pair if depth > PAIR |
+| **DATA ACT** | FOCUS prefers live data, not beacon-only |
+| **STRICT LK** | No retarget while locked |
+| **LOCK MS** | Park time after EAPOL |
+| **ATK RSSI** | Ignore weaker APs |
+| **HOP MS** / hop set | Dwell & channel set |
+| **DEAUTH** | Master kick enable |
+| **PMKID** probe | Auth/assoc without deauth |
 
 ---
 
-## Keys (global)
+## SPECTRUM (v1.3)
 
 | Key | Action |
 | --- | --- |
-| `` ` `` / `~` / Esc (code 27) | Back / leave the mode |
-| Backspace | Minimize the window, **not** exit |
-| `;` / `.` | Up / down in lists (STATUS too) |
-| Enter | Select |
-| `,` / `/` | Walk on the farm |
+| `;` / `.` | Select |
+| `F` | Filter ALL / VULN / SOFT / **HID** |
+| `ENT` | Lock |
+| `A` | Hunt (pinned Cap) |
+| `SPC` | Kick (LOCK) |
+| `W` | Wake clients |
+| **`D`** | HS depth: PAIR → +M3 → FULL |
+| `` ` `` | Back |
 
-Change binds in **SET → KEYS**.
+Hidden SSIDs show as `<HIDDEN>` until a probe response reveals the name. Hunt uses BSSID either way.
+
+---
+
+## FILES
+
+| Key | Action |
+| --- | --- |
+| `;` / `.` | Navigate |
+| Enter | Open |
+| `,` | Parent |
+| `V` | SD / MEM |
+| `N` | New file |
+| **`X`** then **Y** | Delete file |
+
+---
+
+## SD layout
+
+```
+/0N3P0rK
+  handshakes/     pcap + 22000 / pmkid
+  wpa-sec/        key.txt  results.txt  uploaded.txt
+  pwncrack/       key.txt  results.txt  uploaded.txt
+  evilpig/        creds.csv
+  pigpass/        cracked.txt
+  Passworld/      wordlists
+  ir/             IR files
+  wolf/           wolf stash (handshakes only)
+  talk/           pig lines
+```
 
 ---
 
@@ -265,43 +305,59 @@ Change binds in **SET → KEYS**.
 
 - PlatformIO env `m5cardputer`, board `m5stack-stamps3`
 - `espressif32@6.12.0`, Arduino framework
-- Partition table: `partitions.csv`
-- USB: `-UARDUINO_USB_MODE` then `-DARDUINO_USB_MODE=0`, `ARDUINO_USB_CDC_ON_BOOT=1`
-- Version string is injected by `scripts/pre_build.py` from `custom_version` in `platformio.ini`
+- Version from `scripts/pre_build.py` + `custom_version` in `platformio.ini` → set **1.3.0** for this release
 
 ---
 
-## v1.2.5
+## Release notes
 
-- Same potfile path as **v1.2.1** (the earlier 1.2.5 experiment is replaced)
-- LOOT `Q` downloads `results.txt` from the current tab (WPA-SEC or PwnCrack) with **no** handshake upload — recover if the potfile never arrived or a sync hung
-- `U` (one file) also pulls `results.txt` after the upload
+### v1.3.0
 
-## v1.2.1
+Handshake-first radio pass: catch more real handshakes, clearer status, skip stuck targets, fewer junk files on SD.
 
-- Fix: WPA-SEC / PwnCrack potfile and `[OK]` status survive reboot and show after sync
-- Fix: PwnCrack potfile download/parse restored to the v1.2 path that worked
-- `R` reloads the LOOT list from SD (both tabs)
-- `U` (one file) also pulls `results.txt` — upload alone did not download the potfile
+**Capture & methods**
+- Pack presets wire method + radio knobs (QUIET / SOFT / NORMAL / FOCUS / LOUD / MAX-style)
+- FOCUS scoring: RSSI EMA, clients, optional **data-frame activity**, PMF penalty
+- RADIO: **DATA ACT**, **STRICT LK**, **DEPTH HOLD** (+ **HS DEPTH** PAIR / +M3 / FULL)
+- Session **Z** skip until next LIGHT/AGGRO start; correct target resolution; beacon-table drop; empty-MAC fix for `00:…` BSSIDs
 
-## v1.2
+**Bottom bar**
+- Left: focus **SSID only** (lock / pin / last HS) or `SCAN#ch` — no hop flicker, no MAC-as-name
+- Right: **`&N`** = unique networks with saved HS/PMKID (not raw EAPOL counter)
 
-- LOOT opens fast (no SD compact / extra file reads on every enter)
-- WPA-SEC and PwnCrack upload every pending file, up to 8 MB each, with a live bar
-- `D` deletes the selected capture; list columns stay put
-- Compact no longer eats `.pcap` when a `.22000` exists for the same AP
+**Spectrum**
+- **`D`** cycles PAIR / +M3 / FULL for hunt; live `Cap::setHsDepth`
+- Progress line M1…M4 + selected depth
+- `<HIDDEN>` label + HID filter
 
-## v1.1
+**Storage**
+- Pcap: verify size on card after header; scrub sub-header stubs (0–23 bytes) so LOOT stays clean
+- `.22000` short-write guards kept
 
-- Farm flora scattered on a longer loop; smash here, grow off-screen
-- Winter snow banks: cloud-like puffs, spawn while snowing, trampled path stays
-- EvilPig / PigPass: cycling key hints, marquee for long names
-- LOOT: `U` sends one handshake; `T` test log scrolls
+**Unchanged**
+- File manager delete (`X`/`Y`), LOOT delete (`D`), farm / pig / BLE / IR / EVILPIG / PIGPASS core
+
+**Parked for later**
+- ROAD street mode, TX power knob, MP3 player
+
+---
+
+### v1.2.5
+
+- Potfile path aligned with v1.2.1
+- LOOT `Q` = results only; `U` uploads and pulls `results.txt`
+
+### v1.2.1
+
+- WPA-SEC / PwnCrack potfile status fixes
+- LOOT `R` reload; `U` pulls potfile after upload
+
+### v1.2
+
+- Faster LOOT open
 
 ---
 
 ## License
 
-MIT. Copyright (c) 2026 lexilexiko.
-
-Inspired by M5PORKCHOP (0ct0) and the OnePork farm package. Those projects remain their authors'. **0N3P0rK** is a separate work.
+MIT. Lab use only on networks you own or may test.
