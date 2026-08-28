@@ -93,14 +93,18 @@ static Hs* slotFor(const uint8_t* bssid) {
 static void maybeWrite(Hs* h);
 
 static bool writeLine(Hs* h, const char* suffix, const char* line) {
-    if (!h) return false;
+    if (!h || !line || !line[0]) return false;
+    // A real hashcat WPA*01/*02 line is hundreds of chars — refuse junk.
+    size_t lineLen = strlen(line);
+    if (lineLen < 64) return false;
+
     Storage::ensureDir(Storage::DIR_HS);
     char path[80];
     makePath(h, suffix, path, sizeof(path));
 
     // Same rule as pcap: if a good file is already on SD, do not open "w"
-    // (that truncates). A real WPA*01 / WPA*02 line is well over 64 bytes.
-    // Returning true marks wroteEapol/wrotePmkid so we stop retrying.
+    // (that truncates). Returning true marks wroteEapol/wrotePmkid so we
+    // stop retrying.
     if (SD.exists(path)) {
         File probe = SD.open(path, "r");
         size_t sz = probe ? probe.size() : 0;
@@ -110,14 +114,28 @@ static bool writeLine(Hs* h, const char* suffix, const char* line) {
                           Storage::baseName(path), (unsigned)sz);
             return true;
         }
-        // Tiny/corrupt leftover — safe to replace.
-        if (sz > 0 && sz < 64) SD.remove(path);
+        // 0-byte / tiny leftovers (failed write, empty create) — replace.
+        SD.remove(path);
     }
 
     File f = SD.open(path, "w");
     if (!f) return false;
-    f.println(line);
+    size_t wrote = f.print(line);
+    // Explicit newline (print, not println) so we control byte count.
+    if (wrote == lineLen) wrote += f.write((const uint8_t*)"\n", 1);
+    f.flush();
+    size_t onCard = f.size();
     f.close();
+
+    // Must land a full line on the card. Otherwise delete the stub (0/1 byte
+    // files were showing up in LOOT after flaky SD writes).
+    if (wrote < lineLen + 1 || onCard < 64) {
+        Serial.printf("[22000] short write %s (wrote=%u size=%u) — remove\n",
+                      Storage::baseName(path), (unsigned)wrote, (unsigned)onCard);
+        SD.remove(path);
+        return false;
+    }
+
     char ssid[33];
     essidOf(h, ssid);
     if (ssid[0]) CapName::writeCompanionSsid(Storage::DIR_HS, Storage::baseName(path), ssid);
@@ -128,7 +146,8 @@ static bool writeLine(Hs* h, const char* suffix, const char* line) {
              h->bssid[0], h->bssid[1], h->bssid[2],
              h->bssid[3], h->bssid[4], h->bssid[5], suffix);
     if (strcmp(legacy, path) != 0 && SD.exists(legacy)) SD.remove(legacy);
-    Serial.printf("[22000] wrote %s\n", Storage::baseName(path));
+    Serial.printf("[22000] wrote %s (%u bytes)\n",
+                  Storage::baseName(path), (unsigned)onCard);
     return true;
 }
 

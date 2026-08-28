@@ -30,6 +30,10 @@ bool isLocked();
 bool skipCurrent();
 bool isSkipped(const uint8_t* bssid);
 
+// Live HS depth while Cap runs (0=PAIR 1=+M3 2=FULL). Spectrum hunt cycles this.
+void setHsDepth(uint8_t depth);
+uint8_t hsDepth();
+
 void loop();
 
 struct Counters {
@@ -45,6 +49,11 @@ struct Counters {
     char     currentSsid[33];
     char     lastHsSsid[33];
     char     methodTag[8];
+    // Bottom-bar left label — real focus, not random beacons.
+    // targetMode: 0=SCAN/hop, 1=LOCK, 2=HS/EAPOL, 3=PIN, 4=KICK
+    uint8_t  targetMode;
+    char     targetSsid[33];
+    char     targetBssid[18];
 };
 const Counters& counters();
 

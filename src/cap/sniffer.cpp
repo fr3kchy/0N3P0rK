@@ -157,8 +157,17 @@ static uint8_t s_skipList[SKIP_MAX][6];
 static uint8_t s_skipN = 0;
 static bool    s_skipKeyWas = false;
 
+// True MAC empty check — first-byte-only was wrong for BSSIDs like 00:11:22:…
+static bool isZeroMac(const uint8_t* m) {
+    if (!m) return true;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (m[i] != 0) return false;
+    }
+    return true;
+}
+
 static bool isSessionSkipped(const uint8_t* bssid) {
-    if (!bssid || bssid[0] == 0) return false;
+    if (isZeroMac(bssid)) return false;
     for (uint8_t i = 0; i < s_skipN; i++) {
         if (memcmp(s_skipList[i], bssid, 6) == 0) return true;
     }
@@ -171,14 +180,26 @@ static void clearSkipList() {
 }
 
 static bool addSkip(const uint8_t* bssid) {
-    if (!bssid || (bssid[0] == 0 && bssid[1] == 0)) return false;
+    if (isZeroMac(bssid)) return false;
     if (isSessionSkipped(bssid)) return true;
     if (s_skipN >= SKIP_MAX) {
+        // Drop oldest so we never lose the newest skip the user just pressed.
         memmove(s_skipList[0], s_skipList[1], (SKIP_MAX - 1) * 6);
         s_skipN = SKIP_MAX - 1;
     }
     memcpy(s_skipList[s_skipN++], bssid, 6);
     return true;
+}
+
+// Parse "AA:BB:CC:DD:EE:FF" from counters.currentBssid into out[6].
+static bool parseColonMac(const char* s, uint8_t out[6]) {
+    if (!s || !s[0]) return false;
+    unsigned v[6];
+    if (sscanf(s, "%02x:%02x:%02x:%02x:%02x:%02x",
+               &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
+        return false;
+    for (uint8_t i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
+    return !isZeroMac(out);
 }
 
 // Hard ceiling on how long we'll sit locked on one target. Without this,
@@ -296,7 +317,7 @@ static bool hopLocked() {
 // the rest of its 4-way handshake (M2/M3/M4). Callers should treat this as
 // 'do not hop away'.
 static bool bssidLocked() {
-    if (s_lockBssid[0] == 0 || s_lockBssidUntil == 0) return false;
+    if (isZeroMac(s_lockBssid) || s_lockBssidUntil == 0) return false;
     if (lockStreakExpired()) return false;
     return millis() < s_lockBssidUntil;
 }
@@ -307,7 +328,7 @@ static bool bssidLocked() {
 // we're already armed for the same BSSID, refresh the deadline only — no
 // spurious channel jumps.
 static void armLockOnBssid(const uint8_t* bssid, uint8_t channel) {
-    if (!bssid || bssid[0] == 0) return;
+    if (isZeroMac(bssid)) return;
     if (isSessionSkipped(bssid)) return;
     if (s_lockOnHs && s_lockMs > 0) {
         bool same = (memcmp(s_lockBssid, bssid, 6) == 0);
@@ -335,6 +356,9 @@ static void noteNetwork(const uint8_t* bssid, const char* ssid, bool force) {
     if (s_pinOk && memcmp(bssid, s_pinBssid, 6) != 0) return;
     // Session skip (Z): stop showing / chasing this BSSID in the bar.
     if (isSessionSkipped(bssid)) return;
+    // current* tracks last-seen beacon / activity for Z-skip resolution.
+    // The bottom-bar LEFT label uses target* (setBarTarget) so hopping
+    // beacons no longer flicker random SSIDs over the real focus.
     snprintf(s_cnt.currentBssid, sizeof(s_cnt.currentBssid),
              "%02X:%02X:%02X:%02X:%02X:%02X",
              bssid[0], bssid[1], bssid[2],
@@ -356,6 +380,44 @@ static void ssidForBssid(const uint8_t* bssid, char out[33]) {
         return;
     }
     if (bcn) CapName::ssidFromMgmt(bcn->frame, bcn->len, out);
+}
+
+// Bottom-bar focus: 0=SCAN 1=LOCK 2=HS 3=PIN 4=KICK
+static void setBarTarget(uint8_t mode, const uint8_t* bssid, const char* ssidHint) {
+    s_cnt.targetMode = mode;
+    if (isZeroMac(bssid)) {
+        s_cnt.targetBssid[0] = '\0';
+        s_cnt.targetSsid[0] = '\0';
+        return;
+    }
+    snprintf(s_cnt.targetBssid, sizeof(s_cnt.targetBssid),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2],
+             bssid[3], bssid[4], bssid[5]);
+    if (ssidHint && ssidHint[0]) {
+        strncpy(s_cnt.targetSsid, ssidHint, sizeof(s_cnt.targetSsid) - 1);
+        s_cnt.targetSsid[sizeof(s_cnt.targetSsid) - 1] = '\0';
+    } else {
+        char ssid[33];
+        ssidForBssid(bssid, ssid);
+        if (ssid[0]) {
+            strncpy(s_cnt.targetSsid, ssid, sizeof(s_cnt.targetSsid) - 1);
+            s_cnt.targetSsid[sizeof(s_cnt.targetSsid) - 1] = '\0';
+        } else if (mode == 3 && s_pinSsid[0]) {
+            strncpy(s_cnt.targetSsid, s_pinSsid, sizeof(s_cnt.targetSsid) - 1);
+            s_cnt.targetSsid[sizeof(s_cnt.targetSsid) - 1] = '\0';
+        } else {
+            // Name unknown — never show MAC (confusing). Placeholder only.
+            strncpy(s_cnt.targetSsid, "?", sizeof(s_cnt.targetSsid) - 1);
+            s_cnt.targetSsid[sizeof(s_cnt.targetSsid) - 1] = '\0';
+        }
+    }
+}
+
+static void clearBarTarget() {
+    s_cnt.targetMode = 0;
+    s_cnt.targetSsid[0] = '\0';
+    s_cnt.targetBssid[0] = '\0';
 }
 
 static void storeBeacon(const uint8_t* bssid, const uint8_t* f, uint16_t len, int8_t rssi) {
@@ -537,6 +599,7 @@ static void makeFilename(const uint8_t* bssid, char out[Storage::FILE_NAME_MAX])
 }
 
 static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, uint8_t ch, int8_t rssi) {
+    if (!s_fileOpen || !frame || flen < 24) return false;
     uint8_t rt[Pcap::RADIOTAP_FAT_LEN];
     uint8_t rtLen = Pcap::buildRadiotap(rt, ch ? ch : s_cnt.currentChannel, rssi, s_fatPcap);
     Pcap::PacketHeader ph;
@@ -554,12 +617,43 @@ static bool writePcapPacket(const uint8_t* frame, uint16_t flen, uint32_t ts, ui
     return true;
 }
 
-static void closeFile() {
-    if (s_fileOpen) {
-        s_file.flush();
-        s_file.close();
-        s_fileOpen = false;
+// Scrub a pcap path if on-card size is below a full global header (24 bytes).
+// 0/1-byte stubs were landing in LOOT when open("a") created an inode but the
+// header never actually stuck on the SD card (RAM counter lied).
+static void scrubStubPcap(const char* path, const char* nameForLog) {
+    if (!path || !path[0] || !SD.exists(path)) return;
+    File p = SD.open(path, "r");
+    size_t z = p ? p.size() : 0;
+    if (p) p.close();
+    if (z < sizeof(Pcap::FileHeader)) {
+        SD.remove(path);
+        Serial.printf("[CAP] scrubbed stub pcap (%u bytes): %s\n",
+                      (unsigned)z, nameForLog ? nameForLog : path);
     }
+}
+
+static void closeFile() {
+    if (!s_fileOpen) return;
+    s_file.flush();
+    // Trust the card, not only the RAM byte counter — flaky SD can report
+    // write OK while size() stays 0/1.
+    size_t onCard = s_file.size();
+    char path[80];
+    path[0] = '\0';
+    if (s_fileName[0])
+        snprintf(path, sizeof(path), "%s%s", PREFIX, s_fileName);
+    s_file.close();
+    s_fileOpen = false;
+
+    size_t tracked = s_fileSize;
+    s_fileSize = 0;
+    if (path[0] && (onCard < sizeof(Pcap::FileHeader) || tracked < sizeof(Pcap::FileHeader))) {
+        scrubStubPcap(path, s_fileName);
+        s_fileName[0] = '\0';
+        memset(s_fileBssid, 0, 6);
+        return;
+    }
+    // Keep name/bssid so companion/rename still know the last file.
 }
 
 static bool openFileForBssid(const uint8_t* bssid) {
@@ -583,9 +677,12 @@ static bool openFileForBssid(const uint8_t* bssid) {
         File probe = SD.open(path, "r");
         preSize = probe ? probe.size() : 0;
         if (probe) probe.close();
-        if (preSize > 0 && preSize < sizeof(Pcap::FileHeader)) {
-            Serial.printf("[CAP] removed corrupt %u-byte pcap: %s\n", (unsigned)preSize, name);
-            SD.remove(path);
+        // 0-byte and sub-header stubs are always safe to replace.
+        if (preSize < sizeof(Pcap::FileHeader)) {
+            if (preSize > 0 || exists) {
+                Serial.printf("[CAP] removed stub %u-byte pcap: %s\n", (unsigned)preSize, name);
+                SD.remove(path);
+            }
             exists = false;
             preSize = 0;
         } else if (preSize >= sizeof(Pcap::FileHeader)) {
@@ -604,7 +701,17 @@ static bool openFileForBssid(const uint8_t* bssid) {
     }
 
     s_file = SD.open(path, "a");
-    if (!s_file) return false;
+    if (!s_file) {
+        // open("a") can still create a 0-byte inode on some cards when it
+        // later fails — probe and scrub if so.
+        if (SD.exists(path)) {
+            File p = SD.open(path, "r");
+            size_t z = p ? p.size() : 0;
+            if (p) p.close();
+            if (z < sizeof(Pcap::FileHeader)) SD.remove(path);
+        }
+        return false;
+    }
 
     s_fileSize = s_file.size();
     // Safety: if the card reported a non-empty file above but open shows 0,
@@ -640,7 +747,12 @@ static bool openFileForBssid(const uint8_t* bssid) {
         fh.sigfigs      = 0;
         fh.snaplen      = 65535;
         fh.linktype     = 127;
-        if (s_file.write((uint8_t*)&fh, sizeof(fh)) != sizeof(fh)) {
+        size_t nw = s_file.write((uint8_t*)&fh, sizeof(fh));
+        s_file.flush();
+        size_t onCard = s_file.size();
+        if (nw != sizeof(fh) || onCard < sizeof(fh)) {
+            Serial.printf("[CAP] header write failed (nw=%u onCard=%u): %s\n",
+                          (unsigned)nw, (unsigned)onCard, name);
             s_file.close();
             SD.remove(path);
             return false;
@@ -710,6 +822,11 @@ static void writeFrameToFile(const Slot& s) {
     ssidForBssid(s.bssid, ssid);
     memcpy(s_lastHsBssid, s.bssid, 6);
     noteNetwork(s.bssid, ssid, true);
+    // Live focus for the bar: lock if armed on this BSSID, else HS/EAPOL.
+    if (bssidLocked() && memcmp(s_lockBssid, s.bssid, 6) == 0)
+        setBarTarget(1, s.bssid, ssid[0] ? ssid : nullptr);
+    else
+        setBarTarget(2, s.bssid, ssid[0] ? ssid : nullptr);
     if (ssid[0]) {
         strncpy(s_cnt.lastHsSsid, ssid, sizeof(s_cnt.lastHsSsid) - 1);
         s_cnt.lastHsSsid[sizeof(s_cnt.lastHsSsid) - 1] = '\0';
@@ -875,7 +992,7 @@ static Methods::Ctx buildMethodCtx() {
     // they don't drift to a higher-scoring neighbor while we wait for
     // M2/M3/M4. Methods that don't read lockedBssid* (OURS, PAN, CSA,
     // PMKID) are unaffected.
-    if (bssidLocked() && s_lockBssid[0] != 0) {
+    if (bssidLocked() && !isZeroMac(s_lockBssid)) {
         memcpy(ctx.lockedBssid, s_lockBssid, 6);
         ctx.lockedBssidActive = true;
     } else {
@@ -1082,6 +1199,9 @@ static void startCommon(RunMode mode) {
                  "%02X:%02X:%02X:%02X:%02X:%02X",
                  s_pinBssid[0], s_pinBssid[1], s_pinBssid[2],
                  s_pinBssid[3], s_pinBssid[4], s_pinBssid[5]);
+        setBarTarget(3, s_pinBssid, s_pinSsid[0] ? s_pinSsid : nullptr);
+    } else {
+        clearBarTarget();
     }
     Serial.printf("[CAP] %s hop=%u deauth=%u ch=%u method=%s sd=%u\n",
                   mode == RunMode::Aggressive ? "AGGRESSIVE"
@@ -1143,14 +1263,47 @@ bool isSkipped(const uint8_t* bssid) {
     return isSessionSkipped(bssid);
 }
 
+void setHsDepth(uint8_t depth) {
+    s_hsDepth = (depth > 2) ? 2 : depth;
+}
+
+uint8_t hsDepth() {
+    return s_hsDepth;
+}
+
 bool skipCurrent() {
     if (!s_running) return false;
+
+    // Resolve target in priority order matching what the bottom bar shows:
+    //   1) lock-on-BSSID (actively chasing handshake)
+    //   2) last kick / EAPOL BSSID
+    //   3) bar "current" MAC (last beacon / noteNetwork) — what user sees
+    //   4) last HS BSSID (bar prefers lastHsSsid when set)
+    //   5) pinned target
+    // Previously we only used lock/kick/pin, so Z often skipped a stale
+    // kick while the bar still showed another SSID — that network then
+    // kept getting attacked.
+    uint8_t fromBar[6];
     const uint8_t* t = nullptr;
-    if (s_lockBssid[0] != 0) t = s_lockBssid;
-    else if (s_kickBssid[0] != 0) t = s_kickBssid;
-    else if (s_pinOk) t = s_pinBssid;
-    if (!t) return false;
-    if (!addSkip(t)) return false;
+    if (!isZeroMac(s_lockBssid)) {
+        t = s_lockBssid;
+    } else if (!isZeroMac(s_kickBssid)) {
+        t = s_kickBssid;
+    } else if (parseColonMac(s_cnt.currentBssid, fromBar)) {
+        t = fromBar;
+    } else if (!isZeroMac(s_lastHsBssid)) {
+        t = s_lastHsBssid;
+    } else if (s_pinOk && !isZeroMac(s_pinBssid)) {
+        t = s_pinBssid;
+    }
+    if (!t) {
+        Display::showToast("SKIP NONE", 900);
+        return false;
+    }
+    if (!addSkip(t)) {
+        Display::showToast("SKIP FAIL", 900);
+        return false;
+    }
 
     // Full release so the bar and radio stop sitting on this target.
     disarmLockOnBssid();
@@ -1163,6 +1316,21 @@ bool skipCurrent() {
     s_cnt.currentBssid[0] = '\0';
     s_cnt.currentSsid[0] = '\0';
     s_cnt.lastHsSsid[0] = '\0';
+    clearBarTarget();
+    // Drop this AP from the live beacon table so scoring methods cannot
+    // rediscover it until a fresh beacon arrives — and even then
+    // isSessionSkipped() still blocks kick/lock/pcap for the session.
+    for (uint8_t i = 0; i < s_beaconCount; ) {
+        if (memcmp(s_beacons[i].bssid, t, 6) == 0) {
+            if (i + 1 < s_beaconCount) {
+                memmove(&s_beacons[i], &s_beacons[i + 1],
+                        (size_t)(s_beaconCount - i - 1) * sizeof(s_beacons[0]));
+            }
+            s_beaconCount--;
+            continue;
+        }
+        i++;
+    }
     // Next hop ASAP — don't stay parked on the skipped AP's channel.
     s_lastHopMs = 0;
 
@@ -1188,9 +1356,10 @@ bool skipCurrent() {
         snprintf(msg, sizeof(msg), "SKIP %02X:%02X:%02X", t[3], t[4], t[5]);
     }
     Display::showToast(msg, 1200);
-    Serial.printf("[CAP] session skip %s (%02X:%02X:%02X:%02X:%02X:%02X)\n",
+    Serial.printf("[CAP] session skip %s (%02X:%02X:%02X:%02X:%02X:%02X) n=%u\n",
                   ssid[0] ? ssid : "?",
-                  t[0], t[1], t[2], t[3], t[4], t[5]);
+                  t[0], t[1], t[2], t[3], t[4], t[5],
+                  (unsigned)s_skipN);
     return true;
 }
 
@@ -1225,17 +1394,31 @@ void loop() {
     // depthHoldSec so the radio doesn't hop away just because lockMs
     // expired without a new EAPOL refresh.
     if (bssidLocked()) {
-        if (s_lockBssid[0] != 0 && Hc22000::hasHandshake(s_lockBssid, s_hsDepth)) {
+        if (!isZeroMac(s_lockBssid) && Hc22000::hasHandshake(s_lockBssid, s_hsDepth)) {
             disarmLockOnBssid();
             s_lockUntil = 0;
-        } else if (s_lockBssid[0] != 0 && s_hsDepth > 0 && s_depthHoldSec > 0 &&
+        } else if (!isZeroMac(s_lockBssid) && s_hsDepth > 0 && s_depthHoldSec > 0 &&
                    Hc22000::hasPair(s_lockBssid)) {
             uint32_t holdUntil = millis() + (uint32_t)s_depthHoldSec * 1000u;
             if (s_lockBssidUntil < holdUntil) s_lockBssidUntil = holdUntil;
             if (s_lockUntil < holdUntil) s_lockUntil = holdUntil;
         }
-    } else if (s_lockBssid[0] != 0) {
+    } else if (!isZeroMac(s_lockBssid)) {
         disarmLockOnBssid();
+        // Lock ended — if bar still shows LOCK, fall back to last HS or SCAN.
+        if (s_cnt.targetMode == 1) {
+            if (s_cnt.lastHsSsid[0] && !isZeroMac(s_lastHsBssid))
+                setBarTarget(2, s_lastHsBssid, s_cnt.lastHsSsid);
+            else
+                clearBarTarget();
+        }
+    }
+
+    // Keep bar SSID in sync while locked (beacon may learn name after M1).
+    if (bssidLocked() && !isZeroMac(s_lockBssid)) {
+        char ssid[33];
+        ssidForBssid(s_lockBssid, ssid);
+        setBarTarget(1, s_lockBssid, ssid[0] ? ssid : nullptr);
     }
 
     uint32_t now = millis();

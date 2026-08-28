@@ -102,6 +102,30 @@ static uint32_t s_lastPrune = 0;
 static bool s_keyWas = false;
 static uint8_t s_monBssid[6];
 static uint8_t s_monCh = 6;
+// Spectrum-local HS depth (seeds from RADIO on start). D cycles in LOCK/HUNT.
+// 0 = PAIR (M1+M2), 1 = +M3, 2 = FULL (M1-M4).
+static uint8_t s_huntDepth = 0;
+
+static const char* huntDepthName(uint8_t d) {
+    if (d == 1) return "+M3";
+    if (d >= 2) return "FULL";
+    return "PAIR";
+}
+
+static void applyHuntDepth() {
+    if (s_huntDepth > 2) s_huntDepth = 2;
+    Cap::setHsDepth(s_huntDepth);
+}
+
+static void cycleHuntDepth() {
+    s_huntDepth = (uint8_t)((s_huntDepth + 1) % 3);
+    applyHuntDepth();
+    char msg[20];
+    snprintf(msg, sizeof(msg), "HS %s", huntDepthName(s_huntDepth));
+    Display::showToast(msg, 900);
+    SFX::play(SFX::MENU_CLICK);
+}
+
 static int8_t s_cliSel = 0;
 static uint8_t s_cliScroll = 0;
 static bool s_reveal = false;
@@ -508,9 +532,13 @@ static void enterHunt() {
     s_reveal = false;
     radioOff();
     Cap::startPinned(n.ch, n.bssid, n.ssid);
+    applyHuntDepth(); // after start so Cap picks spectrum depth, not stale RADIO
     s_phase = HUNT;
     SFX::play(SFX::CHANNEL_LOCK);
-    Display::showToast(n.ssid[0] ? n.ssid : "HUNT");
+    char toast[28];
+    snprintf(toast, sizeof(toast), "%s %s",
+             n.ssid[0] ? n.ssid : "HUNT", huntDepthName(s_huntDepth));
+    Display::showToast(toast);
 }
 
 static void exitHunt() {
@@ -781,10 +809,10 @@ static void drawLock(M5Canvas& c, uint16_t fg, uint16_t bg) {
     snprintf(head, sizeof(head), "LOCK  %s", name);
     c.setTextColor(UiStyle::GOLD);
     c.drawString(head, 4, 2);
-    char meta[40];
-    snprintf(meta, sizeof(meta), "CH%u %s  %upps  %u STA%s",
-             n.ch, authStr(n.auth), (unsigned)s_pps, n.nCli,
-             n.pmf ? "  PMF" : "");
+    char meta[44];
+    snprintf(meta, sizeof(meta), "CH%u %s  HS %s  %u STA%s",
+             n.ch, authStr(n.auth), huntDepthName(s_huntDepth), n.nCli,
+             n.pmf ? " PMF" : "");
     c.setTextColor(fg);
     c.drawString(meta, 4, 14);
 
@@ -856,18 +884,18 @@ static void drawHunt(M5Canvas& c, uint16_t fg, uint16_t bg) {
     c.setTextColor(fg);
     c.drawString(line, 4, 40);
 
-    bool pair = Hc22000::hasHandshake(s_monBssid, Config::radio().hsDepth);
+    bool pair = Hc22000::hasHandshake(s_monBssid, s_huntDepth);
     uint8_t mask = Hc22000::handshakeMask(s_monBssid);
     c.setTextColor(pair ? UiStyle::GOLD : UiStyle::DIM);
-    // Show which messages we've actually seen so the user can track progress
-    // toward the HS DEPTH they configured (PAIR / +M3 / FULL M1-4).
-    char pairLine[36];
-    snprintf(pairLine, sizeof(pairLine), "HS %s%s%s%s  %s",
+    // Progress toward selected depth (D cycles PAIR / +M3 / FULL).
+    char pairLine[40];
+    snprintf(pairLine, sizeof(pairLine), "%s%s%s%s need %s %s",
              (mask & 0x01) ? "M1" : "--",
              (mask & 0x02) ? "+M2" : "---",
              (mask & 0x04) ? "+M3" : "---",
              (mask & 0x08) ? "+M4" : "---",
-             pair ? "saved" : "wait");
+             huntDepthName(s_huntDepth),
+             pair ? "OK" : "…");
     c.drawString(pairLine, 4, 54);
 
     if (cap.lastHsSsid[0]) {
@@ -912,6 +940,8 @@ void start() {
     s_keyWas = true;
     s_lastHop = millis();
     s_ppsT0 = millis();
+    s_huntDepth = Config::radio().hsDepth;
+    if (s_huntDepth > 2) s_huntDepth = 2;
     Serial.println("[SPEC] sweep 2.4");
 }
 
@@ -937,16 +967,15 @@ void getStatusLine(char* out, size_t n) {
     bool keys = ((millis() / BAR_FLIP_MS) & 1) == 0;
     if (s_phase == HUNT) {
         if (keys) {
-            snprintf(out, n, "auto-kicking   ` stop");
+            snprintf(out, n, "D depth  ` stop");
         } else {
-            const Cap::Counters& cap = Cap::counters();
-            snprintf(out, n, "HUNT HS:%u  %s",
-                     (unsigned)cap.framesEapol,
-                     Hc22000::hasHandshake(s_monBssid, Config::radio().hsDepth) ? "DONE" : "wait");
+            snprintf(out, n, "HUNT %s  %s",
+                     huntDepthName(s_huntDepth),
+                     Hc22000::hasHandshake(s_monBssid, s_huntDepth) ? "DONE" : "wait");
         }
     } else if (s_phase == LOCK) {
         if (keys) {
-            snprintf(out, n, "ENT hunt  SPC kick  W  ` back");
+            snprintf(out, n, "ENT hunt  D %s  SPC  `", huntDepthName(s_huntDepth));
         } else {
             int idx = findNet(s_monBssid);
             snprintf(out, n, "LOCK CH%u  %u STA",
@@ -1019,19 +1048,22 @@ static void handleLock() {
         enterHunt();
         return;
     }
+    if (M5Cardputer.Keyboard.isKeyPressed('d') ||
+        M5Cardputer.Keyboard.isKeyPressed('D')) {
+        cycleHuntDepth();
+        return;
+    }
     if (M5Cardputer.Keyboard.isKeyPressed(' ')) kick(nc ? s_cliSel : -1);
 }
 
 static void handleHunt() {
+    if (M5Cardputer.Keyboard.isKeyPressed('d') ||
+        M5Cardputer.Keyboard.isKeyPressed('D')) {
+        cycleHuntDepth();
+        return;
+    }
     if (M5Cardputer.Keyboard.isKeyPressed(' ')) {
-        // Cap::loop() (called every update() tick in HUNT, just above) is
-        // ALREADY actively kicking s_monBssid via whatever method is
-        // selected - kick() here used to fire a second, fully redundant
-        // attack on top of it. It's also blocking (delay(2) x 3 frames x
-        // 6 rounds = ~36-50ms), which delays that tick's Cap::loop() call
-        // (ring buffer drain + Hc22000::flushPending()) for no benefit,
-        // since Cap is already handling this exact target. Surface that
-        // instead of duplicating the work.
+        // Cap::loop() already kicks s_monBssid — don't double-fire.
         Display::showToast("ALREADY KICKING");
     }
 }

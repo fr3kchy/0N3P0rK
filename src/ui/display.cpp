@@ -13,6 +13,7 @@
 #include "../piglet/scene_layers.h"
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
+#include "../cap/hc22000.h"
 #include "../cap/packs/pack_ctx.h"
 #include "loot_menu.h"
 #include "settings_menu.h"
@@ -552,9 +553,13 @@ void Display::drawBottomBar() {
         SpectrumMode::getStatusLine(left, sizeof(left));
     } else if (Cap::isRunning()) {
         const Cap::Counters& c = Cap::counters();
-        const char* net = c.lastHsSsid[0] ? c.lastHsSsid
-                         : (c.currentSsid[0] ? c.currentSsid : nullptr);
-        // SSID left: keep short so right-side status always fits on 240px.
+        // Real focus only (lock / pin / last HS). Hopping beacons no longer
+        // overwrite the left label — that looked like random SSIDs.
+        // targetMode: 0=SCAN 1=LOCK 2=HS 3=PIN 4=KICK
+        const char* net = nullptr;
+        // Names only — skip "?" placeholder and never show MAC.
+        if (c.targetSsid[0] && strcmp(c.targetSsid, "?") != 0) net = c.targetSsid;
+        else if (c.lastHsSsid[0]) net = c.lastHsSsid;
         if (net) {
             size_t n = 0;
             while (net[n] && n < 10) {
@@ -564,7 +569,7 @@ void Display::drawBottomBar() {
             }
             left[n] = '\0';
         } else {
-            strncpy(left, "SCAN", sizeof(left) - 1);
+            snprintf(left, sizeof(left), "SCAN#%02u", (unsigned)c.currentChannel);
         }
         const char* tag = "L";
         if (Cap::runMode() == Cap::RunMode::Aggressive) tag = "A";
@@ -594,13 +599,16 @@ void Display::drawBottomBar() {
         else if (!strcmp(mtag, "FOCUS"))   methCh = 'F';
         else if (!strcmp(mtag, "HERD"))    methCh = 'H';
         else if (!strcmp(mtag, "AUTO"))    methCh = '~';
-        // e.g. "A* Q/F 3#06" — always fits with short SSID on left
-        snprintf(rightName, sizeof(rightName), "%s%s %c/%c %u#%02u",
+        // Unique networks with saved HS/PMKID — not raw EAPOL frame count
+        // (that grew huge and looked like "kilobyte" garbage on the bar).
+        uint16_t hsN = Hc22000::pairCount();
+        // e.g. "A* F/F &3 #06" — &N = handshakes, #ch = channel
+        snprintf(rightName, sizeof(rightName), "%s%s %c/%c &%u #%02u",
                  tag,
                  Cap::isLocked() ? "*" : "",
                  packCh,
                  methCh,
-                 (unsigned)c.framesEapol,
+                 (unsigned)hsN,
                  (unsigned)c.currentChannel);
     } else if (bottomHint[0]) {
         strncpy(left, bottomHint, sizeof(left) - 1);
