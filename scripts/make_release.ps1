@@ -1,12 +1,11 @@
-```powershell
 # scripts/make_release.ps1
 #
 # Builds TWO flashable images for 0N3P0rK:
 #
-# 1) M5Launcher image:
+# 1) M5Launcher image (3 parts):
 #    bootloader + partitions + firmware
 #
-# 2) Full image:
+# 2) Full image (all needed parts):
 #    bootloader + partitions + boot_app0 + firmware
 #
 # Both images start at offset 0x0.
@@ -259,7 +258,7 @@ $FullBin = Join-Path `
 
 Write-Host ""
 Write-Host "============================================"
-Write-Host "  BUILDING M5LAUNCHER IMAGE"
+Write-Host "  BUILDING M5LAUNCHER IMAGE (3 parts)"
 Write-Host "============================================"
 Write-Host ""
 
@@ -288,7 +287,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---------------------------------------------------------------------------
 # IMAGE 2 — FULL
 #
-# 4 COMPONENTS:
+# 4 COMPONENTS (all needed):
 #
 # 0x0000  bootloader
 # 0x8000  partitions
@@ -298,7 +297,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "============================================"
-Write-Host "  BUILDING FULL IMAGE"
+Write-Host "  BUILDING FULL IMAGE (all parts)"
 Write-Host "============================================"
 Write-Host ""
 
@@ -319,52 +318,10 @@ $mergeArgsFull = $EspToolArgs + @(
 
 & $EspToolExe @mergeArgsFull
 
-if ($LASTEXITCODE -ne 0 {
+if ($LASTEXITCODE -ne 0) {
     Write-Error "Full image merge failed (exit code $LASTEXITCODE)."
     exit 1
 }
-
-
-# ---------------------------------------------------------------------------
-# MANIFEST FOR ESP WEB TOOLS
-#
-# Uses the FULL 4-component image.
-# ---------------------------------------------------------------------------
-
-Write-Host ""
-Write-Host "==> Writing ESP Web Tools manifest.json"
-
-$manifest = @{
-    name = "0N3P0rK"
-    version = $Version
-    new_install_prompt_erase = $true
-    builds = @(
-        @{
-            chipFamily = "ESP32-S3"
-            parts = @(
-                @{
-                    path = "$BaseName-Full.bin"
-                    offset = 0
-                }
-            )
-        }
-    )
-} | ConvertTo-Json -Depth 5
-
-Set-Content `
-    -Path (Join-Path $DistDir "manifest.json") `
-    -Value $manifest `
-    -Encoding utf8
-
-
-# ---------------------------------------------------------------------------
-# LATEST FULL IMAGE
-# ---------------------------------------------------------------------------
-
-Copy-Item `
-    -Path $FullBin `
-    -Destination (Join-Path $DistDir "latest.bin") `
-    -Force
 
 
 # ---------------------------------------------------------------------------
@@ -381,15 +338,8 @@ Write-Host "M5Launcher (3 parts):"
 Write-Host "  $M5LauncherBin"
 Write-Host ""
 
-Write-Host "Full image (4 parts):"
+Write-Host "Full image (all parts):"
 Write-Host "  $FullBin"
 Write-Host ""
-
-Write-Host "ESP Web Tools:"
-Write-Host "  $(Join-Path $DistDir "manifest.json")"
+Write-Host "Version: $Version  |  Date: $DateTag"
 Write-Host ""
-
-Write-Host "Latest full image:"
-Write-Host "  $(Join-Path $DistDir "latest.bin")"
-Write-Host ""
-```
