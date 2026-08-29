@@ -636,10 +636,24 @@ static bool openFileForBssid(const uint8_t* bssid) {
     bool exists = SD.exists(path);
     // Probe size BEFORE any write open. A file smaller than the 24-byte
     // pcap global header is a remnant of a cut-short header write - delete
-    // and start clean. A file that already has a full header (+ preferably
-    // at least one packet) is a finished capture for this BSSID: do NOT
-    // reopen it. Reopening with "a" after a flaky size()==0 has been seen
-    // to rewrite the header / remove on failed write and zero a good pcap.
+    // and start clean. A file that already has a full header (+ maybe
+    // packets) is just an EXISTING capture for this BSSID that we're about
+    // to APPEND more frames to (M2/M3/M4 arriving later, a retry, etc.) -
+    // opening in "a" mode below never truncates, so there is nothing to
+    // protect against here. The one real failure mode (SD size() lying
+    // and reporting smaller than a moment ago) is caught separately after
+    // the real open, below - that's the correct, narrow place for it.
+    // NOTE: this function used to `return false` here for any file with
+    // an existing header, treating it as "already finished, don't touch."
+    // That was the actual data-loss bug: writeFrameToFile() closes the
+    // current file the instant a frame from a DIFFERENT BSSID interleaves
+    // (very common - the ring buffer carries frames from many APs), so
+    // M1 would get written, the file would close as soon as any other AP's
+    // frame came through, and then M2/M3/M4 for the SAME BSSID arriving
+    // later would hit this check, get refused, and be silently dropped -
+    // captures got stuck at "header + first frame" forever. Appending is
+    // exactly what should happen instead; there is no scenario here where
+    // NOT appending protects anything.
     size_t preSize = 0;
     if (exists) {
         File probe = SD.open(path, "r");
@@ -650,14 +664,6 @@ static bool openFileForBssid(const uint8_t* bssid) {
             SD.remove(path);
             exists = false;
             preSize = 0;
-        } else if (preSize >= sizeof(Pcap::FileHeader)) {
-            // Keep existing good capture. User deletes the file manually to recapture.
-            if (memcmp(s_fullLoggedBssid, bssid, 6) != 0) {
-                Serial.printf("[CAP] keep existing pcap (%u bytes): %s\n",
-                              (unsigned)preSize, name);
-                memcpy(s_fullLoggedBssid, bssid, 6);
-            }
-            return false;
         }
     }
     if (!exists && st.handshakes >= MAX_FILES) {
@@ -845,13 +851,26 @@ static void processPendingSsidLearn() {
 }
 
 static void drainRing() {
+    // Process any pending "SSID just learned for a hidden BSSID" rename
+    // FIRST, before writing this tick's queued frames. makeFilename() (via
+    // ssidForBssid()) reads the SSID straight out of the live beacon table,
+    // which storeBeacon() updates the INSTANT a beacon reveals it - not
+    // when the rename actually runs. If we wrote frames first: an EAPOL
+    // for a BSSID whose SSID was JUST learned would already compute the
+    // new (real-name) path in openFileForBssid(), find nothing there yet,
+    // and start a brand-new file - while the earlier frames for that same
+    // BSSID stay stranded under the old hidden-name file. The pending
+    // rename then refuses to run (its target name already exists), so the
+    // capture stays permanently split across two incomplete files. Doing
+    // the rename first means any name that's about to change has already
+    // changed by the time we compute paths for this tick's frames.
+    processPendingSsidLearn();
     while (s_read != s_write) {
         const Slot& s = s_ring[s_read];
         writeFrameToFile(s);
         s_read = (uint8_t)((s_read + 1) % RING_SLOTS);
     }
     if (s_fileOpen) s_file.flush();
-    processPendingSsidLearn();
 }
 
 static bool isOwnAp(const uint8_t* bssid) {

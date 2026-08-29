@@ -629,24 +629,41 @@ static uint8_t lootKind(const char* name) {
 }
 
 static int lootScore(const char* name, uint32_t size) {
-    int s = 0;
-    if (endsWithCI(name, "_hs.22000")) s += 300;
-    else if (endsWithCI(name, ".hc22000")) s += 80;
-    else if (endsWithCI(name, ".22000")) s += 120;
-    else if (endsWithCI(name, ".pcap") || endsWithCI(name, ".pcapng") ||
-             endsWithCI(name, ".cap"))
-        s += 200;
-    char ssid[33] = {0};
-    if (CapName::extractSsidFromName(name, ssid)) {
-        if (strcasecmp(ssid, "HIDDEN") == 0) s += 20;
-        else s += 400;
+    bool isHash = endsWithCI(name, ".22000") || endsWithCI(name, ".hc22000");
+    if (isHash) {
+        // .22000/.hc22000 are regenerated from scratch every time from
+        // in-memory parsed state (see Hc22000::maybeWrite()) - they don't
+        // accumulate data over time, so which FORMAT variant survives is
+        // a legitimate, purely cosmetic/quality choice here.
+        int s = 0;
+        if (endsWithCI(name, "_hs.22000")) s += 300;
+        else if (endsWithCI(name, ".hc22000")) s += 80;
+        else if (endsWithCI(name, ".22000")) s += 120;
+        char ssid[33] = {0};
+        if (CapName::extractSsidFromName(name, ssid)) {
+            s += (strcasecmp(ssid, "HIDDEN") == 0) ? 20 : 400;
+        }
+        return s;
     }
-    if (size > 24) {
-        uint32_t bonus = size / 512;
-        if (bonus > 60) bonus = 60;
-        s += (int)bonus;
-    }
-    return s;
+    // PCAP family: score is purely size, on purpose. A pcap accumulates
+    // real captured frames over time (M1, M2, M3, M4, retries...) and -
+    // unlike a .22000 hash - can NEVER be regenerated if lost, since the
+    // raw frame bytes only ever live in this file. A bigger pcap for the
+    // same BSSID is always strictly more complete, no matter what its
+    // filename looks like.
+    //
+    // The previous version scored by filename instead (same weights as
+    // the hash branch above): a pcap with a real SSID in its name got up
+    // to a +380 point head start over one still named HIDDEN_..., which
+    // could easily outweigh a 30KB size difference. That turned the
+    // sniffer's own SSID-learn-then-rename race (a HIDDEN_*.pcap getting
+    // M1, then - once the SSID is learned - a fresh, separately-named
+    // file getting M2) into automatic data loss: on every Cap::stop(),
+    // this function would keep the small freshly-renamed fragment and
+    // permanently SD.remove() the older HIDDEN_*.pcap that actually held
+    // the captured frames. Scoring by size alone means the fragment that
+    // actually has more of the handshake in it always wins.
+    return (int)size;
 }
 
 static void dropCompanion(const char* dir, const char* name) {
