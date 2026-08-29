@@ -9,7 +9,7 @@
 #    bootloader + partitions + boot_app0 + firmware
 #
 # Both images start at offset 0x0.
-# Output is written to docs\.
+# Output is written to docs\firmware\.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\make_release.ps1
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $EnvName     = "m5cardputer"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $BuildDir    = Join-Path $ProjectRoot ".pio\build\$EnvName"
-$DistDir     = Join-Path $ProjectRoot "docs"
+$DistDir     = Join-Path $ProjectRoot "docs\firmware"
 
 Set-Location $ProjectRoot
 

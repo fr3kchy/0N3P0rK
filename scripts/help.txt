@@ -1,5 +1,5 @@
 .\scripts\make_release.ps1
-.\scripts\release.ps1
 
-powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+
+
 powershell -ExecutionPolicy Bypass -File scripts\make_release.ps1
