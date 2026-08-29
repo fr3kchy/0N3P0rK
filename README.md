@@ -18,7 +18,7 @@ Plug in the Cardputer, put an SD card in the slot, and you get a pig on a scroll
 
 Think Tamagotchi first. The radio is in the barn.
 
-**v1.3.0** focuses the radio on smarter handshake hunting: packs & methods, FOCUS scoring, session skip, a clearer status bar, spectrum HS depth, and safer pcap writes.
+**v1.2.5.6** focuses the radio on smarter handshake hunting: packs & methods, FOCUS scoring, session skip, a clearer status bar, spectrum HS depth, and safer pcap writes.
 
 ---
 
