@@ -1,10 +1,12 @@
 # 0N3P0rK
 
+## https://lexilexiko.github.io/0N3P0rK/
+
 Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardputer** and **M5Cardputer ADV**.
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.2.5.6** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2.5.6+5** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
