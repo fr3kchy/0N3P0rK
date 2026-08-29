@@ -1,151 +1,395 @@
+```powershell
 # scripts/make_release.ps1
 #
-# Builds 0N3P0rK and merges bootloader + partition table + OTA-select +
-# app into ONE flashable .bin (offset 0x0), plus a manifest.json for
-# ESP Web Tools (https://esphome.github.io/esp-web-tools/) - the standard
-# "flash from the browser over USB, no install" widget for ESP32 sites.
-# Everything is written to docs/ (next to this script) - upload that
-# folder yourself however you like.
+# Builds TWO flashable images for 0N3P0rK:
 #
-# Usage (from VS Code's terminal, in the project folder):
+# 1) M5Launcher image:
+#    bootloader + partitions + firmware
+#
+# 2) Full image:
+#    bootloader + partitions + boot_app0 + firmware
+#
+# Both images start at offset 0x0.
+# Output is written to docs\.
+#
+# Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\make_release.ps1
-#
-# Or just right-click the file in VS Code's Explorer -> "Run PowerShell".
-# If Windows blocks the very first run with a "scripts disabled" error,
-# that -ExecutionPolicy Bypass above is exactly what works around it -
-# it only affects this one invocation, nothing system-wide changes.
 
 $ErrorActionPreference = "Stop"
 
-$EnvName      = "m5cardputer"
-$ProjectRoot  = Split-Path -Parent $PSScriptRoot
-$BuildDir     = Join-Path $ProjectRoot ".pio\build\$EnvName"
-$DistDir      = Join-Path $ProjectRoot "docs"
+$EnvName     = "m5cardputer"
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$BuildDir    = Join-Path $ProjectRoot ".pio\build\$EnvName"
+$DistDir     = Join-Path $ProjectRoot "docs"
 
 Set-Location $ProjectRoot
 
-# --- version tag for the output filename -----------------------------------
-$Version = "0.0.0"
-$verLine = Select-String -Path "platformio.ini" -Pattern '^\s*custom_version\s*=\s*(.+?)\s*$' | Select-Object -First 1
-if ($verLine) { $Version = $verLine.Matches[0].Groups[1].Value }
-$DateTag = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
-$OutName = "0N3P0rK-v$Version-$DateTag"
 
-Write-Host "==> Building $EnvName (version $Version)..."
+# ---------------------------------------------------------------------------
+# VERSION
+# ---------------------------------------------------------------------------
+
+$Version = "0.0.0"
+
+$verLine = Select-String `
+    -Path "platformio.ini" `
+    -Pattern '^\s*custom_version\s*=\s*(.+?)\s*$' |
+    Select-Object -First 1
+
+if ($verLine) {
+    $Version = $verLine.Matches[0].Groups[1].Value.Trim()
+}
+
+$DateTag = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
+
+$BaseName = "0N3P0rK-v$Version-$DateTag"
+
+Write-Host ""
+Write-Host "============================================"
+Write-Host "  0N3P0rK RELEASE BUILDER"
+Write-Host "============================================"
+Write-Host ""
+Write-Host "Environment : $EnvName"
+Write-Host "Version     : $Version"
+Write-Host "Date        : $DateTag"
+Write-Host ""
+
+
+# ---------------------------------------------------------------------------
+# CHECK PLATFORMIO
+# ---------------------------------------------------------------------------
+
+Write-Host "==> Checking PlatformIO..."
+
 if (-not (Get-Command pio -ErrorAction SilentlyContinue)) {
-    Write-Error "'pio' is not recognized on PATH.`nOpen VS Code's PlatformIO CLI terminal instead (PlatformIO ant icon in the sidebar -> PIO Home -> 'Open Terminal', or Ctrl+Shift+P -> 'PlatformIO: New Terminal') and run this script from there - it has pio on PATH automatically."
+    Write-Error @"
+'pio' is not recognized on PATH.
+
+Open the PlatformIO CLI terminal and run this script there.
+"@
     exit 1
 }
+
+
+# ---------------------------------------------------------------------------
+# BUILD
+# ---------------------------------------------------------------------------
+
+Write-Host "==> Building $EnvName..."
+
 & pio run -e $EnvName
+
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "pio run failed (exit code $LASTEXITCODE) - see build log above."
+    Write-Error "pio run failed (exit code $LASTEXITCODE)."
     exit 1
 }
+
+
+# ---------------------------------------------------------------------------
+# BUILD FILES
+# ---------------------------------------------------------------------------
 
 $Bootloader = Join-Path $BuildDir "bootloader.bin"
 $Partitions = Join-Path $BuildDir "partitions.bin"
-$BootApp0   = Join-Path $BuildDir "boot_app0.bin"   # OTA-select data, ships with the Arduino core
+$BootApp0   = Join-Path $BuildDir "boot_app0.bin"
 $Firmware   = Join-Path $BuildDir "firmware.bin"
 
-foreach ($f in @($Bootloader, $Partitions, $Firmware)) {
+foreach ($f in @(
+    $Bootloader,
+    $Partitions,
+    $Firmware
+)) {
     if (-not (Test-Path $f)) {
-        Write-Error "Expected build output missing: $f`n(pio run should have produced this - check the build log above)"
+        Write-Error "Required build output missing: $f"
         exit 1
     }
 }
 
-# boot_app0.bin isn't always copied into .pio\build by every platform
-# version - if missing, pull it straight from the Arduino core package
-# PlatformIO already downloaded for this project.
+
+# ---------------------------------------------------------------------------
+# FIND boot_app0.bin
+# ---------------------------------------------------------------------------
+
 if (-not (Test-Path $BootApp0)) {
-    $found = Get-ChildItem -Path "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32" `
-                            -Filter "boot_app0.bin" -Recurse -ErrorAction SilentlyContinue |
-             Select-Object -First 1
+
+    Write-Host "==> boot_app0.bin not found in build directory."
+    Write-Host "    Searching PlatformIO Arduino framework..."
+
+    $FrameworkDir = Join-Path `
+        $env:USERPROFILE `
+        ".platformio\packages\framework-arduinoespressif32"
+
+    $found = Get-ChildItem `
+        -Path $FrameworkDir `
+        -Filter "boot_app0.bin" `
+        -Recurse `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+
     if ($found) {
         $BootApp0 = $found.FullName
-    } else {
-        Write-Error "boot_app0.bin not found in build output or platform packages.`nRe-run 'pio run -t upload -v' once with the board attached and check its logged command for the real path, or reinstall the espressif32 platform if this is a fresh machine."
+    }
+    else {
+        Write-Error @"
+boot_app0.bin was not found.
+
+Expected either:
+$BuildDir\boot_app0.bin
+
+or inside:
+$FrameworkDir
+"@
         exit 1
     }
 }
 
-# --- find esptool: PATH first, then PlatformIO's own bundled copy ----------
+
+# ---------------------------------------------------------------------------
+# FIND ESPTOOL
+# ---------------------------------------------------------------------------
+
 function Find-EspTool {
+
     $onPath = Get-Command esptool.py -ErrorAction SilentlyContinue
-    if ($onPath) { return @($onPath.Source) }
+
+    if ($onPath) {
+        return @($onPath.Source)
+    }
+
     $onPath = Get-Command esptool -ErrorAction SilentlyContinue
-    if ($onPath) { return @($onPath.Source) }
+
+    if ($onPath) {
+        return @($onPath.Source)
+    }
 
     $pioPython = "$env:USERPROFILE\.platformio\penv\Scripts\python.exe"
-    $pioEsptool = Get-ChildItem -Path "$env:USERPROFILE\.platformio\packages" `
-                                 -Filter "esptool.py" -Recurse -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
+
+    $pioEsptool = Get-ChildItem `
+        -Path "$env:USERPROFILE\.platformio\packages" `
+        -Filter "esptool.py" `
+        -Recurse `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+
     if ((Test-Path $pioPython) -and $pioEsptool) {
-        return @($pioPython, $pioEsptool.FullName)
+        return @(
+            $pioPython,
+            $pioEsptool.FullName
+        )
     }
 
     $py = Get-Command python -ErrorAction SilentlyContinue
-    if ($py) { return @($py.Source, "-m", "esptool") }
+
+    if ($py) {
+        return @(
+            $py.Source,
+            "-m",
+            "esptool"
+        )
+    }
+
     $py = Get-Command py -ErrorAction SilentlyContinue
-    if ($py) { return @($py.Source, "-m", "esptool") }
+
+    if ($py) {
+        return @(
+            $py.Source,
+            "-m",
+            "esptool"
+        )
+    }
 
     return $null
 }
 
+
 $EspTool = Find-EspTool
+
 if (-not $EspTool) {
-    Write-Error "Could not find esptool.py anywhere (not on PATH, not in .platformio\packages, no python/py on PATH either).`nOpen the PlatformIO CLI terminal (PlatformIO icon -> PIO Home -> Terminal) and try again from there - it has everything on PATH."
+    Write-Error @"
+Could not find esptool.
+
+Open the PlatformIO terminal and try again.
+"@
     exit 1
 }
 
-New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
-$Merged = Join-Path $DistDir "$OutName.bin"
-
-Write-Host "==> Merging into a single flashable image: $Merged"
-# Offsets below match partitions.csv (factory app @ 0x10000) and the
-# standard Arduino-ESP32 layout for ESP32-S3 (bootloader @ 0x0, table @
-# 0x8000, OTA-select @ 0xe000). --flash_mode/freq/size are "keep" so
-# esptool reads the real values baked into bootloader.bin/firmware.bin
-# instead of us guessing and silently getting it wrong.
 $EspToolExe  = $EspTool[0]
 $EspToolArgs = @()
-if ($EspTool.Length -gt 1) { $EspToolArgs = $EspTool[1..($EspTool.Length - 1)] }
 
-$mergeArgs = $EspToolArgs + @(
-    "--chip", "esp32s3", "merge_bin",
-    "-o", $Merged,
+if ($EspTool.Length -gt 1) {
+    $EspToolArgs = $EspTool[1..($EspTool.Length - 1)]
+}
+
+
+# ---------------------------------------------------------------------------
+# OUTPUT DIRECTORY
+# ---------------------------------------------------------------------------
+
+New-Item `
+    -ItemType Directory `
+    -Force `
+    -Path $DistDir |
+    Out-Null
+
+
+# ---------------------------------------------------------------------------
+# OUTPUT FILENAMES
+# ---------------------------------------------------------------------------
+
+$M5LauncherBin = Join-Path `
+    $DistDir `
+    "$BaseName-M5Launcher.bin"
+
+$FullBin = Join-Path `
+    $DistDir `
+    "$BaseName-Full.bin"
+
+
+# ---------------------------------------------------------------------------
+# IMAGE 1 — M5LAUNCHER
+#
+# 3 COMPONENTS:
+#
+# 0x0000  bootloader
+# 0x8000  partitions
+# 0x10000 firmware
+#
+# boot_app0 intentionally NOT included.
+# ---------------------------------------------------------------------------
+
+Write-Host ""
+Write-Host "============================================"
+Write-Host "  BUILDING M5LAUNCHER IMAGE"
+Write-Host "============================================"
+Write-Host ""
+
+$mergeArgsM5 = $EspToolArgs + @(
+    "--chip", "esp32s3",
+    "merge_bin",
+    "-o", $M5LauncherBin,
+
     "--flash_mode", "keep",
     "--flash_freq", "keep",
     "--flash_size", "keep",
+
     "0x0000",  $Bootloader,
     "0x8000",  $Partitions,
-    "0xe000",  $BootApp0,
     "0x10000", $Firmware
 )
-& $EspToolExe @mergeArgs
+
+& $EspToolExe @mergeArgsM5
+
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "esptool merge_bin failed (exit code $LASTEXITCODE) - see output above."
+    Write-Error "M5Launcher merge failed (exit code $LASTEXITCODE)."
     exit 1
 }
 
+
+# ---------------------------------------------------------------------------
+# IMAGE 2 — FULL
+#
+# 4 COMPONENTS:
+#
+# 0x0000  bootloader
+# 0x8000  partitions
+# 0xE000  boot_app0
+# 0x10000 firmware
+# ---------------------------------------------------------------------------
+
+Write-Host ""
+Write-Host "============================================"
+Write-Host "  BUILDING FULL IMAGE"
+Write-Host "============================================"
+Write-Host ""
+
+$mergeArgsFull = $EspToolArgs + @(
+    "--chip", "esp32s3",
+    "merge_bin",
+    "-o", $FullBin,
+
+    "--flash_mode", "keep",
+    "--flash_freq", "keep",
+    "--flash_size", "keep",
+
+    "0x0000",  $Bootloader,
+    "0x8000",  $Partitions,
+    "0xE000",  $BootApp0,
+    "0x10000", $Firmware
+)
+
+& $EspToolExe @mergeArgsFull
+
+if ($LASTEXITCODE -ne 0 {
+    Write-Error "Full image merge failed (exit code $LASTEXITCODE)."
+    exit 1
+}
+
+
+# ---------------------------------------------------------------------------
+# MANIFEST FOR ESP WEB TOOLS
+#
+# Uses the FULL 4-component image.
+# ---------------------------------------------------------------------------
+
+Write-Host ""
 Write-Host "==> Writing ESP Web Tools manifest.json"
+
 $manifest = @{
-    name                     = "0N3P0rK"
-    version                  = $Version
+    name = "0N3P0rK"
+    version = $Version
     new_install_prompt_erase = $true
-    builds                   = @(
+    builds = @(
         @{
             chipFamily = "ESP32-S3"
-            parts      = @(@{ path = "$OutName.bin"; offset = 0 })
+            parts = @(
+                @{
+                    path = "$BaseName-Full.bin"
+                    offset = 0
+                }
+            )
         }
     )
 } | ConvertTo-Json -Depth 5
-Set-Content -Path (Join-Path $DistDir "manifest.json") -Value $manifest -Encoding utf8
 
-Copy-Item -Path $Merged -Destination (Join-Path $DistDir "latest.bin") -Force
+Set-Content `
+    -Path (Join-Path $DistDir "manifest.json") `
+    -Value $manifest `
+    -Encoding utf8
+
+
+# ---------------------------------------------------------------------------
+# LATEST FULL IMAGE
+# ---------------------------------------------------------------------------
+
+Copy-Item `
+    -Path $FullBin `
+    -Destination (Join-Path $DistDir "latest.bin") `
+    -Force
+
+
+# ---------------------------------------------------------------------------
+# DONE
+# ---------------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Done. Everything is in docs\ - upload that folder to your site yourself:"
-Write-Host "  $DistDir\$OutName.bin"
-Write-Host "  $DistDir\manifest.json"
-Write-Host "  $DistDir\latest.bin        (stable filename, always the newest build)"
+Write-Host "============================================"
+Write-Host "  BUILD COMPLETE"
+Write-Host "============================================"
+Write-Host ""
+
+Write-Host "M5Launcher (3 parts):"
+Write-Host "  $M5LauncherBin"
+Write-Host ""
+
+Write-Host "Full image (4 parts):"
+Write-Host "  $FullBin"
+Write-Host ""
+
+Write-Host "ESP Web Tools:"
+Write-Host "  $(Join-Path $DistDir "manifest.json")"
+Write-Host ""
+
+Write-Host "Latest full image:"
+Write-Host "  $(Join-Path $DistDir "latest.bin")"
+Write-Host ""
+```
