@@ -30,6 +30,9 @@ LootMenu::Tab LootMenu::tab = LootMenu::Tab::WPASEC;
 uint8_t LootMenu::selected = 0;
 uint8_t LootMenu::scroll = 0;
 uint8_t LootMenu::count = 0;
+uint8_t LootMenu::page = 0;
+bool LootMenu::hasMore = false;
+uint16_t LootMenu::totalItems = 0;
 
 enum class St : uint8_t { LOCAL, UPLOADED, CRACKED };
 
@@ -164,34 +167,55 @@ static void dropWifi() {
     Net::leaveHome();
 }
 
+// True if this filename belongs to the current tab's file type.
+static bool matchesTab(bool wpa, const char* name) {
+    bool pcap = endsWith(name, ".pcap") || endsWith(name, ".pcapng") ||
+                endsWith(name, ".cap");
+    bool h220 = endsWith(name, ".22000") || endsWith(name, ".hc22000");
+    return wpa ? pcap : h220;
+}
+
 void LootMenu::scan() {
     count = 0;
     selected = 0;
     scroll = 0;
+    hasMore = false;
     if (!Storage::available()) return;
 
     const bool wpa = (tab == Tab::WPASEC);
     if (wpa) WPASec::loadCache();
     else Pwncrack::loadCache();
 
-    const char* dirs[2];
-    uint8_t nd = 0;
-    dirs[nd++] = Storage::DIR_HS;
+    File root = SD.open(Storage::DIR_HS);
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return;
+    }
 
-    for (uint8_t d = 0; d < nd && count < 48; d++) {
-        File root = SD.open(dirs[d]);
-        if (!root || !root.isDirectory()) {
-            if (root) root.close();
-            continue;
+    // Skip past every page before this one - cheap name-only check, no
+    // identity fill or wpasec/pwncrack cache lookups, so paging stays fast
+    // even with hundreds of captures on the card.
+    uint16_t toSkip = (uint16_t)page * PAGE_SIZE;
+    File f = root.openNextFile();
+    while (f && toSkip > 0) {
+        if (!f.isDirectory()) {
+            const char* name = Storage::baseName(f.name());
+            if (matchesTab(wpa, name)) toSkip--;
         }
-        File f = root.openNextFile();
-        while (f && count < 48) {
-            if (!f.isDirectory()) {
-                const char* name = Storage::baseName(f.name());
-                bool pcap = endsWith(name, ".pcap") || endsWith(name, ".pcapng") ||
-                            endsWith(name, ".cap");
+        f.close();
+        f = root.openNextFile();
+    }
+
+    // Fill this page - full identity fill + dedup, scoped to just the rows
+    // landing here. A repeat capture of the same BSSID landing on a
+    // different page than its sibling won't merge with it - same tradeoff
+    // the wpasec-only pager already made for the sake of a cheap skip pass.
+    while (f && count < PAGE_SIZE) {
+        if (!f.isDirectory()) {
+            const char* name = Storage::baseName(f.name());
+            if (matchesTab(wpa, name)) {
                 bool h220 = endsWith(name, ".22000") || endsWith(name, ".hc22000");
-                if ((wpa && pcap) || (!wpa && h220)) {
+                {
                     bool dup = false;
                     for (uint8_t i = 0; i < count; i++) {
                         if (strcmp(s_rows[i].filename, name) == 0) { dup = true; break; }
@@ -202,7 +226,7 @@ void LootMenu::scan() {
                         strncpy(tmp.filename, name, sizeof(tmp.filename) - 1);
                         tmp.fileSize = (uint32_t)f.size();
                         tmp.isPMKID = h220 && !endsWith(name, "_hs.22000");
-                        fillIdentity(tmp, dirs[d]);
+                        fillIdentity(tmp, Storage::DIR_HS);
                         int same = -1;
                         if (tmp.hex[0]) {
                             for (uint8_t i = 0; i < count; i++) {
@@ -275,11 +299,60 @@ void LootMenu::scan() {
                     }
                 }
             }
-            f.close();
-            f = root.openNextFile();
         }
-        root.close();
+        f.close();
+        f = root.openNextFile();
     }
+
+    // One more matching name past this page? -> hasMore, without loading it.
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* name = Storage::baseName(f.name());
+            if (matchesTab(wpa, name)) {
+                hasMore = true;
+                f.close();
+                break;
+            }
+        }
+        f.close();
+        f = root.openNextFile();
+    }
+    root.close();
+    countTotal();
+}
+
+// Cheap directory pass for the summary line's "N total" - just name checks,
+// no per-file wpasec/pwncrack cache lookups, so this stays fast even with
+// hundreds of captures. Runs once per scan()/page change, not per frame.
+void LootMenu::countTotal() {
+    totalItems = 0;
+    if (!Storage::available()) return;
+    const bool wpa = (tab == Tab::WPASEC);
+    File root = SD.open(Storage::DIR_HS);
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return;
+    }
+    File f = root.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* name = Storage::baseName(f.name());
+            if (matchesTab(wpa, name)) totalItems++;
+        }
+        f.close();
+        f = root.openNextFile();
+    }
+    root.close();
+}
+
+void LootMenu::gotoPage(uint8_t newPage, bool landOnLast) {
+    page = newPage;
+    scan();
+    if (landOnLast && count > 0) {
+        selected = (uint8_t)(count - 1);
+        scroll = (selected + 1 > VISIBLE) ? (uint8_t)(selected - VISIBLE + 1) : 0;
+    }
+    SFX::play(SFX::MENU_CLICK);
 }
 
 void LootMenu::show() {
@@ -288,6 +361,7 @@ void LootMenu::show() {
     syncModal = false;
     diagModal = false;
     keyWasPressed = true;
+    page = 0;
     scan();
 }
 
@@ -314,33 +388,34 @@ void LootMenu::hide() {
 }
 
 const char* LootMenu::getBottomHint() {
-    uint8_t page = (uint8_t)((millis() / 2500u) % 7u);
+    uint8_t hintCycle = (uint8_t)((millis() / 2500u) % 8u);
     if (syncModal) return "ENT close";
     if (diagModal) {
-        if (page & 1) return ";/.  scroll log";
+        if (hintCycle & 1) return ";/.  scroll log";
         return "ENT  close test";
     }
     if (detailView) {
-        if (page == 0) return "U  send this file";
-        if (page == 1) return "Q  pull results";
-        if (page == 2) return "D  delete this file";
-        if (page == 3) return "R  reload list";
+        if (hintCycle == 0) return "U  send this file";
+        if (hintCycle == 1) return "Q  pull results";
+        if (hintCycle == 2) return "D  delete this file";
+        if (hintCycle == 3) return "R  reload list";
         return "ENT  close card";
     }
     if (!count) {
-        if (page == 0) return "Q  pull results";
-        if (page == 1) return "R  reload list";
-        if (page == 2) return "T  test wifi / api";
-        if (page == 3) return ",/  wpasec / pwncrack";
+        if (hintCycle == 0) return "Q  pull results";
+        if (hintCycle == 1) return "R  reload list";
+        if (hintCycle == 2) return "T  test wifi / api";
+        if (hintCycle == 3) return ",/  wpasec / pwncrack";
         return "`  back";
     }
-    switch (page) {
+    switch (hintCycle) {
         case 0: return "S  send all pending";
         case 1: return "U  send this file";
         case 2: return "Q  pull results";
         case 3: return "D  delete this file";
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
+        case 6: return "[ / ]  prev / next page";
         default: return ",/  wpasec / pwncrack";
     }
 }
@@ -590,6 +665,12 @@ void LootMenu::deleteSelected() {
     uint8_t keep = selected;
     bool wasDetail = detailView;
     scan();
+    if (count == 0 && page > 0) {
+        // Deleted the last row on the last page - step back one page
+        // instead of leaving the view stranded on an empty page.
+        page--;
+        scan();
+    }
     if (keep >= count && count) keep = (uint8_t)(count - 1);
     selected = count ? keep : 0;
     if (selected < scroll) scroll = selected;
@@ -604,6 +685,12 @@ void LootMenu::reloadList() {
     WPASec::freeCacheMemory();
     Pwncrack::freeCacheMemory();
     scan();
+    if (count == 0 && page > 0) {
+        // The card changed since the last scan and this page ran dry -
+        // fall back a page instead of showing an empty list.
+        page--;
+        scan();
+    }
     if (keep >= count && count) keep = (uint8_t)(count - 1);
     selected = count ? keep : 0;
     if (selected < scroll) scroll = selected;
@@ -671,8 +758,20 @@ void LootMenu::handleInput() {
 
     if (M5Cardputer.Keyboard.isKeyPressed(',') || M5Cardputer.Keyboard.isKeyPressed('/')) {
         tab = (tab == Tab::WPASEC) ? Tab::PWNCRACK : Tab::WPASEC;
+        page = 0;
         SFX::play(SFX::MENU_CLICK);
         scan();
+        return;
+    }
+
+    if (M5Cardputer.Keyboard.isKeyPressed('[')) {
+        if (page > 0) gotoPage((uint8_t)(page - 1), false);
+        else Display::showToast("FIRST PAGE", 500);
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed(']')) {
+        if (hasMore) gotoPage((uint8_t)(page + 1), false);
+        else Display::showToast("LAST PAGE", 500);
         return;
     }
 
@@ -680,6 +779,11 @@ void LootMenu::handleInput() {
         if (selected > 0) {
             selected--;
             if (selected < scroll) scroll = selected;
+        } else if (page > 0) {
+            // Already at the top of this page - step back a page and land
+            // on its last row, so paging feels like one continuous list.
+            gotoPage((uint8_t)(page - 1), true);
+            return;
         }
         SFX::play(SFX::MENU_CLICK);
     }
@@ -687,6 +791,11 @@ void LootMenu::handleInput() {
         if (count && selected + 1 < count) {
             selected++;
             if (selected >= scroll + VISIBLE) scroll = (uint8_t)(selected - VISIBLE + 1);
+        } else if (hasMore) {
+            // Already at the bottom of this page and more exist on disk -
+            // load the next page instead of just stopping here.
+            gotoPage((uint8_t)(page + 1), false);
+            return;
         }
         SFX::play(SFX::MENU_CLICK);
     }
@@ -927,9 +1036,21 @@ void LootMenu::draw(M5Canvas& canvas) {
         else if (s_rows[i].status == St::UPLOADED) up++;
         else loc++;
     }
-    char summary[40];
-    snprintf(summary, sizeof(summary), "%u  OK %u  UP %u  LOC %u",
-             (unsigned)count, (unsigned)ok, (unsigned)up, (unsigned)loc);
+    uint16_t totalPages = (uint16_t)((totalItems + PAGE_SIZE - 1) / PAGE_SIZE);
+    if (totalPages == 0) totalPages = 1;
+    char summary[48];
+    if (totalPages > 1) {
+        // Multiple pages: OK/UP/LOC below are for THIS page only (computing
+        // them for every capture on disk would mean re-running the wpasec/
+        // pwncrack lookups for pages we're not even showing) - P x/y makes
+        // that scoping obvious instead of silently under-reporting the total.
+        snprintf(summary, sizeof(summary), "%u P%u/%u OK%u UP%u LOC%u",
+                 (unsigned)totalItems, (unsigned)(page + 1), (unsigned)totalPages,
+                 (unsigned)ok, (unsigned)up, (unsigned)loc);
+    } else {
+        snprintf(summary, sizeof(summary), "%u  OK %u  UP %u  LOC %u",
+                 (unsigned)count, (unsigned)ok, (unsigned)up, (unsigned)loc);
+    }
     canvas.setTextColor(UiStyle::GOLD);
     canvas.drawString(summary, 6, 18);
 
