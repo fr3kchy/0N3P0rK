@@ -4,7 +4,7 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.3.0** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2.5.6** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -224,7 +224,7 @@ SYSTEM · STATUS · **RADIO** · BLE · CONNECT · KEYS · USB SD
 
 ---
 
-## RADIO (v1.3)
+## RADIO (v1.2.5.6)
 
 Packs apply a preset of knobs + optional default method. Manual tweaks become CUSTOM.
 
@@ -254,7 +254,7 @@ Packs apply a preset of knobs + optional default method. Manual tweaks become CU
 
 ---
 
-## SPECTRUM (v1.3)
+## SPECTRUM (v1.2.5.6)
 
 | Key | Action |
 | --- | --- |
@@ -311,7 +311,7 @@ Hidden SSIDs show as `<HIDDEN>` until a probe response reveals the name. Hunt us
 
 ## Release notes
 
-### v1.3.0
+### v1.2.5.6
 
 Handshake-first radio pass: catch more real handshakes, clearer status, skip stuck targets, fewer junk files on SD.
 
