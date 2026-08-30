@@ -38,7 +38,7 @@ Think Tamagotchi first. The radio is in the barn.
 
 Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / Cardputer only.
 
-**Partitions (v1.2.7):** app ~6.8 MB · internal `spiffs`/LittleFS **512 KB** · coredump reserved. All handshakes, talk, wordlists, and the file manager live on **SD**. After changing partitions, do a **full flash erase** once when upgrading from older builds.
+**Partitions (v1.2.7):** app ~2.8 MB · internal `spiffs`/LittleFS **512 KB** · coredump reserved. All handshakes, talk, wordlists, and the file manager live on **SD**. After changing partitions, do a **full flash erase** once when upgrading from older builds.
 
 ---
 
