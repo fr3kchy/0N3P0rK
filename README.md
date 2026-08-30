@@ -1,10 +1,12 @@
 # 0N3P0rK
 
+## https://lexilexiko.github.io/0N3P0rK/
+
 Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardputer** and **M5Cardputer ADV**.
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
-**v1.2.5.6** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+**v1.2.7** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
@@ -18,7 +20,7 @@ Plug in the Cardputer, put an SD card in the slot, and you get a pig on a scroll
 
 Think Tamagotchi first. The radio is in the barn.
 
-**v1.2.5.6** focuses the radio on smarter handshake hunting: packs & methods, FOCUS scoring, session skip, a clearer status bar, spectrum HS depth, and safer pcap writes.
+**v1.2.7** keeps the handshake-first radio from 1.2.5.x, tightens **SD-only** storage (internal flash is no longer a user filesystem), shrinks the unused LittleFS partition, refreshes pig monologues, and polishes the **web installer** site.
 
 ---
 
@@ -28,17 +30,19 @@ Think Tamagotchi first. The radio is in the barn.
 | --- | --- |
 | Boards | **M5Cardputer** (original) and **M5Cardputer ADV** |
 | MCU | ESP32-S3 (StampS3), 240 MHz |
-| Flash | 8 MB (this image) |
+| Flash | 8 MB — large app partition, **512 KB** internal LittleFS (not used for loot) |
 | Screen | 240 × 135 ST7789, farm uses a top bar + main field + bottom bar |
 | Keyboard | Original: 74HC138 matrix. ADV: TCA8418 |
 | USB | CDC serial (`ARDUINO_USB_MODE=0`, CDC on boot). Pick the COM yourself (VID `303A`) |
-| SD | dedicated SPI: CS 12, MOSI 14, MISO 39, SCK 40. GPIO 5 is held HIGH only while the card mounts (1.2-style fix), then keys are restored |
+| SD | dedicated SPI: CS 12, MOSI 14, MISO 39, SCK 40. GPIO 5 is held HIGH only while the card mounts, then keys are restored |
 
 **Original Cardputer:** after SD, the keyboard matrix is started again with `Keyboard.begin()`.
 
 **Cardputer ADV:** GPIO 5 stays HIGH after mount. The firmware does **not** re-init the TCA8418 I2C keyboard.
 
 Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / Cardputer only.
+
+**Partitions (v1.2.7):** app ~6.8 MB · internal `spiffs`/LittleFS **512 KB** · coredump reserved. All handshakes, talk, wordlists, and the file manager live on **SD**. After changing partitions, do a **full flash erase** once when upgrading from older builds.
 
 ---
 
@@ -49,7 +53,7 @@ Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / C
 3. Flash with any of:
 
 ```text
-esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.3.0_m5cardputer.bin
+esptool.py --chip esp32s3 --port COMx write_flash 0x0 0N3P0rK_v1.2.7_m5cardputer.bin
 ```
 
 or PlatformIO:
@@ -58,7 +62,9 @@ or PlatformIO:
 pio run -t upload --upload-port COMx
 ```
 
-or M5Launcher / the usual Cardputer launcher, pointing at the release `.bin`.
+or **M5Launcher** / the usual Cardputer launcher, pointing at a `*Launcher*.bin` release.
+
+**Web installer:** [lexilexiko.github.io/0N3P0rK](https://lexilexiko.github.io/0N3P0rK/) — Chrome / Edge / Opera, lists every `.bin` under `docs/firmware/` by **extension** (Direct / Full vs Launcher labels).
 
 Build from source (PlatformIO, `espressif32@6.12.0`, Arduino):
 
@@ -67,7 +73,7 @@ pio run
 ```
 
 Artifact: `.pio/build/m5cardputer/firmware.bin`  
-Release name: `0N3P0rK_v1.3.0_m5cardputer.bin`
+Release names: `0N3P0rK_v1.2.7_*_Full.bin` (USB / web) · `0N3P0rK_v1.2.7_*_M5Launcher.bin` (launcher)
 
 ---
 
@@ -163,7 +169,17 @@ A night visitor. If **WOLF EAT** is on, a bite at 0 hearts can stash a random ha
 
 Skins: CLASSIC, BLUSH, HOG, ZOMBIE, RETRO, SHADOW, CANDY, GOLD.
 
-Custom talk lines: `/0N3P0rK/talk/`.
+### Talk (monologues)
+
+Snout bubbles: short English lines (hacker / game flavor). Built-in lists + optional SD extras.
+
+| | |
+| --- | --- |
+| **PIG → TALK SEC** | Interval **2…10** seconds between automatic lines (default **5**) |
+| **PIG → MOOD** | Speech bubbles on / off |
+| SD path | `/0N3P0rK/talk/` — `idle.txt`, `happy.txt`, `hungry.txt`, `sad.txt`, `sleepy.txt`, `fed.txt`, `pet.txt`, `play.txt`, `bird.txt` |
+
+One line = one bubble. Max ~24 characters. Lines starting with `#` are comments. Up to 16 extra lines per mood file.
 
 ---
 
@@ -182,7 +198,7 @@ Custom talk lines: `/0N3P0rK/talk/`.
 | BLE | Apple / Win / Android frames. |
 | IR PORT | IR blast; files in `/0N3P0rK/ir`. |
 | SPECTRUM | 2.4 GHz sweep. `ENT` lock, `A` hunt, **`D` HS depth**. |
-| FILES | Browse SD / MEM. **`X`** delete (Y confirm). |
+| FILES | Browse **SD only**. **`X`** delete (Y confirm). |
 | STOP | Radio sleep. |
 
 ### Capture: LIGHT vs AGGRO
@@ -216,7 +232,7 @@ wpa-sec + pwncrack. `S` sync all, `U` one file, `Q` results only, `D` delete, `R
 
 ### PIG
 
-Name, skin, season, sky, LIFE, layers, CODE, WOLF.
+Name, skin, season, sky, LIFE, layers, **MOOD**, **TALK SEC**, CODE, WOLF.
 
 ### SET
 
@@ -224,9 +240,23 @@ SYSTEM · STATUS · **RADIO** · BLE · CONNECT · KEYS · USB SD
 
 ---
 
-## RADIO (v1.2.5.6)
+## RADIO
 
-Packs apply a preset of knobs + optional default method. Manual tweaks become CUSTOM.
+Packs apply a preset of knobs + optional default method. Manual tweaks become **CUSTOM**.
+
+Menu order (top): **PACK** → **HS METHOD** → **RESET** (stock radio, next to the method) → FALLBACK → kick / hop knobs…
+
+### Packs (examples)
+
+| Pack | Typical method | Idea |
+| --- | --- | --- |
+| STOCK | (keep) | Factory knobs |
+| SOFT | ALL | Light pressure |
+| NORMAL | CLIENTS | Prefer APs with stations |
+| FOCUS | FOCUS | Score-and-stick (Porkchop-style) |
+| LOUD | CLIENTS | Harder CLIENTS pressure |
+| MAX | FOCUS | Loud / fast |
+| QUIET | (keep) | PMKID probe, minimal TX |
 
 ### Methods
 
@@ -236,12 +266,13 @@ Packs apply a preset of knobs + optional default method. Manual tweaks become CU
 | CLIENTS | Prefer APs with stations |
 | FOCUS | Score one AP (RSSI, clients, data activity); lock |
 | HERD / CSA | Channel-switch style where enabled |
-| AUTO | Rotate methods |
+| AUTO | Rotate methods on FALLBACK timer |
 
 ### Key knobs
 
 | Setting | Role |
 | --- | --- |
+| **RESET** | Restore STOCK radio (next to HS METHOD) |
 | **HS DEPTH** | PAIR / +M3 / FULL — when lock may release |
 | **DEPTH HOLD** | Extra hold after pair if depth > PAIR |
 | **DATA ACT** | FOCUS prefers live data, not beacon-only |
@@ -251,10 +282,14 @@ Packs apply a preset of knobs + optional default method. Manual tweaks become CU
 | **HOP MS** / hop set | Dwell & channel set |
 | **DEAUTH** | Master kick enable |
 | **PMKID** probe | Auth/assoc without deauth |
+| BIDIR / EAPOL TX / CSA / AUTH FLOOD | Kick / coax stack |
+| JITTER / COOLDOWN / SCORE THR | Anti-WIDS gap, per-AP cool-down, FOCUS threshold |
+
+**Capture files on SD:** `.pcap` / `.cap` frames + hashcat **`.22000`** (`WPA*01` PMKID, `WPA*02` EAPOL). Writers avoid wiping good files when possible; prefer real ESSID for crackable lines.
 
 ---
 
-## SPECTRUM (v1.2.5.6)
+## SPECTRUM
 
 | Key | Action |
 | --- | --- |
@@ -271,14 +306,29 @@ Hidden SSIDs show as `<HIDDEN>` until a probe response reveals the name. Hunt us
 
 ---
 
+## PIGPASS (offline crack)
+
+Loads capture + wordlist / mask from SD.
+
+| Captures | Wordlists |
+| --- | --- |
+| `.22000` (hashcat 22000) | `.txt` / `.lst` / `.dict` in `/0N3P0rK/Passworld/` |
+| `.pcap` / `.cap` | On-device **MASK GEN** |
+
+WPA / WPA2 PSK (PBKDF2). Password length 8…63. Results under `/0N3P0rK/pigpass/`. Checkpoint can resume after reboot.
+
+---
+
 ## FILES
+
+SD card only (v1.2.7). Internal MEM is not offered.
 
 | Key | Action |
 | --- | --- |
 | `;` / `.` | Navigate |
 | Enter | Open |
 | `,` | Parent |
-| `V` | SD / MEM |
+| `V` | Reminds **SD CARD ONLY** (no internal volume) |
 | `N` | New file |
 | **`X`** then **Y** | Delete file |
 
@@ -296,8 +346,19 @@ Hidden SSIDs show as `<HIDDEN>` until a probe response reveals the name. Hunt us
   Passworld/      wordlists
   ir/             IR files
   wolf/           wolf stash (handshakes only)
-  talk/           pig lines
+  talk/           pig monologue lines
 ```
+
+---
+
+## Web site (docs)
+
+GitHub Pages: **Information · Installation · Gallery · Donate**.
+
+- Firmware list by **`.bin` extension** (directory listing and/or GitHub API on the default branch). Optional `firmware/files.json` if the host has no listing.
+- Labels **[Direct / Full]** vs **[Launcher]**.
+- **README** link uses the repo default branch (`…/0N3P0rK#readme`), not a hard-coded `main` tree.
+- **Donate** button placeholder at the bottom (link later).
 
 ---
 
@@ -305,11 +366,42 @@ Hidden SSIDs show as `<HIDDEN>` until a probe response reveals the name. Hunt us
 
 - PlatformIO env `m5cardputer`, board `m5stack-stamps3`
 - `espressif32@6.12.0`, Arduino framework
-- Version from `scripts/pre_build.py` + `custom_version` in `platformio.ini` → set **1.3.0** for this release
+- `board_build.partitions = partitions.csv` · `board_build.filesystem = littlefs` (512 KB slot; user data on SD)
+- Version from `scripts/pre_build.py` + `custom_version` in `platformio.ini` → **1.2.7**
 
 ---
 
 ## Release notes
+
+### v1.2.7
+
+Cosmetics, storage layout, and site polish on the 1.2.5.x capture base.
+
+**Pig & UI**
+- New English monologues (tech / game flavor: wifi tail, Diablo snout, handshake jokes, …)
+- **PIG → TALK SEC** — monologue interval **2…10 s** (default 5); bubble duration follows the interval
+- **RADIO → RESET** moved next to **HS METHOD** (easy to find)
+
+**Storage & partitions**
+- Internal LittleFS / `spiffs` partition reduced to **512 KB** (was ~5 MB); app partition enlarged
+- Loot / handshakes / talk / wordlists remain on **SD only**
+- **FILES** no longer switches to internal MEM (`V` → SD CARD ONLY)
+
+**Web installer (`docs/`)**
+- Full English site: Information, Installation, Gallery, Donate
+- Discovers firmware by **`.bin` format**; Direct/Full vs Launcher labels
+- README button targets the **default branch** documentation
+
+**Still from 1.2.5.6 (capture core)**
+- Packs & methods, FOCUS scoring, DATA ACT / STRICT LK / DEPTH HOLD / HS DEPTH
+- Session **Z** skip, SSID status bar, **`&N`** handshake count
+- Spectrum **`D`** depth + HID / `<HIDDEN>`
+- Safer pcap / `.22000` write habits
+
+**Parked for later**
+- ROAD street mode, TX power knob, MP3 player, donate payment URL
+
+---
 
 ### v1.2.5.6
 
@@ -333,12 +425,6 @@ Handshake-first radio pass: catch more real handshakes, clearer status, skip stu
 **Storage**
 - Pcap: verify size on card after header; scrub sub-header stubs (0–23 bytes) so LOOT stays clean
 - `.22000` short-write guards kept
-
-**Unchanged**
-- File manager delete (`X`/`Y`), LOOT delete (`D`), farm / pig / BLE / IR / EVILPIG / PIGPASS core
-
-**Parked for later**
-- ROAD street mode, TX power knob, MP3 player
 
 ---
 

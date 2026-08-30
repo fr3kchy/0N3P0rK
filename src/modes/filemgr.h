@@ -1,4 +1,4 @@
-// File manager — browse SD (Storage::) and internal LittleFS, view/edit .txt.
+// File manager — browse SD card only (loot lives on SD), view/edit .txt.
 // Same on/off + draw contract as IrPortMode/UsbSdMode so App/Menu wire it
 // the same way.
 #pragma once

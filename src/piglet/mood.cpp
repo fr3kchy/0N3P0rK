@@ -4,6 +4,8 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../core/app.h"
+#include "../cap/sniffer.h"
+#include "../cap/hc22000.h"
 #include "../ui/display.h"
 #include "../audio/sfx.h"
 #include "../storage/littlefs_ops.h"
@@ -28,117 +30,118 @@ static uint32_t s_statusUntil = 0;
 static bool s_moodDirty = false;
 static uint32_t s_moodSavedAt = 0;
 
-// 0n3 barn voice. Short enough for the snout bubble.
+// 0n3 barn voice — hacker / tech / game jokes (max ~24 chars for bubble).
 static const char* PH_IDLE[] = {
-    "hello friend",
-    "i did not touch it",
-    "it is a feature",
-    "dns did it",
-    "logs are quiet",
-    "prod seems up",
-    "it compiles",
-    "sudo oink",
-    "wifi go brrr",
-    "nothing is real",
-    "snout online",
-    "beacon soup",
-    "ssid? maybe",
-    "heap still here",
-    "barn structural ok",
-    "oink.exe idle",
-    "rf is spicy mud",
-    "pig persists",
-    "0N3P0rK vibes"
+    "my tail is wifi",
+    "snout is the antenna",
+    "remember Diablo snout",
+    "one-shotted with hoof",
+    "SSID smells like loot",
+    "beacon farm AFK",
+    "oink.exe still running",
+    "heap did not explode",
+    "RF mud tastes spicy",
+    "I am the router",
+    "channel hop and chill",
+    "EAPOL in my dreams",
+    "sudo make me bacon",
+    "logs say I am cute",
+    "prod is the barn",
+    "compiler likes me",
+    "packet soup today",
+    "hidden SSID energy",
+    "0N3P0rK never sleeps",
+    "MAC address and vibes"
 };
 static const char* PH_HAPPY[] = {
-    "access granted",
-    "it works!!",
-    "gg wp",
-    "hack the planet",
-    "this guy oinks",
-    "PWNED EM",
-    "truffle bagged",
+    "GG no re oink",
+    "handshake bagged",
+    "PWNED with style",
+    "loot screen go brrr",
+    "root access mood",
+    "main character pig",
+    "200 OK and dancing",
+    "truffle raid success",
     "snout high five",
-    "main character",
-    "200 ok mood",
-    "root dance",
-    "gg bacon",
-    "oink++",
-    "sorted proper"
+    "level up bacon",
+    "crit hit on WiFi",
+    "boss drop: password",
+    "speedrun the 4-way",
+    "clutch HS capture"
 };
 static const char* PH_HUNGRY[] = {
-    "404 apple",
-    "disk full :(",
-    "need sudo food",
-    "no packets",
-    "tummy empty",
-    "low hp tum",
-    "feed the snout",
-    "trough bone dry",
-    "malloc food pls",
-    "empty sector",
-    "need fruit irq"
+    "404 fruit not found",
+    "low HP need apples",
+    "malloc snack please",
+    "trough is out of band",
+    "no packets no lunch",
+    "feed the snout ASAP",
+    "disk full of hunger",
+    "IRQ for more fruit",
+    "empty loot table",
+    "starving like RAID 0",
+    "need sudo sandwich"
 };
 static const char* PH_SAD[] = {
-    "deploy failed",
-    "prod is down",
-    "was not me",
-    "blame dns",
-    "ticket #404",
-    "conn refused",
-    "segfault in heart",
-    "mood: unloaded",
     "handshake ghosted me",
-    "barn too quiet",
-    "status dire"
+    "deploy failed again",
+    "blame the DNS pig",
+    "conn refused mood",
+    "segfault in my heart",
+    "ticket number oink",
+    "prod barn is down",
+    "MIC check failed",
+    "no clients online",
+    "channel was empty",
+    "wolf ate my packets"
 };
 static const char* PH_SLEEPY[] = {
-    "admin sleeps",
-    "cron at 3am",
-    "zzz 5 more min",
-    "standby...",
-    "screen saver",
-    "low power snout",
-    "idle process",
-    "dreaming of hs",
-    "radio silence"
+    "admin mode: sleep",
+    "cron job at 3am",
+    "dreaming of handshakes",
+    "low power snout mode",
+    "idle process oink",
+    "screensaver of mud",
+    "radio silence zzz",
+    "five more minutes",
+    "AFK in the trough"
 };
 static const char* PH_FED[] = {
-    "nom nom",
-    "200 ok yum",
-    "cache warm",
-    "crunch!",
-    "hp++",
-    "trough blessed",
-    "yum sector"
+    "cache is warm now",
+    "HP restored full",
+    "yum sector mounted",
+    "200 OK delicious",
+    "trough raid complete",
+    "bacon buffer filled",
+    "snack ACK received"
 };
 static const char* PH_PET[] = {
-    "hehehe",
-    "more pets",
-    "best haxor",
-    "purr-oink",
-    "scratch ++",
-    "good human",
-    "snout approved"
+    "best haxor pets me",
+    "snout approved human",
+    "scratch interrupt ok",
+    "purr-oink intensifies",
+    "more pets more uptime",
+    "good operator yes",
+    "tail wags for root"
 };
 static const char* PH_PLAY[] = {
-    "zoom!",
-    "catch me",
-    "hack the planet",
-    "again!",
-    "ping flood",
-    "hop hop",
-    "oscar mike"
+    "catch me if deauth",
+    "ping flood playground",
+    "zoom across the barn",
+    "hack the planet oink",
+    "hop hop channel six",
+    "speedrun the trough",
+    "oscar mike bacon"
 };
 static const char* PH_BIRD[] = {
-    "gotcha!",
-    "nice shot",
-    "pkt dropped",
-    "oink boom",
-    "bird down",
-    "no fly zone",
-    "feathers: deleted",
-    "PULL!"
+    "bird process killed",
+    "feathers rm -rf",
+    "no fly zone active",
+    "packet shot landed",
+    "airspace denied oink",
+    "PULL and delete",
+    "drone not welcome",
+    "sky loot claimed"
 };
 
 #define COUNT(arr) ((int)(sizeof(arr) / sizeof((arr)[0])))
@@ -219,19 +222,34 @@ static void loadTalkFromSd() {
     writeTalkSeed("/0N3P0rK/talk/idle.txt",
         "# 0N3P0rK talk — one line = one bubble\n"
         "# max 24 chars. # starts a comment.\n"
-        "# drop more lines in happy.txt hungry.txt\n"
-        "# sad.txt sleepy.txt fed.txt pet.txt\n"
-        "# play.txt bird.txt\n"
-        "sudo oink\n"
-        "my own line\n");
-    writeTalkSeed("/0N3P0rK/talk/happy.txt", "gg wp\naccess granted\n");
-    writeTalkSeed("/0N3P0rK/talk/hungry.txt", "404 apple\ntummy empty\n");
-    writeTalkSeed("/0N3P0rK/talk/sad.txt", "deploy failed\n");
-    writeTalkSeed("/0N3P0rK/talk/sleepy.txt", "zzz 5 more min\n");
-    writeTalkSeed("/0N3P0rK/talk/fed.txt", "nom nom\n");
-    writeTalkSeed("/0N3P0rK/talk/pet.txt", "hehehe\n");
-    writeTalkSeed("/0N3P0rK/talk/play.txt", "zoom!\n");
-    writeTalkSeed("/0N3P0rK/talk/bird.txt", "bird down\n");
+        "my tail is wifi\n"
+        "snout is the antenna\n"
+        "SSID smells like loot\n");
+    writeTalkSeed("/0N3P0rK/talk/happy.txt",
+        "handshake bagged\n"
+        "GG no re oink\n"
+        "boss drop: password\n");
+    writeTalkSeed("/0N3P0rK/talk/hungry.txt",
+        "404 fruit not found\n"
+        "need sudo sandwich\n");
+    writeTalkSeed("/0N3P0rK/talk/sad.txt",
+        "handshake ghosted me\n"
+        "MIC check failed\n");
+    writeTalkSeed("/0N3P0rK/talk/sleepy.txt",
+        "dreaming of handshakes\n"
+        "radio silence zzz\n");
+    writeTalkSeed("/0N3P0rK/talk/fed.txt",
+        "bacon buffer filled\n"
+        "snack ACK received\n");
+    writeTalkSeed("/0N3P0rK/talk/pet.txt",
+        "best haxor pets me\n"
+        "tail wags for root\n");
+    writeTalkSeed("/0N3P0rK/talk/play.txt",
+        "catch me if deauth\n"
+        "hop hop channel six\n");
+    writeTalkSeed("/0N3P0rK/talk/bird.txt",
+        "feathers rm -rf\n"
+        "no fly zone active\n");
     for (uint8_t k = 0; k < TK_COUNT; k++) loadTalkFile((TalkKind)k);
     Serial.printf("[TALK] sd lines idle=%u happy=%u\n",
                   (unsigned)s_talkN[TK_IDLE], (unsigned)s_talkN[TK_HAPPY]);
@@ -402,9 +420,10 @@ void Mood::hurt(int amount) {
     clampStat(happiness);
     lastEffective = happiness;
     say("segfault");
+    Avatar::flinch();
+    Avatar::setState(AvatarState::SAD);
     maybeBecomeZombie();
     saveMood();
-    updateAvatarState();
 }
 
 void Mood::pet() {
@@ -450,6 +469,39 @@ void Mood::onIdle() {
 void Mood::updateAvatarState() {
     Avatar::setMoodIntensity(happiness - 50);
     if (Config::personality().animTest && App::mode() == AppMode::FARM) return;
+
+    // AGGRO / pinned hunt: no new HS ~45s → ANGRY (was test-only).
+    // New pair → celebrate. Mic-dance stays unused.
+    static uint32_t s_huntStamp = 0;
+    static uint16_t s_huntPairs = 0;
+    const bool hunting =
+        Cap::isRunning() &&
+        (Cap::runMode() == Cap::RunMode::Aggressive ||
+         Cap::runMode() == Cap::RunMode::Pinned);
+    if (hunting) {
+        uint16_t pairs = Hc22000::pairCount();
+        if (s_huntStamp == 0) {
+            s_huntStamp = millis();
+            s_huntPairs = pairs;
+        } else if (pairs > s_huntPairs) {
+            s_huntPairs = pairs;
+            s_huntStamp = millis();
+            Avatar::cuteJump();
+            Avatar::triggerSparkles(5);
+            Avatar::triggerTailWiggle();
+            Avatar::setState(AvatarState::EXCITED);
+            return;
+        } else if ((uint32_t)(millis() - s_huntStamp) >= 45000u) {
+            Avatar::setState(AvatarState::ANGRY);
+            return;
+        } else {
+            Avatar::setState(AvatarState::HUNTING);
+            return;
+        }
+    } else {
+        s_huntStamp = 0;
+    }
+
     if (hunger < 22 || happiness < 18) {
         Avatar::setState(AvatarState::SAD);
     } else if (Avatar::isNightTime() && (millis() - lastActivityTime) > 20000) {
@@ -493,6 +545,7 @@ void Mood::update() {
         if (hunger == 0 && life > 0) {
             life -= 1;
             say("tummy empty");
+            Avatar::flinch();
             maybeBecomeZombie();
         }
         if ((now - lastActivityTime) > 90000) happiness -= 2;
@@ -504,7 +557,11 @@ void Mood::update() {
     if (s_moodDirty && (uint32_t)(now - s_moodSavedAt) >= 2000)
         saveMood();
 
-    if (now - lastPhraseChange >= 12000) {
+    // PIG → TALK SEC (2..10): gap until next automatic monologue.
+    uint32_t talkMs = (uint32_t)Config::personality().talkIntervalSec * 1000u;
+    if (talkMs < 2000) talkMs = 2000;
+    if (talkMs > 10000) talkMs = 10000;
+    if (now - lastPhraseChange >= talkMs) {
         pickPhrase();
     }
 
@@ -527,7 +584,14 @@ void Mood::update() {
 
 void Mood::draw(M5Canvas& canvas) {
     if (Avatar::isTransitioning()) return;
-    if ((millis() - lastPhraseChange) >= 5000) return;
+    {
+        uint32_t talkMs = (uint32_t)Config::personality().talkIntervalSec * 1000u;
+        if (talkMs < 2000) talkMs = 2000;
+        if (talkMs > 10000) talkMs = 10000;
+        uint32_t showMs = talkMs > 400 ? talkMs - 400 : talkMs;
+        if (showMs < 1200) showMs = 1200;
+        if ((millis() - lastPhraseChange) >= showMs) return;
+    }
 
     const char* ph = getCurrentPhrase();
     if (!ph || !ph[0]) return;

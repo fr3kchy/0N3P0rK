@@ -1136,6 +1136,8 @@ void PigpassMode::init() {
 
 void PigpassMode::start() {
     Serial.println("[PIGPASS] Starting PigPass mode");
+    // Visible PigPass: kill farm anims so PBKDF2 gets the core. Minimize → resume.
+    Avatar::suspendScene();
 
     attempts = 0;
     rate = 0.0;
@@ -1193,6 +1195,7 @@ void PigpassMode::stop() {
 
     clearFileList();
     state = PigpassState::IDLE;
+    Avatar::resumeScene();
     Avatar::setState(AvatarState::NEUTRAL);
 }
 
@@ -1655,6 +1658,13 @@ void PigpassMode::selectCurrentFile() {
 
 void PigpassMode::update() {
     if (state == PigpassState::IDLE) return;
+
+    // Open window → scene off (more crack CPU). Minimized → scene on (farm lives).
+    if (App::windowHidden()) {
+        if (Avatar::isSceneSuspended()) Avatar::resumeScene();
+    } else {
+        if (!Avatar::isSceneSuspended()) Avatar::suspendScene();
+    }
 
     if (state == PigpassState::SELECT_HANDSHAKE ||
         state == PigpassState::SELECT_WORDLIST ||

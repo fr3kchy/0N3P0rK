@@ -199,11 +199,12 @@ void FileMgrMode::handleBrowseInput() {
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('v') || M5Cardputer.Keyboard.isKeyPressed('V')) {
-        vol = (vol == Volume::SD) ? Volume::LFS : Volume::SD;
+        // Internal LittleFS disabled — all user files live on SD.
+        vol = Volume::SD;
         strncpy(curPath, "/", sizeof(curPath) - 1);
-        strncpy(statusMsg, vol == Volume::SD ? "SD" : "MEM", sizeof(statusMsg) - 1);
+        strncpy(statusMsg, "SD", sizeof(statusMsg) - 1);
         refreshList();
-        Display::showToast(vol == Volume::SD ? "SD CARD" : "INTERNAL MEM", 800);
+        Display::showToast("SD CARD ONLY", 800);
         SFX::play(SFX::MENU_CLICK);
         return;
     }

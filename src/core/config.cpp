@@ -53,6 +53,7 @@ bool Config::init() {
     p.animTest = s_prefs.getBool("anim", p.animTest);
     p.wolfEnabled = s_prefs.getBool("wolf", p.wolfEnabled);
     p.scrollSpeed = s_prefs.getUChar("scroll", p.scrollSpeed);
+    p.talkIntervalSec = s_prefs.getUChar("talkint", p.talkIntervalSec);
     p.fruitTreesAmbient = s_prefs.getBool("fruit", p.fruitTreesAmbient);
     p.freeLife = s_prefs.getBool("life", p.freeLife);
     p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
@@ -107,6 +108,8 @@ bool Config::init() {
     if (p.brightness > 100) p.brightness = 100;
     if (p.scrollSpeed < 1) p.scrollSpeed = 1;
     if (p.scrollSpeed > 10) p.scrollSpeed = 10;
+    if (p.talkIntervalSec < 2) p.talkIntervalSec = 2;
+    if (p.talkIntervalSec > 10) p.talkIntervalSec = 10;
     if (p.pigSkin >= PIG_SKIN_COUNT) p.pigSkin = 0;
     if (p.pigSkinAlive >= PIG_SKIN_COUNT ||
         p.pigSkinAlive == (uint8_t)PigSkin::ZOMBIE)
@@ -162,6 +165,7 @@ bool Config::save() {
     s_prefs.putBool("anim", p.animTest);
     s_prefs.putBool("wolf", p.wolfEnabled);
     s_prefs.putUChar("scroll", p.scrollSpeed);
+    s_prefs.putUChar("talkint", p.talkIntervalSec);
     s_prefs.putBool("fruit", p.fruitTreesAmbient);
     s_prefs.putBool("life", p.freeLife);
     s_prefs.putBool("weat", p.wolfEatLoot);

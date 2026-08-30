@@ -1,276 +1,370 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>0N3P0rK — Web Installer</title>
+  <title>0N3P0rK — Firmware &amp; Tools</title>
+  <meta name="description" content="0N3P0rK for M5Cardputer — web installer, docs, gallery.">
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
+    :root {
+      --bg: #0b0d12; --card: #12151c; --border: #1e2430; --text: #e8ecf4;
+      --muted: #8b93a7; --accent: #3dffa8; --danger: #ff6b7a; --radius: 14px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0f0f13;
-      color: #e8e8ed;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #13201a 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #12182a 0%, transparent 50%),
+        var(--bg);
+      color: var(--text); min-height: 100vh; line-height: 1.5;
     }
-
-    .container {
-      width: 100%;
-      max-width: 440px;
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    header.hero { text-align: center; padding: 2rem 0 1.25rem; }
+    .logo { display: inline-flex; font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; }
+    .logo span { color: var(--accent); }
+    .tagline { color: var(--muted); margin-top: 0.45rem; font-size: 0.98rem; }
+    nav.tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin: 1.25rem 0 1.5rem; }
+    nav.tabs button {
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      padding: 0.55rem 1rem; border-radius: 999px; cursor: pointer; font-size: 0.88rem; font-weight: 600;
     }
-
-    h1 {
-      font-size: 1.6rem;
-      font-weight: 700;
-      margin-bottom: 0.35rem;
-      text-align: center;
+    nav.tabs button:hover { border-color: #3a4458; color: var(--text); }
+    nav.tabs button.active {
+      background: linear-gradient(135deg, #1a2e26, #162033); border-color: #2f4a40; color: var(--accent);
     }
-
-    .tagline {
-      color: #8888a0;
-      font-size: 0.9rem;
-      text-align: center;
-      margin-bottom: 1.8rem;
-      line-height: 1.45;
-    }
-
+    section.panel { display: none; }
+    section.panel.active { display: block; }
     .card {
-      background: #18181f;
-      border: 1px solid #2a2a35;
-      border-radius: 12px;
-      padding: 1.5rem;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.35rem 1.4rem; margin-bottom: 1rem;
     }
-
-    label {
-      display: block;
-      font-size: 0.75rem;
-      color: #8888a0;
-      margin-bottom: 0.4rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+    .card h2 { font-size: 1.15rem; margin-bottom: 0.75rem; }
+    .card p, .card li { color: var(--muted); font-size: 0.95rem; }
+    .card ul { padding-left: 1.15rem; margin: 0.5rem 0; }
+    .card li { margin: 0.35rem 0; }
+    .card b, .card strong { color: var(--text); }
+    label.field {
+      display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); margin-bottom: 0.4rem;
     }
-
     select {
-      width: 100%;
-      background: #121218;
-      color: #e8e8ed;
-      border: 1px solid #333344;
-      border-radius: 8px;
-      padding: 0.7rem 0.9rem;
-      font-size: 0.95rem;
-      margin-bottom: 1rem;
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238888a0'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 0.9rem center;
-      cursor: pointer;
+      width: 100%; background: #0c0f15; color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.75rem 0.95rem; font-size: 0.95rem; margin-bottom: 0.85rem;
+      appearance: none; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b93a7'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 0.95rem center;
     }
-
-    select:focus {
-      outline: none;
-      border-color: #00c8e0;
-    }
-
-    .status {
-      font-size: 0.85rem;
-      color: #8888a0;
-      min-height: 1.3em;
-      margin-bottom: 1rem;
-    }
-    .status.ok { color: #5dce7a; }
-    .status.err { color: #ff6b6b; }
-
-    .install-area {
-      margin-bottom: 1.2rem;
-    }
-
+    select:focus { outline: none; border-color: var(--accent); }
+    .status { font-size: 0.88rem; color: var(--muted); min-height: 1.3em; margin-bottom: 0.9rem; }
+    .status.ok { color: var(--accent); }
+    .status.err { color: var(--danger); }
     esp-web-install-button {
-      --esp-tools-button-color: #00c8e0;
-      --esp-tools-button-text-color: #0f0f13;
-      --esp-tools-button-border-radius: 8px;
-      width: 100%;
+      --esp-tools-button-color: var(--accent); --esp-tools-button-text-color: #06140e;
+      --esp-tools-button-border-radius: 10px; width: 100%; display: block; margin-bottom: 1rem;
     }
-
     .hint {
-      font-size: 0.8rem;
-      color: #777790;
-      line-height: 1.55;
-      background: #121218;
-      border-radius: 8px;
-      padding: 0.85rem 1rem;
+      font-size: 0.85rem; color: var(--muted); background: #0c0f15; border-radius: 10px;
+      padding: 0.9rem 1rem; line-height: 1.55;
     }
-    .hint b { color: #c8c8d8; }
-
-    .links {
-      display: flex;
-      justify-content: center;
-      gap: 1.5rem;
-      margin-top: 1.8rem;
-      font-size: 0.9rem;
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.85rem; }
+    .shot {
+      background: #0c0f15; border: 1px solid var(--border); border-radius: 12px; aspect-ratio: 16/10;
+      display: flex; align-items: center; justify-content: center; color: var(--muted);
+      font-size: 0.85rem; text-align: center; padding: 0.75rem; overflow: hidden;
     }
-    .links a {
-      color: #00c8e0;
-      text-decoration: none;
+    .shot img { width: 100%; height: 100%; object-fit: cover; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.75rem; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; padding: 0.55rem 1rem;
+      border-radius: 999px; border: 1px solid var(--border); color: var(--text); font-weight: 600;
+      font-size: 0.88rem; background: #0c0f15; cursor: pointer; text-decoration: none;
     }
-    .links a:hover { text-decoration: underline; }
-
-    footer {
-      margin-top: 2rem;
-      font-size: 0.75rem;
-      color: #55556a;
-      text-align: center;
-      line-height: 1.6;
+    .btn:hover { border-color: #3a4458; text-decoration: none; }
+    .btn.primary {
+      background: linear-gradient(135deg, #1d3a30, #1a2740); border-color: #2f4a40; color: var(--accent);
     }
-    footer a { color: #666680; text-decoration: none; }
+    .btn.donate {
+      background: linear-gradient(135deg, #3a2418, #2a1a28); border-color: #5a3a30; color: #ffb086;
+    }
+    footer.site { margin-top: 2.25rem; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    footer.site .donate-wrap { margin: 1rem 0 0.75rem; }
+    footer.site .legal { color: #5c6478; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>0N3P0rK</h1>
-    <p class="tagline">
-      Tamagotchi pig + lab tools<br>
-      for M5Cardputer &amp; Cardputer ADV
-    </p>
+  <div class="wrap">
+    <header class="hero">
+      <div class="logo">0N3<span>P0rK</span></div>
+      <p class="tagline">Tamagotchi pig + lab radio tools for M5Cardputer</p>
+    </header>
 
-    <div class="card">
-      <label for="fileSelect">Файл прошивки</label>
-      <select id="fileSelect">
-        <option value="">Ищем файлы…</option>
-      </select>
+    <nav class="tabs" id="tabs" role="tablist">
+      <button type="button" data-tab="info" class="active">Information</button>
+      <button type="button" data-tab="install">Installation</button>
+      <button type="button" data-tab="gallery">Gallery</button>
+      <button type="button" data-tab="donate">Donate</button>
+    </nav>
 
-      <div class="status" id="status">Загрузка списка файлов…</div>
+    <section class="panel active" id="tab-info">
+      <div class="card">
+        <h2>What is 0N3P0rK?</h2>
+        <p>
+          Firmware for <b>M5Stack Cardputer</b> / Cardputer ADV: a living pig companion
+          plus Wi‑Fi lab tools (handshake capture, spectrum, PigPass, loot browser).
+        </p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">GitHub</a>
+          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank" rel="noopener">Releases</a>
+          <!-- #readme on repo root follows the DEFAULT branch (not hard-coded main) -->
+          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK#readme" target="_blank" rel="noopener">README</a>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Requirements</h2>
+        <ul>
+          <li>M5Cardputer or Cardputer ADV (ESP32-S3)</li>
+          <li>USB-C + <b>Chrome / Edge / Opera</b> (Web Serial)</li>
+          <li>microSD for captures, talk lines, and the file manager</li>
+        </ul>
+      </div>
+    </section>
 
-      <div class="install-area">
+    <section class="panel" id="tab-install">
+      <div class="card">
+        <h2>Web Installer</h2>
+        <p style="margin-bottom:0.9rem">
+          Lists every <b>.bin</b> in <code>firmware/</code> by extension.
+          Labels: <b>[Direct / Full]</b> for USB / web install, <b>[Launcher]</b> for M5Launcher.
+        </p>
+        <label class="field" for="fileSelect">Firmware image (.bin)</label>
+        <select id="fileSelect"><option value="">Scanning…</option></select>
+        <div class="status" id="status">Looking for .bin files…</div>
         <esp-web-install-button id="installBtn">
           <button slot="activate">Install Firmware</button>
         </esp-web-install-button>
+        <div class="hint">
+          <b>Steps</b><br>
+          1. Chrome / Edge / Opera · 2. USB-C · 3. Pick a .bin → Install → COM port (VID 303A)<br>
+          4. Use SD card for loot (internal flash is not used for user files)<br><br>
+          Drop any <code>*.bin</code> into <code>docs/firmware/</code> and refresh.
+          Discovery: folder listing → GitHub API (default branch) → optional <code>files.json</code>.
+        </div>
       </div>
+    </section>
 
-      <div class="hint">
-        • <b>Chrome / Edge / Opera</b> only<br>
-        • Подключи Cardputer по USB-C<br>
-        • Выбери COM-порт (VID 303A)<br>
-        • Желательно вставь SD-карту до прошивки
+    <section class="panel" id="tab-gallery">
+      <div class="card">
+        <h2>Gallery</h2>
+        <p style="margin-bottom:0.9rem">Screenshots from <code>docs/gallery/</code> (png / jpg).</p>
+        <div class="grid" id="galleryGrid">
+          <div class="shot">Farm scene<br><small>coming soon</small></div>
+          <div class="shot">Spectrum<br><small>coming soon</small></div>
+          <div class="shot">Capture<br><small>coming soon</small></div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="links">
-      <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank">GitHub</a>
-      <a href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank">Releases</a>
-    </div>
+    <section class="panel" id="tab-donate">
+      <div class="card">
+        <h2>Support the project</h2>
+        <p>Payment link will be added here later.</p>
+        <div class="actions" style="margin-top:1rem">
+          <a class="btn donate" href="#donate">Donate (coming soon)</a>
+        </div>
+      </div>
+    </section>
 
-    <footer>
-      MIT License · Lab use only<br>
-      <a href="https://github.com/lexilexiko">lexilexiko</a>
+    <footer class="site">
+      <div class="donate-wrap">
+        <a class="btn donate" href="#donate" data-goto="donate">♥ Donate</a>
+      </div>
+      <div class="legal">
+        MIT License · Lab / educational use only<br>
+        <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">github.com/lexilexiko/0N3P0rK</a>
+      </div>
     </footer>
   </div>
 
   <script>
+    const tabs = document.getElementById('tabs');
+    function showTab(id) {
+      document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+      document.querySelectorAll('section.panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + id));
+    }
+    tabs.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-tab]');
+      if (btn) showTab(btn.dataset.tab);
+    });
+    document.querySelectorAll('[data-goto]').forEach(el => {
+      el.addEventListener('click', e => { e.preventDefault(); showTab(el.getAttribute('data-goto')); });
+    });
+    if (location.hash === '#donate') showTab('donate');
+
     const select = document.getElementById('fileSelect');
     const status = document.getElementById('status');
     const installBtn = document.getElementById('installBtn');
 
-    // Список известных имён (на случай, если сервер не отдаёт listing)
-    const FALLBACK_FILES = [
-      'latest.bin',
-      'firmware.bin',
-      '0N3P0rK.bin',
-      'app.bin'
-    ];
-
-    async function tryFetch(url) {
-      try {
-        const r = await fetch(url, { method: 'HEAD' });
-        return r.ok;
-      } catch {
-        return false;
+    function isBinName(name) {
+      return typeof name === 'string' && /\.bin$/i.test(name) && !name.includes('..');
+    }
+    function baseName(path) {
+      return decodeURIComponent(String(path).split('?')[0].split('#')[0].split('/').pop());
+    }
+    function uniqueBins(list) {
+      const out = [], seen = new Set();
+      for (const raw of list) {
+        const name = baseName(raw);
+        if (!isBinName(name)) continue;
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
       }
+      return out;
+    }
+    function kindOf(name) {
+      const n = name.toLowerCase();
+      if (n.includes('launcher')) return 'launcher';
+      if (n.includes('full')) return 'full';
+      return 'direct';
+    }
+    function labelOf(name) {
+      const k = kindOf(name);
+      if (k === 'launcher') return '[Launcher] ' + name;
+      if (k === 'full') return '[Full / Direct] ' + name;
+      return '[Direct] ' + name;
+    }
+
+    async function headOk(url) {
+      try { return (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok; }
+      catch { return false; }
+    }
+
+    async function fromDirectoryListing() {
+      try {
+        const r = await fetch('./firmware/', { cache: 'no-store' });
+        if (!r.ok) return [];
+        const text = await r.text();
+        const matches = text.match(/href\s*=\s*["']([^"']+)["']/gi) || [];
+        return uniqueBins(matches.map(m => m.replace(/^href\s*=\s*["']/i, '').replace(/["']$/, '')));
+      } catch { return []; }
+    }
+
+    /** Public repo · default branch contents (no fixed branch name). */
+    async function fromGitHubApi() {
+      try {
+        const r = await fetch(
+          'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/firmware',
+          { headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store' }
+        );
+        if (!r.ok) return [];
+        const data = await r.json();
+        if (!Array.isArray(data)) return [];
+        return uniqueBins(data.filter(x => x && x.type === 'file').map(x => x.name));
+      } catch { return []; }
+    }
+
+    async function fromFilesJson() {
+      try {
+        const r = await fetch('./firmware/files.json', { cache: 'no-store' });
+        if (!r.ok) return [];
+        const data = await r.json();
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.files) ? data.files : []);
+        return uniqueBins(arr);
+      } catch { return []; }
+    }
+
+    async function fromProbePatterns() {
+      const patterns = ['0N3P0rK.bin', 'firmware.bin', 'latest.bin'];
+      const found = [];
+      for (const name of patterns) {
+        if (await headOk('./firmware/' + name)) found.push(name);
+      }
+      return uniqueBins(found);
     }
 
     async function findBins() {
-      const found = [];
-
-      // 1. Пробуем получить listing папки firmware/ (работает на многих хостингах)
-      try {
-        const r = await fetch('./firmware/');
-        if (r.ok) {
-          const text = await r.text();
-          const matches = text.match(/href=["']([^"']+\.bin)["']/gi) || [];
-          for (const m of matches) {
-            const name = m.replace(/href=["']/i, '').replace(/["']$/, '').split('/').pop();
-            if (name && !found.includes(name)) found.push(name);
-          }
-        }
-      } catch (_) {}
-
-      // 2. Если listing не сработал — проверяем известные имена
-      if (found.length === 0) {
-        for (const name of FALLBACK_FILES) {
-          if (await tryFetch(`./firmware/${name}`)) {
-            found.push(name);
-          }
-        }
-      }
-
-      return found;
+      let files = await fromDirectoryListing();
+      if (files.length) return files;
+      files = await fromGitHubApi();
+      if (files.length) return files;
+      files = await fromFilesJson();
+      if (files.length) return files;
+      return fromProbePatterns();
     }
 
     function setManifest(filename) {
       if (!filename) {
         installBtn.removeAttribute('manifest');
-        status.textContent = 'Выбери файл прошивки';
+        status.textContent = 'Select a .bin firmware image';
         status.className = 'status';
         return;
       }
-
       const manifest = {
         name: '0N3P0rK',
         version: filename.replace(/\.bin$/i, ''),
         new_install_prompt_erase: true,
-        builds: [{
-          chipFamily: 'ESP32-S3',
-          parts: [{ path: `./firmware/${filename}`, offset: 0 }]
-        }]
+        builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: './firmware/' + filename, offset: 0 }] }]
       };
-
       const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
       installBtn.setAttribute('manifest', URL.createObjectURL(blob));
-      status.textContent = `Готово: ${filename}`;
+      status.textContent = 'Ready: ' + filename + ' · ' + kindOf(filename);
       status.className = 'status ok';
     }
 
-    async function init() {
+    async function initInstaller() {
       const files = await findBins();
-
       select.innerHTML = '';
-
-      if (files.length === 0) {
-        select.innerHTML = '<option value="">Нет .bin файлов</option>';
-        status.textContent = 'Положи любой .bin в папку firmware/';
+      if (!files.length) {
+        select.innerHTML = '<option value="">No .bin files found</option>';
+        status.textContent = 'Put .bin files in docs/firmware/ (Direct/Full or Launcher names)';
         status.className = 'status err';
         return;
       }
-
+      files.sort((a, b) => {
+        const rank = n => kindOf(n) === 'launcher' ? 1 : 0;
+        const d = rank(a) - rank(b);
+        return d !== 0 ? d : a.localeCompare(b, undefined, { sensitivity: 'base' });
+      });
       files.forEach((name, i) => {
         const opt = document.createElement('option');
         opt.value = name;
-        opt.textContent = name + (i === 0 ? ' (выбран)' : '');
+        opt.textContent = labelOf(name) + (i === 0 ? '  · selected' : '');
         select.appendChild(opt);
       });
-
       setManifest(files[0]);
-
-      select.addEventListener('change', () => {
-        setManifest(select.value);
-      });
+      select.addEventListener('change', () => setManifest(select.value));
     }
 
-    init();
+    async function initGallery() {
+      const grid = document.getElementById('galleryGrid');
+      try {
+        const r = await fetch('./gallery/files.json', { cache: 'no-store' });
+        if (!r.ok) return;
+        const data = await r.json();
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.files) ? data.files : []);
+        const imgs = arr.filter(n => /\.(png|jpe?g|gif|webp)$/i.test(String(n)));
+        if (!imgs.length) return;
+        grid.innerHTML = '';
+        imgs.forEach(name => {
+          const div = document.createElement('div');
+          div.className = 'shot';
+          const img = document.createElement('img');
+          img.src = './gallery/' + baseName(name);
+          img.alt = baseName(name);
+          img.loading = 'lazy';
+          div.appendChild(img);
+          grid.appendChild(div);
+        });
+      } catch (_) {}
+    }
+
+    initInstaller();
+    initGallery();
   </script>
 </body>
 </html>

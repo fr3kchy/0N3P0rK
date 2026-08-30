@@ -738,7 +738,8 @@ void Display::update() {
 
     const bool hid = App::windowHidden();
     const bool coverFarm = !hid &&
-        (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD);
+        (App::mode() == AppMode::SPECTRUM || App::mode() == AppMode::USBSD ||
+         App::mode() == AppMode::PIGPASS);
     if (!coverFarm) drawFarm();
 
     if (App::mode() != AppMode::FARM && !hid) {

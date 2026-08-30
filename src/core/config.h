@@ -60,6 +60,8 @@ struct PersonalityConfig {
     bool animTest = false;
     bool wolfEnabled = true;
     uint8_t scrollSpeed = 9;
+    // Seconds between automatic snout monologues. 2..10 (PIG menu TALK SEC).
+    uint8_t talkIntervalSec = 5;
     bool fruitTreesAmbient = true;
     bool freeLife = true;  // pig walks/jumps/hides even during functions
     bool wolfEatLoot = true;  // bite at 0 hearts stashes loot; hit/Am-off returns it

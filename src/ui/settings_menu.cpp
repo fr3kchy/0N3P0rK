@@ -50,6 +50,7 @@ static const Item SCENE[] = {
     {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
     {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
     {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
+    {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
 };
@@ -66,6 +67,7 @@ static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
 static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
     {"HS METHOD", Kind::VALUE,  7,  0, 0, 1}, // max resolved at runtime below
+    {"RESET",     Kind::ACTION, 19, 0, 0, 0}, // stock radio — next to method
     {"FALLBACK",  Kind::VALUE,  8,  10, 90, 5},
     {"KICK N",    Kind::VALUE,  9,  1, 6, 1},
     {"BIDIR",     Kind::TOGGLE, 10, 0, 1, 1},
@@ -87,7 +89,6 @@ static const Item RADIO[] = {
     {"DATA ACT",  Kind::TOGGLE, 25, 0, 1, 1},      // data-frame activity for FOCUS score
     {"STRICT LK", Kind::TOGGLE, 26, 0, 1, 1},      // ignore score while lock-on-BSSID
     {"DEPTH HOLD",Kind::VALUE,  27, 0, 30, 1},     // extra sec hold after pair (hsDepth>0)
-    {"RESET",     Kind::ACTION, 19, 0, 0, 0},
     {"HOP MS",    Kind::VALUE,  0,  50, 2000, 50},
     {"LOCK MS",   Kind::VALUE,  1,  0, 15000, 500},
     {"LOCK HS",   Kind::TOGGLE, 2,  0, 1, 1},
@@ -96,6 +97,7 @@ static const Item RADIO[] = {
     {"ATK RSSI",  Kind::VALUE,  5,  -90, -50, 5},
     {"HOP SET",   Kind::VALUE,  6,  0, HOP_SET_COUNT - 1, 1},
 };
+
 static const uint8_t RADIO_N = sizeof(RADIO) / sizeof(RADIO[0]);
 
 static const Item BLE[] = {
@@ -133,7 +135,8 @@ static const char* const H_SCENE[] = {
     "GRASS / DIRT FLOOR.",
     "DRAW THE PIG BODY.",
     "LEAVES BANKS BUTTERFLIES.",
-    "SPEECH BUBBLE.",
+    "SPEECH BUBBLE ON/OFF.",
+    "SEC BETWEEN MONOLOGUES.",
     "-/= CYCLE ANIMS ON FARM.",
     "TYPE CODE. ENT."
 };
@@ -144,9 +147,10 @@ static const char* const H_SYSTEM[] = {
     "0 = SCREEN OFF WHEN DIM."
 };
 static const char* const H_RADIO[] = {
-    "STOCK / OURS / PAN. TUNE -> CUST.",
-    "AUTO TRIES OURS THEN PAN.",
-    "AUTO: SECONDS THEN OTHER METHOD.",
+    "STOCK / FOCUS / MAX. TUNE=CUST.",
+    "AUTO / ALL / CLIENTS / FOCUS / HERD.",
+    "ENT = BACK TO STOCK RADIO.",
+    "AUTO: SEC THEN NEXT METHOD.",
     "DEAUTH ROUNDS PER AP.",
     "KICK BOTH WAYS AP<->STA.",
     "EAPOL-START / LOGOFF TX.",
@@ -164,7 +168,6 @@ static const char* const H_RADIO[] = {
     "DATA FRAMES FEED FOCUS SCORE.",
     "LOCK: ONLY KICK LOCKED BSSID.",
     "EXTRA SEC HOLD AFTER PAIR.",
-    "ENT = BACK TO STOCK RADIO.",
     "HOW LONG YOU SIT ON A CH.",
     "HOLD CHANNEL AFTER EAPOL.",
     "LOCK WHEN HANDSHAKE LANDS.",
@@ -173,6 +176,7 @@ static const char* const H_RADIO[] = {
     "SKIP WEAK APS FOR KICK.",
     "ALL / PRI 1-6-11 FIRST / CORE."
 };
+
 static const char* const H_BLE[] = {
     "MS BETWEEN BLE BURSTS.",
     "MS EACH ADVERTISEMENT."
@@ -316,6 +320,7 @@ static int getValue(const Item& it) {
             case 2: return p.seasonMode;
             case 3: return p.skyMode;
             case 4: return p.scrollSpeed;
+            case 17: return p.talkIntervalSec;
             case 5: return p.freeLife ? 1 : 0;
             case 6: return allLayersOn() ? 1 : 0;
             case 7: return (p.wolfEnabled && SceneLayers::wolf) ? 1 : 0;
@@ -543,6 +548,7 @@ static bool setValue(const Item& it, int v) {
             }
             case 3: p.skyMode = (uint8_t)v; break;
             case 4: p.scrollSpeed = (uint8_t)v; break;
+            case 17: p.talkIntervalSec = (uint8_t)v; break;
             case 5: p.freeLife = v != 0; break;
             case 6:
                 SceneLayers::setAll(v != 0);

@@ -1070,6 +1070,14 @@ static void handleHunt() {
 
 void update() {
     if (!s_run) return;
+
+    // Same as PigPass: open window → scene off; minimize → farm lives.
+    if (App::windowHidden()) {
+        if (Avatar::isSceneSuspended()) Avatar::resumeScene();
+    } else {
+        if (!Avatar::isSceneSuspended()) Avatar::suspendScene();
+    }
+
     if (s_phase == HUNT) {
         Cap::loop();
     } else {
