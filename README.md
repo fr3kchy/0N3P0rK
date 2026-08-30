@@ -6,7 +6,11 @@ Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardpute
 
 One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
 
+<<<<<<< HEAD
 **v1.2.7** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+=======
+**v1.2.5.6+5** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
+>>>>>>> 807cc80402bf46819fd345fb3e663506ea356b37
 
 The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
