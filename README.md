@@ -32,10 +32,6 @@ Think Tamagotchi first. The radio is in the barn.
 | USB | CDC serial (`ARDUINO_USB_MODE=0`, CDC on boot). Pick the COM yourself (VID `303A`) |
 | SD | dedicated SPI: CS 12, MOSI 14, MISO 39, SCK 40. GPIO 5 is held HIGH only while the card mounts, then keys are restored |
 
-**Original Cardputer:** after SD, the keyboard matrix is started again with `Keyboard.begin()`.
-
-**Cardputer ADV:** GPIO 5 stays HIGH after mount. The firmware does **not** re-init the TCA8418 I2C keyboard.
-
 Same `.bin` for both. Do not flash the wrong chip family — this is StampS3 / Cardputer only.
 
 **Partitions (v1.2.7):** app ~2.8 MB · internal `spiffs`/LittleFS **512 KB** · coredump reserved. All handshakes, talk, wordlists, and the file manager live on **SD**. After changing partitions, do a **full flash erase** once when upgrading from older builds.
