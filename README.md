@@ -4,11 +4,7 @@
 
 Tamagotchi pig living on a tiny farm, plus a barn of lab tools, for **M5Cardputer** and **M5Cardputer ADV**.
 
-One firmware image. The board is detected with `M5.getBoard()` only — GPIO 8/9 are never probed (on ADV those pins are the keyboard).
-
 **v1.2.7** · public · MIT · [lexilexiko](https://github.com/lexilexiko)
-
-The on-device UI is **English ASCII** (Font0 6×8). No Cyrillic on the screen.
 
 > Radio modes are a **lab tool for networks you own or are explicitly authorized to test**. Capabilities are not permission.
 
@@ -354,8 +350,6 @@ SD card only (v1.2.7). Internal MEM is not offered.
 ## Web site (docs)
 
 GitHub Pages: **Information · Installation · Gallery · Donate**.
-
-- Firmware list by **`.bin` extension** (directory listing and/or GitHub API on the default branch). Optional `firmware/files.json` if the host has no listing.
 - Labels **[Direct / Full]** vs **[Launcher]**.
 - **README** link uses the repo default branch (`…/0N3P0rK#readme`), not a hard-coded `main` tree.
 - **Donate** button placeholder at the bottom (link later).
@@ -378,7 +372,7 @@ GitHub Pages: **Information · Installation · Gallery · Donate**.
 Cosmetics, storage layout, and site polish on the 1.2.5.x capture base.
 
 **Pig & UI**
-- New English monologues (tech / game flavor: wifi tail, Diablo snout, handshake jokes, …)
+- Newmonologues (tech / game flavor: wifi tail, Diablo snout, handshake jokes, …)
 - **PIG → TALK SEC** — monologue interval **2…10 s** (default 5); bubble duration follows the interval
 - **RADIO → RESET** moved next to **HS METHOD** (easy to find)
 
@@ -388,7 +382,7 @@ Cosmetics, storage layout, and site polish on the 1.2.5.x capture base.
 - **FILES** no longer switches to internal MEM (`V` → SD CARD ONLY)
 
 **Web installer (`docs/`)**
-- Full English site: Information, Installation, Gallery, Donate
+- Information, Installation, Gallery, Donate
 - Discovers firmware by **`.bin` format**; Direct/Full vs Launcher labels
 - README button targets the **default branch** documentation
 
