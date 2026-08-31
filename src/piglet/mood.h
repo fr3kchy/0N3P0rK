@@ -30,6 +30,7 @@ public:
     static const char* getCurrentPhrase();
 
     static void setStatusMessage(const char* msg);
+    static void say(const char* phrase);  // force a bubble line (props / table / friend)
     static void setDialogueLock(bool) {}
     static bool isDialogueLocked() { return false; }
 
@@ -45,7 +46,6 @@ private:
 
     static void pickPhrase();
     static void updateAvatarState();
-    static void say(const char* phrase);
     static int addFood(int amount);
     static void maybeCureZombie();
     static void maybeBecomeZombie();

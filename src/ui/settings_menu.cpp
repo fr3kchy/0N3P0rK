@@ -3,6 +3,7 @@
 #include "keys.h"
 #include "../core/config.h"
 #include "../core/xp.h"
+#include "../piglet/props.h"
 #include "../core/app.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
@@ -43,6 +44,9 @@ static const Item SCENE[] = {
     {"LIFE",      Kind::TOGGLE, 5,  0, 1, 1},
     {"ALL LAYERS",Kind::TOGGLE, 6,  0, 1, 1},
     {"WOLF",      Kind::TOGGLE, 7,  0, 1, 1},
+    {"PROPS",     Kind::TOGGLE, 18, 0, 1, 1},
+    {"FRIEND",    Kind::TOGGLE, 19, 0, 1, 1},
+    {"CARDS",     Kind::TOGGLE, 20, 0, 1, 1},
     {"WOLF EAT",  Kind::TOGGLE, 15, 0, 1, 1},
     {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
     {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
@@ -129,6 +133,9 @@ static const char* const H_SCENE[] = {
     "SHE LIVES WHILE YOU WORK.",
     "MASTER: FULL SCENE OR BLANK.",
     "RANDOM WOLF VISITOR.",
+    "SEASONAL PROPS ON FARM.",
+    "COMPANION PIG ON FARM.",
+    "CARDS TABLE ON FARM (LV45).",
     "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",
@@ -140,6 +147,7 @@ static const char* const H_SCENE[] = {
     "-/= CYCLE ANIMS ON FARM.",
     "TYPE CODE. ENT."
 };
+
 static const char* const H_SYSTEM[] = {
     "SCREEN GLOW.",
     "0 = MUTE.",
@@ -249,6 +257,7 @@ static const char* skinName(uint8_t s) {
         case PigSkin::SHADOW:  return "SHADOW";
         case PigSkin::CANDY:   return "CANDY";
         case PigSkin::GOLD:    return "GOLD";
+        case PigSkin::DIRTY:   return "DIRTY";
         default: return "?";
     }
 }
@@ -261,6 +270,8 @@ static const char* seasonName(uint8_t s) {
         case SeasonMode::WINTER: return "WINTER";
         case SeasonMode::RETRO:  return "RETRO";
         case SeasonMode::NOIR:   return "NOIR";
+        case SeasonMode::CITY:   return "CITY";
+        case SeasonMode::DESERT: return "DESERT";
         default: return "?";
     }
 }
@@ -332,6 +343,9 @@ static int getValue(const Item& it) {
             case 12: return SceneLayers::seasonFx ? 1 : 0;
             case 13: return SceneLayers::mood ? 1 : 0;
             case 14: return p.animTest ? 1 : 0;
+            case 18: return p.propsEnabled ? 1 : 0;
+            case 19: return p.friendEnabled ? 1 : 0;
+            case 20: return p.cardsEnabled ? 1 : 0;
             default: return 0;
         }
     }
@@ -558,6 +572,23 @@ static bool setValue(const Item& it, int v) {
                 p.wolfEnabled = v != 0;
                 SceneLayers::wolf = v != 0;
                 if (v == 0) Wolf::reset();
+                break;
+            case 18:
+                p.propsEnabled = v != 0;
+                if (v == 0) {
+                    Props::forceDemo(6);  // clear active prop
+                    Display::showToast("PROPS OFF", 900);
+                } else {
+                    Display::showToast("PROPS ON", 900);
+                }
+                break;
+            case 19:
+                p.friendEnabled = v != 0;
+                Display::showToast(v ? "FRIEND ON" : "FRIEND OFF", 900);
+                break;
+            case 20:
+                p.cardsEnabled = v != 0;
+                Display::showToast(v ? "CARDS ON" : "CARDS OFF", 900);
                 break;
             case 15:
                 p.wolfEatLoot = v != 0;
@@ -889,6 +920,10 @@ void update() {
                     XP::unlockAll();
                     SFX::play(SFX::LEVEL_UP);
                     Display::showToast("ALL OPEN", 1600);
+                } else if (same(s_edit, "p0rkp0rk") || same(s_edit, "pork4") || same(s_edit, "o1nk4")) {
+                    Props::unlockAllFour();
+                    SFX::play(SFX::LEVEL_UP);
+                    Display::showToast("PROPS OPEN", 1600);
                 } else {
                     SFX::play(SFX::ERROR);
                     Display::showToast("NOPE", 900);

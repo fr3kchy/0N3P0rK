@@ -3,6 +3,7 @@
 
 #include "wolf.h"
 #include "avatar.h"
+#include "friend_pig.h"
 #include "weather.h"
 #include "../core/app.h"
 #include "../ui/display.h"
@@ -247,6 +248,13 @@ static void updateActor(Actor& w, uint32_t now) {
     w.legPhase++;
 
     int pigFeet = Avatar::getCurrentX() + 14 * PX;
+    // Chase nearest of player or friend pig
+    if (FriendPig::isActive()) {
+        int fx = FriendPig::getFeetX();
+        int dP = pigFeet - (int)w.x; if (dP < 0) dP = -dP;
+        int dF = fx - (int)w.x; if (dF < 0) dF = -dF;
+        if (dF < dP) pigFeet = fx;
+    }
     float target = (float)pigFeet;
 
     switch (w.phase) {
@@ -296,7 +304,16 @@ static void updateActor(Actor& w, uint32_t now) {
                         w.howled = true;
                         SFX::play(SFX::WOLF);
                         biteEvent = true;
-                        Avatar::onWolfBitten();
+                        if (FriendPig::isActive()) {
+                            int fx = FriendPig::getFeetX();
+                            int adF = (int)w.x - fx; if (adF < 0) adF = -adF;
+                            int adP = (int)w.x - (Avatar::getCurrentX() + 14 * PX);
+                            if (adP < 0) adP = -adP;
+                            if (adF <= adP) FriendPig::onWolfBitten();
+                            else Avatar::onWolfBitten();
+                        } else {
+                            Avatar::onWolfBitten();
+                        }
                     }
                 }
             }
@@ -508,6 +525,16 @@ void draw(M5Canvas& canvas) {
         case Season::NOIR:
             OUT  = 0x1082; FUR = 0x3186; FUR2 = 0x2104; FURH = 0x5AEB;
             BELLY = 0x4A49; NOSE = 0x0000; EYE = 0xFE60; EAR = 0x4208;
+            break;
+        case Season::CITY:
+            // Well-groomed city wolf — clean cream coat, blue collar eye
+            OUT  = 0x6B4D; FUR = 0xEF5D; FUR2 = 0xD69A; FURH = 0xFFFF;
+            BELLY = 0xFFDF; NOSE = 0x4208; EYE = 0x5D7F; EAR = 0xFCB2;
+            break;
+        case Season::DESERT:
+            // Coyote — sandy tan, lean look
+            OUT  = 0x8200; FUR = 0xD4A0; FUR2 = 0xAB40; FURH = 0xF6C0;
+            BELLY = 0xFDE0; NOSE = 0x4100; EYE = 0xFE60; EAR = 0xC2C0;
             break;
         case Season::SUMMER:
         default:

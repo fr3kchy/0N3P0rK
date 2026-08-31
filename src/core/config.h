@@ -20,9 +20,10 @@ enum class PigSkin : uint8_t {
     RETRO   = 4,
     SHADOW  = 5,
     CANDY   = 6,
-    GOLD    = 7
+    GOLD    = 7,
+    DIRTY   = 8   // alley / dumpster pig — unlock with CITY (lv 25)
 };
-static const uint8_t PIG_SKIN_COUNT = 8;
+static const uint8_t PIG_SKIN_COUNT = 9;
 
 enum class SeasonMode : uint8_t {
     AUTO   = 0,
@@ -31,9 +32,11 @@ enum class SeasonMode : uint8_t {
     AUTUMN = 3,
     WINTER = 4,
     RETRO  = 5,
-    NOIR   = 6
+    NOIR   = 6,
+    CITY   = 7,  // urban alley — unlock lv 25
+    DESERT = 8   // dunes / palms — unlock lv 30
 };
-static const uint8_t SEASON_MODE_COUNT = 7;
+static const uint8_t SEASON_MODE_COUNT = 9;
 
 enum class Season : uint8_t {
     SPRING = 0,
@@ -41,7 +44,9 @@ enum class Season : uint8_t {
     AUTUMN = 2,
     WINTER = 3,
     RETRO  = 4,
-    NOIR   = 5
+    NOIR   = 5,
+    CITY   = 6,
+    DESERT = 7
 };
 static const uint8_t SEASON_COUNT = 4;
 
@@ -59,6 +64,9 @@ struct PersonalityConfig {
     uint8_t seasonMode = 0;
     bool animTest = false;
     bool wolfEnabled = true;
+    bool propsEnabled = true;  // seasonal daily props (lv35 / P0rkP0rk)
+    bool friendEnabled = true; // companion pig (lv 40+)
+    bool cardsEnabled = true;  // cards table on farm (lv 45+)
     uint8_t scrollSpeed = 9;
     // Seconds between automatic snout monologues. 2..10 (PIG menu TALK SEC).
     uint8_t talkIntervalSec = 5;

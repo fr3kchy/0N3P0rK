@@ -5,6 +5,11 @@
 #include "scene_layers.h"
 #include "seasonal_fx.h"
 #include "trees.h"
+#include "ground.h"
+#include "sky.h"
+#include "props.h"
+#include "friend_pig.h"
+#include "cards_table.h"
 #include "wolf.h"
 #include "../ui/display.h"
 #include "../core/config.h"
@@ -138,28 +143,12 @@ static uint32_t attackShakeRefreshTime = 0;
 static bool thunderFlashActive = false;
 
 // Live top sky color for top bar + blends
-static constexpr uint16_t C_SKY_TOP = 0x3C3A;
-static uint16_t s_skyTop = C_SKY_TOP;
-
-// Smooth day ↔ dusk ↔ night (0 = day, 256 = night)
-static uint16_t s_nightBlend = 0;
-static uint32_t s_lastNightBlendMs = 0;
-static uint16_t s_cachedNightTarget = 0;
-static uint32_t s_lastNightTargetMs = 0;
-static constexpr uint32_t NIGHT_BLEND_FULL_MS = 12000;
-
-// Smooth clear → rain → storm sky darkening (0 clear, 160 rain, 256 storm)
-static uint16_t s_weatherDark = 0;
-static uint32_t s_lastWeatherDarkMs = 0;
-static constexpr uint32_t WEATHER_DARK_FULL_MS = 4500;
-
 // Scene palette (tree trunk/leaf/fruit colors live in trees.cpp now)
 static constexpr uint16_t C_FRUIT   = 0xF800;
-static constexpr uint16_t C_STAR    = 0xFFF0;
 static constexpr uint16_t C_DUST    = 0xBDF3;
 static constexpr uint16_t C_SPARK   = 0xFFE0;
 
-uint16_t Avatar::getSkyColor() { return s_skyTop; }
+uint16_t Avatar::getSkyColor() { return Sky::topColor(); }
 
 static inline uint16_t maybeFlash(uint16_t c) {
     if (!thunderFlashActive) return c;
@@ -169,12 +158,6 @@ static inline uint16_t maybeFlash(uint16_t c) {
     return (r << 11) | (g << 5) | b;
 }
 
-// Night sky star system state
-Avatar::Star Avatar::stars[15] = {{0}};
-uint8_t Avatar::starCount = 0;
-uint32_t Avatar::lastStarSpawn = 0;
-uint32_t Avatar::nextSpawnDelay = 2000;
-bool Avatar::starsActive = false;
 
 // Wave ripple state
 WaveMode Avatar::waveMode = WaveMode::NONE;
@@ -263,44 +246,6 @@ static void fatLine(M5Canvas& canvas, int16_t x1, int16_t y1,
 }
 
 // 1–2px Bresenham grass stroke (thickness mid-way: readable but not fat 3px blocks)
-static void grassStroke(M5Canvas& canvas, int16_t x1, int16_t y1,
-                        int16_t x2, int16_t y2, uint16_t color, uint8_t thick) {
-    int dx = abs((int)x2 - (int)x1), dy = abs((int)y2 - (int)y1);
-    int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
-    int err = dx - dy;
-    int x = x1, y = y1;
-    for (;;) {
-        if (x >= 0 && x < 240 && y >= 0 && y < 135) {
-            canvas.drawPixel(x, y, color);
-            if (thick >= 2 && x + 1 < 240) canvas.drawPixel(x + 1, y, color);
-        }
-        if (x == x2 && y == y2) break;
-        int e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx)  { err += dx; y += sy; }
-    }
-}
-
-// Tapered stem: thick root/mid → thinner bright tip (thick 1..2 from grass style)
-static void drawGrassStem(M5Canvas& canvas, int16_t bx, int16_t by,
-                          int16_t tipX, int16_t tipY, uint16_t colBase,
-                          uint16_t colMid, uint16_t colTip, uint8_t thick) {
-    if (thick < 1) thick = 1;
-    if (thick > 2) thick = 2;
-    int16_t midX = (int16_t)(bx + (tipX - bx) / 2);
-    int16_t midY = (int16_t)(by + (tipY - by) / 2);
-    int16_t q3x  = (int16_t)(midX + (tipX - midX) / 2);
-    int16_t q3y  = (int16_t)(midY + (tipY - midY) / 2);
-    grassStroke(canvas, bx, by, midX, midY, colBase, thick);
-    grassStroke(canvas, midX, midY, q3x, q3y, colMid, thick);
-    grassStroke(canvas, q3x, q3y, tipX, tipY, colTip, (thick >= 2) ? 1 : 1);
-    if (tipX >= 0 && tipX < 240 && tipY >= 0 && tipY < 135) {
-        canvas.drawPixel(tipX, tipY, colTip);
-        if (tipY > 0) canvas.drawPixel(tipX, tipY - 1, colTip);
-    }
-}
-
-// Color helper for thunder flash inversion (matches Sirloin)
 static uint16_t getDrawColor() {
     if (thunderFlashActive) {
         return getColorBG();  // Swap: draw with BG color during flash
@@ -333,323 +278,7 @@ static uint16_t s_deadBlend = 0;
 static constexpr uint16_t POSE_BLEND_STEP = 28;  // ~9 frames 0→256
 
 // --- Smooth day / dusk / night ------------------------------------------------
-static inline uint16_t lerp565(uint16_t a, uint16_t b, uint8_t num /*0..16*/) {
-    int r0 = (a >> 11) & 0x1F, g0 = (a >> 5) & 0x3F, b0 = a & 0x1F;
-    int r1 = (b >> 11) & 0x1F, g1 = (b >> 5) & 0x3F, b1 = b & 0x1F;
-    int r = r0 + ((r1 - r0) * (int)num) / 16;
-    int g = g0 + ((g1 - g0) * (int)num) / 16;
-    int bb = b0 + ((b1 - b0) * (int)num) / 16;
-    return (uint16_t)((r << 11) | (g << 5) | bb);
-}
-
-// Blend day → dusk (0..128) then dusk → night (128..256)
-static uint16_t blendDayDuskNight(uint16_t dayC, uint16_t duskC, uint16_t nightC, uint16_t amt) {
-    if (amt >= 256) return nightC;
-    if (amt == 0) return dayC;
-    if (amt <= 128) {
-        return lerp565(dayC, duskC, (uint8_t)((amt * 16) / 128));
-    }
-    return lerp565(duskC, nightC, (uint8_t)(((amt - 128) * 16) / 128));
-}
-
-// Minutes-of-day → night amount.
-// Spring/Autumn: day and night the same length (12/12).
-// Summer: long day. Winter: long night.
-static uint16_t nightAmountFromMinutes(int mins, Season season) {
-    if (mins < 0) mins = 0;
-    if (mins >= 24 * 60) mins %= (24 * 60);
-    int dawn0, dawn1, dusk0, dusk1;
-    if (season == Season::SUMMER) {
-        dawn0 = 4 * 60;  dawn1 = 6 * 60;   // 04–06
-        dusk0 = 20 * 60; dusk1 = 22 * 60;  // 20–22
-    } else if (season == Season::WINTER) {
-        dawn0 = 8 * 60;  dawn1 = 10 * 60;  // 08–10
-        dusk0 = 15 * 60; dusk1 = 17 * 60;  // 15–17
-    } else {
-        // Spring / Autumn / Retro: equal
-        dawn0 = 5 * 60;  dawn1 = 7 * 60;   // 05–07
-        dusk0 = 17 * 60; dusk1 = 19 * 60;  // 17–19
-    }
-    if (mins >= dawn0 && mins < dawn1) {
-        int span = dawn1 - dawn0;
-        return (uint16_t)(256 - ((mins - dawn0) * 256) / span);
-    }
-    if (mins >= dawn1 && mins < dusk0) return 0;
-    if (mins >= dusk0 && mins < dusk1) {
-        int span = dusk1 - dusk0;
-        return (uint16_t)(((mins - dusk0) * 256) / span);
-    }
-    return 256;
-}
-
-// Synthetic 6-min cycle, same season rules (no clock)
-static uint16_t nightAmountFromSynthetic(uint32_t secInCycle, Season season) {
-    uint32_t sec = secInCycle % 360u;
-    uint32_t dayS, duskS, nightS, dawnS;
-    if (season == Season::SUMMER) {
-        dayS = 200; duskS = 40; nightS = 80; dawnS = 40;
-    } else if (season == Season::WINTER) {
-        dayS = 80; duskS = 40; nightS = 200; dawnS = 40;
-    } else {
-        dayS = 140; duskS = 40; nightS = 140; dawnS = 40;
-    }
-    if (sec < dayS) return 0;
-    sec -= dayS;
-    if (sec < duskS) return (uint16_t)((sec * 256u) / duskS);
-    sec -= duskS;
-    if (sec < nightS) return 256;
-    sec -= nightS;
-    if (dawnS == 0) return 0;
-    if (sec < dawnS) return (uint16_t)(256u - (sec * 256u) / dawnS);
-    return 0;
-}
-
-static uint16_t computeNightTarget(uint32_t now) {
-    if (Weather::getActiveSeason() == Season::NOIR) return 256;
-    uint8_t sky = Config::personality().skyMode;
-    if (sky == (uint8_t)SkyMode::DAY) return 0;
-    if (sky == (uint8_t)SkyMode::NIGHT) return 256;
-
-    // Cache target ~1s (RTC / time reads)
-    if (s_lastNightTargetMs != 0 && (now - s_lastNightTargetMs) < 1000u) {
-        return s_cachedNightTarget;
-    }
-    s_lastNightTargetMs = now;
-
-    auto dt = M5.Rtc.getDateTime();
-    if (dt.date.year >= 2024) {
-        int mins = (int)dt.time.hours * 60 + (int)dt.time.minutes;
-        s_cachedNightTarget = nightAmountFromMinutes(mins, Weather::getActiveSeason());
-        return s_cachedNightTarget;
-    }
-
-    time_t unixNow = time(nullptr);
-    if (unixNow >= 1700000000) {
-        struct tm timeinfo;
-        localtime_r(&unixNow, &timeinfo);
-        int mins = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-        s_cachedNightTarget = nightAmountFromMinutes(mins, Weather::getActiveSeason());
-        return s_cachedNightTarget;
-    }
-
-    // No clock: living day/night cycle with dusk/dawn ramps
-    s_cachedNightTarget = nightAmountFromSynthetic(now / 1000u, Weather::getActiveSeason());
-    return s_cachedNightTarget;
-}
-
-static void approachU16(uint16_t& value, uint16_t target, uint32_t dt, uint32_t fullMs) {
-    if (dt == 0) return;
-    if (dt > 80u) dt = 80u;
-    uint16_t step = (uint16_t)((dt * 256u) / fullMs);
-    if (step < 1) step = 1;
-    if (value < target) {
-        uint16_t next = (uint16_t)(value + step);
-        value = (next > target) ? target : next;
-    } else if (value > target) {
-        value = (value > step) ? (uint16_t)(value - step) : 0;
-        if (value < target) value = target;
-    }
-}
-
-static void updateNightBlend(uint32_t now) {
-    uint16_t target = computeNightTarget(now);
-    if (s_lastNightBlendMs == 0) {
-        s_nightBlend = target;
-        s_lastNightBlendMs = now;
-        return;
-    }
-    uint32_t dt = now - s_lastNightBlendMs;
-    s_lastNightBlendMs = now;
-    approachU16(s_nightBlend, target, dt, NIGHT_BLEND_FULL_MS);
-}
-
-// Smooth sky darkening when rain/storm starts (not hard snap)
-static void updateWeatherDark(uint32_t now) {
-    uint16_t target = 0;
-    if (Weather::isStorming()) target = 256;
-    else if (Weather::isRaining()) target = 160;
-    if (s_lastWeatherDarkMs == 0) {
-        s_weatherDark = target;
-        s_lastWeatherDarkMs = now;
-        return;
-    }
-    uint32_t dt = now - s_lastWeatherDarkMs;
-    s_lastWeatherDarkMs = now;
-    approachU16(s_weatherDark, target, dt, WEATHER_DARK_FULL_MS);
-}
-
-// Living sky: day/dusk/night multi-stop gradient + Bayer dither
-// Smooth night blend + smooth rain/storm darkening (no hard snap)
-static void drawSkyBackdrop(M5Canvas& canvas) {
-    uint32_t now = millis();
-    updateNightBlend(now);
-    updateWeatherDark(now);
-    const uint16_t nb = s_nightBlend;  // 0 day .. 256 night
-    const uint16_t wd = s_weatherDark; // 0 clear .. 160 rain .. 256 storm
-    const bool raining = Weather::isRaining();
-    const bool storm = Weather::isStorming();
-    (void)storm;
-
-    // Clear / rain / storm palettes × day-dusk-night, then cross-fade by wd
-    // Clear
-    const uint16_t CD0 = 0x3C3A, CD1 = 0x54BB, CD2 = 0x6D3C, CD3 = 0x8DDC;
-    const uint16_t CK0 = 0x30A8, CK1 = 0x7150, CK2 = 0xD2C0, CK3 = 0xFD60;
-    const uint16_t CN0 = 0x18A8, CN1 = 0x20CA, CN2 = 0x314C, CN3 = 0x49AE;
-    // Rain (cooler / duller)
-    const uint16_t RD0 = 0x31A8, RD1 = 0x4A6A, RD2 = 0x62EC, RD3 = 0x7B8E;
-    const uint16_t RK0 = 0x3128, RK1 = 0x61A8, RK2 = 0xA2C8, RK3 = 0xC3A8;
-    const uint16_t RN0 = 0x18A8, RN1 = 0x20CA, RN2 = 0x314C, RN3 = 0x49AE;
-    // Storm (darker)
-    const uint16_t SD0 = 0x2945, SD1 = 0x39A8, SD2 = 0x4A6A, SD3 = 0x5B0C;
-    const uint16_t SK0 = 0x28A4, SK1 = 0x5126, SK2 = 0x8A28, SK3 = 0xB2C8;
-    const uint16_t SN0 = 0x10A6, SN1 = 0x18C8, SN2 = 0x28EA, SN3 = 0x38EC;
-
-    auto band = [&](uint16_t d, uint16_t k, uint16_t n) {
-        return blendDayDuskNight(d, k, n, nb);
-    };
-    // clear → rain (0..160), rain → storm (160..256)
-    auto wetMix = [&](uint16_t clearC, uint16_t rainC, uint16_t stormC) -> uint16_t {
-        if (wd == 0) return clearC;
-        if (wd <= 160) {
-            return lerp565(clearC, rainC, (uint8_t)((wd * 16) / 160));
-        }
-        return lerp565(rainC, stormC, (uint8_t)(((wd - 160) * 16) / 96));
-    };
-
-    uint16_t S0 = wetMix(band(CD0, CK0, CN0), band(RD0, RK0, RN0), band(SD0, SK0, SN0));
-    uint16_t S1 = wetMix(band(CD1, CK1, CN1), band(RD1, RK1, RN1), band(SD1, SK1, SN1));
-    uint16_t S2 = wetMix(band(CD2, CK2, CN2), band(RD2, RK2, RN2), band(SD2, SK2, SN2));
-    uint16_t S3 = wetMix(band(CD3, CK3, CN3), band(RD3, RK3, RN3), band(SD3, SK3, SN3));
-
-    // RETRO season: force old-film grayscale sky (no blue/pink day tones)
-    if (Weather::getActiveSeason() == Season::RETRO) {
-        // dark charcoal → mid gray gradient
-        S0 = 0x18C3; S1 = 0x3186; S2 = 0x4A69; S3 = 0x632C;
-        if (wd > 0) {
-            // wet/storm slightly darker
-            S0 = 0x10A2; S1 = 0x2104; S2 = 0x39C7; S3 = 0x52AA;
-        }
-    }
-    // NOIR: alley night — ink sky, sodium glow at the horizon
-    if (Weather::getActiveSeason() == Season::NOIR) {
-        S0 = 0x0842; S1 = 0x1063; S2 = 0x1884; S3 = 0x3120;
-        if (wd > 0) {
-            S0 = 0x0021; S1 = 0x0842; S2 = 0x1063; S3 = 0x20C0;
-        }
-    }
-    s_skyTop = S0;
-
-    static const uint8_t bayer4[16] = {
-        0,  8,  2, 10,
-        12, 4, 14,  6,
-        3, 11,  1,  9,
-        15, 7, 13,  5
-    };
-    uint16_t samples[32];
-    for (int i = 0; i < 32; i++) {
-        int u = i;
-        int u2 = (u * u) / 31;
-        int u3 = 31 - ((31 - u) * (31 - u)) / 31;
-        int e = (u2 + u3) / 2;
-        if (e < 10)
-            samples[i] = lerp565(S0, S1, (uint8_t)((e * 16) / 10));
-        else if (e < 21)
-            samples[i] = lerp565(S1, S2, (uint8_t)(((e - 10) * 16) / 11));
-        else
-            samples[i] = lerp565(S2, S3, (uint8_t)(((e - 21) * 16) / 10));
-    }
-
-    // Full sky to grass line — gradient meets turf cleanly
-    for (int y = 0; y < 103; y++) {
-        int si = (y * 31) / 102;
-        if (si > 30) si = 30;
-        uint16_t cA = samples[si];
-        uint16_t cB = samples[si + 1];
-        int sub = ((y * 31) % 102) * 16 / 102;
-        if (cA == cB) {
-            canvas.drawFastHLine(0, y, 240, maybeFlash(cA));
-            continue;
-        }
-        for (int x = 0; x < 240; x += 2) {
-            uint8_t thr = bayer4[((y & 3) << 2) | (x & 3)];
-            uint16_t c = (sub > (int)thr) ? cB : cA;
-            canvas.drawFastHLine(x, y, 2, maybeFlash(c));
-        }
-    }
-
-    // Moon fades in with night (after mid-dusk); hides as sky wets
-    if (nb > 100 && wd < 100) {
-        int mx = 198, my = 22;
-        // Brightness / size grow with night amount
-        uint8_t t = (uint8_t)(((nb - 100) * 16) / 156);  // 0..16
-        if (t > 16) t = 16;
-        int rOuter = 6 + (4 * (int)t) / 16;   // 6..10
-        int rMid   = 4 + (3 * (int)t) / 16;
-        int rCore  = 3 + (3 * (int)t) / 16;
-        uint16_t halo = lerp565(S0, 0x39E7, t);
-        uint16_t body = lerp565(S1, 0xDEFB, t);
-        uint16_t core = lerp565(0xC618, 0xFFFF, t);
-        canvas.fillCircle(mx, my, rOuter, maybeFlash(halo));
-        canvas.fillCircle(mx, my, rMid, maybeFlash(body));
-        canvas.fillCircle(mx - 2, my - 1, rCore, maybeFlash(core));
-        if (t > 10) {
-            canvas.drawPixel(mx + 1, my + 1, maybeFlash(0xC618));
-            canvas.drawPixel(mx - 1, my + 2, maybeFlash(0xC618));
-        }
-    }
-
-    // Ambient FX: pollen (day) → fireflies (night); skip when sky is wet
-    if (wd < 40 && !raining && !storm) {
-        uint32_t phase = now % 16000;
-        // Day pollen while still mostly day (nb < 80)
-        if (nb < 80 && phase < 2800) {
-            for (int i = 0; i < 7; i++) {
-                uint32_t seed = now / 50 + (uint32_t)i * 97;
-                if ((seed & 3) != 0) continue;
-                int16_t px = (int16_t)((seed * 17 + i * 41) % 228) + 6;
-                int16_t py = (int16_t)((seed * 13 + i * 53) % 48) + 6;
-                py += (int16_t)(sinf((float)(now + i * 180) * 0.004f) * 3.0f);
-                canvas.fillRect(px, py, 2, 2, maybeFlash(0xFFFE));
-            }
-        }
-        // Fireflies once dusk is deep enough
-        if (nb > 140 && phase >= 4000 && phase < 9000) {
-            for (int i = 0; i < 5; i++) {
-                uint32_t seed = now / 80 + (uint32_t)i * 131;
-                if ((seed & 2) != 0) continue;
-                int16_t px = (int16_t)((seed * 19 + i * 47) % 220) + 10;
-                int16_t py = (int16_t)((seed * 11 + i * 29) % 40) + 30;
-                bool on = ((now / 200 + i) & 1) != 0;
-                if (on) canvas.fillRect(px, py, 2, 2, maybeFlash(0xFFE0));
-            }
-        }
-        // Day streak only in clear day
-        if (nb < 40 && phase >= 12000 && phase < 12500) {
-            int t = (int)(phase - 12000);
-            canvas.drawLine(40 + t, 12 + t / 4, 50 + t, 15 + t / 4, maybeFlash(0xFFFF));
-        }
-    }
-
-    // Night / noir stars (twinkle, fat 2px — inspired by a city-night farm)
-    const bool noirSky = (Weather::getActiveSeason() == Season::NOIR);
-    if ((nb > 160 || noirSky) && wd < 80 && !raining) {
-        static const uint8_t SX[18] = {
-            12, 28, 47, 63, 81, 99, 118, 134, 152, 171, 189, 206, 221, 38, 74, 143, 198, 16
-        };
-        static const uint8_t SY[18] = {
-            8, 18, 6, 24, 11, 20, 7, 16, 10, 22, 9, 19, 14, 28, 5, 13, 27, 21
-        };
-        for (int i = 0; i < 18; i++) {
-            uint32_t tw = (now / (180u + (uint32_t)i * 17u) + (uint32_t)i);
-            if ((tw & 3u) == 3u) continue;
-            uint16_t sc = noirSky ? ((tw & 1u) ? (uint16_t)0xFE60 : (uint16_t)0xDEFB)
-                                  : ((tw & 1u) ? (uint16_t)0xFFFF : (uint16_t)0xC618);
-            canvas.fillRect((int)SX[i], (int)SY[i], 2, 2, maybeFlash(sc));
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
+// Night/sky gradient + stars moved to sky.cpp (Sky::)
 // Pig draw — multi-tone procedural (ox,oy = feet center; local units * PX).
 // ---------------------------------------------------------------------------
 
@@ -683,6 +312,8 @@ static const PigPalette kPigPalettes[PIG_SKIN_COUNT] = {
     { 0xC00A, 0xFB16, 0xFD9F, 0xD00C, 0xFCB0, 0xF80F, 0x7A12, 0x5809, 0xFFFF, 0xC00A, 0xE00D, 0xFCB8 },
     // GOLD — barn treasure
     { 0x9B20, 0xFE60, 0xFFF1, 0xC480, 0xFDC0, 0xD4A0, 0x8200, 0x4100, 0xFFFF, 0xAB40, 0x9360, 0xFCC0 },
+    // DIRTY — alley / dumpster pig (mud, soot, sad iris)
+    { 0x5140, 0x9A85, 0xC548, 0x6B23, 0x8B43, 0x7A22, 0x4208, 0x2104, 0xC618, 0x5180, 0x4208, 0x6B4D },
 };
 static const PigPalette& activePigPalette() {
     uint8_t s = Config::personality().pigSkin;
@@ -1098,6 +729,11 @@ void Avatar::init() {
     // Init grass blade system
     grassMoving = false;
     grassDirection = true;
+    Ground::begin();
+    Sky::begin();
+    Props::begin();
+    FriendPig::begin();
+    CardsTable::begin();
     pendingGrassStart = false;
     grassSpeed = 80;
     lastGrassUpdate = millis();
@@ -1151,12 +787,7 @@ void Avatar::init() {
     Trees::setPigHint(currentX, onRightSide);
     Trees::init();  // spawns DECOR + BERRY scenery
 
-    // Init star system, dormant until night
-    starsActive = false;
-    starCount = 0;
-    lastStarSpawn = 0;
-    nextSpawnDelay = 2000;
-    initStarPositions();
+    // Stars initialized inside Sky::begin()
 }
 
 void Avatar::setState(AvatarState state) {
@@ -1638,15 +1269,35 @@ void Avatar::draw(M5Canvas& canvas) {
     drawFrame(canvas, shouldBlink, facingRight, isSniffing);
 }
 
+
+void Avatar::drawCompanion(M5Canvas& canvas, int16_t feetX, int16_t feetY,
+                           bool faceRight, bool walking, bool sitting,
+                           bool sniffing) {
+    // Exact same drawPixelPig path as the player (clone silhouette).
+    int16_t y = feetY;
+    if (sitting) y = (int16_t)(feetY + 6);  // mild sit sink
+    bool tail = walking && (((millis() / 110) & 1) != 0);
+    bool ear = (((millis() / 180) & 1) != 0);
+    bool blink = ((millis() / 2400) % 17) == 0;
+    uint8_t sniffPhase = (uint8_t)((millis() / 90) % 3);
+    AvatarState st = sitting ? AvatarState::SLEEPY
+                   : (sniffing ? AvatarState::NEUTRAL : AvatarState::HAPPY);
+    bool prevKick = s_walkKick;
+    s_walkKick = walking && !sitting;
+    drawPixelPig(canvas, feetX, y, st, faceRight, blink, sniffing && !walking,
+                 sniffPhase, ear, tail, false, getDrawColor(), getBGColor());
+    s_walkKick = prevKick;
+}
+
 void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff) {
     // Z-order (back → front):
     //   sky → stars/moon → clouds → season backdrop (lightning) → tree → pig → grass
     // Clouds MUST be before the tree (were drawn after Avatar in Display → tree behind clouds).
     // SceneLayers test lab can skip pieces for CPU profiling.
     if (SceneLayers::sky) {
-        drawSkyBackdrop(canvas);
-        updateStars();
-        drawStars(canvas);
+        Sky::drawBackdrop(canvas);
+        Sky::updateStars();
+        Sky::drawStars(canvas);
     } else {
         canvas.fillSprite(getBGColor());
     }
@@ -1971,7 +1622,13 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
         }
     }
 
-    // Pig BETWEEN grass layers
+    // Friend lives behind the player (you are in front of her)
+    FriendPig::update();
+    FriendPig::draw(canvas, 0);
+    CardsTable::update();
+    CardsTable::draw(canvas, 0);
+
+    // Pig BETWEEN grass layers — in front of friend
     // Sit = same pig, sunk into turf (blend 0..~9px)
     int16_t sitSink = (int16_t)((3 * PX * (int)s_sitBlend) / 256);
     int16_t drawFeetY = (int16_t)(feetY + sitSink);
@@ -1985,11 +1642,14 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
                      getDrawColor(), getBGColor());
         updateAndDrawSparkles(canvas);
     }
-
     // Grass IN FRONT of feet/ankles only (not a wall covering the body)
     if (SceneLayers::grass) {
         drawGrass(canvas, true);
     }
+
+    // Seasonal props in FRONT of grass — large pixel props
+    Props::update();
+    Props::draw(canvas, 0);
 
     // Draw falling drops/splashes in the foreground so they appear above grass
     // (moved from Trees::draw to ensure correct Z-order and collectability).
@@ -2079,580 +1739,34 @@ void Avatar::setGrassMoving(bool moving, bool directionRight, bool force) {
 
 void Avatar::setGrassSpeed(uint16_t ms) {
     grassSpeed = ms;
+    Ground::setSpeed(ms);
 }
 
 void Avatar::resetGrass() {
-    grassOffset = 0;
-    for (int i = 0; i < GRASS_BLADE_COUNT; i++) {
-        uint8_t r = (uint8_t)(esp_random() % 100);
-        if (r < 10) {
-            grassBlades[i].kind = 4;
-            grassBlades[i].height = random(5, 9);
-            grassBlades[i].width = 2;
-        } else if (r < 55) {
-            grassBlades[i].kind = 0;
-            grassBlades[i].height = random(11, 20);
-            grassBlades[i].width = 2;
-        } else if (r < 85) {
-            grassBlades[i].kind = 1;
-            grassBlades[i].height = random(10, 18);
-            grassBlades[i].width = 2;
-        } else if (r < 95) {
-            grassBlades[i].kind = 2;
-            grassBlades[i].height = random(11, 16);
-            grassBlades[i].width = 1;
-        } else {
-            grassBlades[i].kind = 3;
-            grassBlades[i].height = 2;
-            grassBlades[i].width = 2;
-        }
-        grassBlades[i].lean = (int8_t)random(-3, 4);
-        grassBlades[i].shade = (uint8_t)(esp_random() % 4);
-    }
+    Ground::resetBlades();
 }
 
 void Avatar::updateGrass() {
     if (!grassMoving) return;
-
-    uint32_t now = millis();
-    // Pixel-level scroll: shift 1px every grassSpeed/GRASS_STRIDE ms
-    uint32_t pixelInterval = grassSpeed / GRASS_STRIDE;
-    if (pixelInterval < 1) pixelInterval = 1;
-    if (now - lastGrassUpdate < pixelInterval) return;
-    lastGrassUpdate = now;
-
-    // Player free-roam: multi-step scroll from SCROLL SPD (world only)
     int steps = s_playerWalkScroll ? scrollStepsPerTick() : 1;
-
-    // Smooth pixel scroll (+ all flora kinds)
-    for (int n = 0; n < steps; n++) {
-        if (grassDirection) {
-            grassOffset++;
-            Trees::scroll(+1);
-            SeasonalFx::scroll(+1);  // snow banks ride the same treadmill
-            if (grassOffset >= GRASS_STRIDE) {
-                grassOffset = 0;
-                GrassBlade last = grassBlades[GRASS_BLADE_COUNT - 1];
-                for (int i = GRASS_BLADE_COUNT - 1; i > 0; i--) {
-                    grassBlades[i] = grassBlades[i - 1];
-                }
-                grassBlades[0] = last;
-            }
-        } else {
-            grassOffset--;
-            Trees::scroll(-1);
-            SeasonalFx::scroll(-1);
-            if (grassOffset < 0) {
-                grassOffset = GRASS_STRIDE - 1;
-                GrassBlade first = grassBlades[0];
-                for (int i = 0; i < GRASS_BLADE_COUNT - 1; i++) {
-                    grassBlades[i] = grassBlades[i + 1];
-                }
-                grassBlades[GRASS_BLADE_COUNT - 1] = first;
-            }
-        }
-    }
-
-    // Organic mutation
-    if (random(0, 30) == 0) {
-        int idx = random(0, GRASS_BLADE_COUNT);
-        uint8_t r = (uint8_t)(esp_random() % 100);
-        if (r < 10) {
-            grassBlades[idx].kind = 4;
-            grassBlades[idx].height = random(5, 9);
-            grassBlades[idx].width = 2;
-        } else if (r < 55) {
-            grassBlades[idx].kind = 0;
-            grassBlades[idx].height = random(11, 20);
-            grassBlades[idx].width = 2;
-        } else if (r < 85) {
-            grassBlades[idx].kind = 1;
-            grassBlades[idx].height = random(10, 18);
-            grassBlades[idx].width = 2;
-        } else if (r < 95) {
-            grassBlades[idx].kind = 2;
-            grassBlades[idx].height = random(11, 16);
-            grassBlades[idx].width = 1;
-        } else {
-            grassBlades[idx].kind = 3;
-            grassBlades[idx].height = 2;
-            grassBlades[idx].width = 2;
-        }
-        grassBlades[idx].lean = (int8_t)random(-3, 4);
-        grassBlades[idx].shade = (uint8_t)(esp_random() % 4);
-    }
+    Ground::updateScroll(true, grassDirection, steps);
 }
 
 void Avatar::drawGrass(M5Canvas& canvas, bool frontLayer) {
-    // Only scroll/update once (back pass)
+    // Scroll once on back pass
     if (!frontLayer) updateGrass();
 
-    uint32_t now = millis();
-    const int16_t baseY = 106;  // Ground line — pig hooves sit here
-
-    bool shakeActive = Display::isShaking();
-    float shakeDecay = shakeActive ? Display::getShakeDecay() : 0.0f;
-    uint8_t shakeIntensity = shakeActive ? Display::getShakeIntensity() : 0;
-
-    // Season drives palette (classic fat geometry always)
-    Season season = Weather::getActiveSeason();
-    const bool isSpring = (season == Season::SPRING);
-    const bool isAutumn = (season == Season::AUTUMN);
-    const bool isWinter = (season == Season::WINTER);
-    const bool isRetro  = (season == Season::RETRO);
-    const bool isNoir   = (season == Season::NOIR);
-    // SUMMER = classic summer greens
-
-    const bool wetGrass = Weather::isRaining();
-    const uint16_t dirtMid  = maybeFlash(isNoir ? 0x2104 : (isRetro ? 0x4208 : 0x8A40));
-    const uint16_t dirtDark = maybeFlash(isNoir ? 0x1082 : (isRetro ? 0x2104 : (isWinter ? 0x6B6D : 0x5140)));
-    const uint16_t dirtLite = maybeFlash(isNoir ? 0x5A00 : (isRetro ? 0x8410 : (isWinter ? 0xC618 : 0xA3E0)));
-
-    // Seasonal fat-blade palettes (same geometry as classic)
-    // SUMMER = deep classic green; SPRING = fresh yellow-lime + flower carpet
-    static const uint16_t PAL_SUMMER_BASE[4] = { 0x2C60, 0x3D00, 0x4DA0, 0x65C0 };
-    static const uint16_t PAL_SUMMER_TIP[4]  = { 0x5DE0, 0x7E60, 0x9F00, 0xBFE0 };
-    // Spring: chartreuse / young-shoot yellow-green (clearly not summer)
-    static const uint16_t PAL_SPRING_BASE[4] = { 0x4C80, 0x6DA0, 0x8F00, 0xAFE0 };
-    static const uint16_t PAL_SPRING_TIP[4]  = { 0xBFE0, 0xDFF2, 0xEFF8, 0xF7FE };
-    static const uint16_t PAL_AUTUMN_BASE[4] = { 0x5A20, 0x8AC0, 0xB340, 0xC300 };
-    static const uint16_t PAL_AUTUMN_TIP[4]  = { 0xD280, 0xE2C0, 0xFBE0, 0xFD20 };
-    // Winter: frosty blue-gray grass with ice tips (the look you liked)
-    static const uint16_t PAL_WINTER_BASE[4] = { 0x3C8E, 0x4D10, 0x5DB4, 0x7C9A };
-    static const uint16_t PAL_WINTER_TIP[4]  = { 0x9CF3, 0xBDF7, 0xDEFB, 0xFFFF };
-
-    const uint16_t* GRASS_BASE = PAL_SUMMER_BASE;
-    const uint16_t* GRASS_TIP  = PAL_SUMMER_TIP;
-    uint16_t turf0 = maybeFlash(wetGrass ? 0x2C40 : 0x3480);
-    uint16_t turf1 = maybeFlash(wetGrass ? 0x3C60 : 0x4D00);
-    uint16_t turf2 = maybeFlash(wetGrass ? 0x2C20 : 0x45A0);
-    static const uint16_t FLOWER_SUMMER[4] = { 0xF800, 0xFFE0, 0xFD1F, 0xFFFF };
-    // Spring blooms: white daisy, yellow dandelion, pink, violet
-    static const uint16_t FLOWER_SPRING[4] = { 0xFFFF, 0xFFE0, 0xFD1F, 0xB01F };
-    static const uint16_t FLOWER_AUTUMN[4] = { 0xFBE0, 0xFD20, 0xD280, 0xC300 };  // gold/orange
-    static const uint16_t FLOWER_WINTER[4] = { 0xFFFF, 0xDEFB, 0xBDF7, 0x9CF3 };  // frost
-    const uint16_t* FLOWER_COLS = FLOWER_SUMMER;
-
-    if (isSpring) {
-        GRASS_BASE = PAL_SPRING_BASE;
-        GRASS_TIP  = PAL_SPRING_TIP;
-        // Lush lime turf carpet (yellower than summer)
-        turf0 = maybeFlash(wetGrass ? 0x4C60 : 0x6D80);
-        turf1 = maybeFlash(0x8F20);
-        turf2 = maybeFlash(0xBFE0);
-        FLOWER_COLS = FLOWER_SPRING;
-    } else if (isAutumn) {
-        GRASS_BASE = PAL_AUTUMN_BASE;
-        GRASS_TIP  = PAL_AUTUMN_TIP;
-        turf0 = maybeFlash(wetGrass ? 0x4920 : 0x6A40);
-        turf1 = maybeFlash(0x8AC0);
-        turf2 = maybeFlash(0xB340);
-        FLOWER_COLS = FLOWER_AUTUMN;
-    } else if (isWinter) {
-        GRASS_BASE = PAL_WINTER_BASE;
-        GRASS_TIP  = PAL_WINTER_TIP;
-        // Frosted blue-gray turf (stable pattern — no flicker)
-        turf0 = maybeFlash(0x420C);
-        turf1 = maybeFlash(0x5D14);
-        turf2 = maybeFlash(0x9CF3);
-        FLOWER_COLS = FLOWER_WINTER;
-    } else if (isRetro) {
-        // B&W film grass — blocky gray blades
-        static const uint16_t PAL_RETRO_BASE[4] = { 0x2104, 0x4208, 0x632C, 0x8410 };
-        static const uint16_t PAL_RETRO_TIP[4]  = { 0x9CF3, 0xBDF7, 0xDEFB, 0xFFFF };
-        static const uint16_t FLOWER_RETRO[4]   = { 0xFFFF, 0xC618, 0x8410, 0xAD55 };
-        GRASS_BASE = PAL_RETRO_BASE;
-        GRASS_TIP  = PAL_RETRO_TIP;
-        turf0 = maybeFlash(0x18C3);
-        turf1 = maybeFlash(0x4208);
-        turf2 = maybeFlash(0x6B6D);
-        FLOWER_COLS = FLOWER_RETRO;
-    } else if (isNoir) {
-        static const uint16_t PAL_NOIR_BASE[4] = { 0x1082, 0x2104, 0x3186, 0x4A00 };
-        static const uint16_t PAL_NOIR_TIP[4]  = { 0x5A00, 0x8200, 0xC480, 0xFE60 };
-        static const uint16_t FLOWER_NOIR[4]   = { 0xFE60, 0xC480, 0x8200, 0xF800 };
-        GRASS_BASE = PAL_NOIR_BASE;
-        GRASS_TIP  = PAL_NOIR_TIP;
-        turf0 = maybeFlash(0x0841);
-        turf1 = maybeFlash(0x18C3);
-        turf2 = maybeFlash(0x3120);
-        FLOWER_COLS = FLOWER_NOIR;
-    }
-
-    // === BACK LAYER ONLY: soil + turf carpet ===
-    if (!frontLayer) {
-        canvas.fillRect(0, 104, 240, 1, dirtMid);
-        canvas.fillRect(0, 105, 240, 2, dirtDark);
-        for (int x = 0; x < 240; x += 5) {
-            // Static dirt speckles (no time term → no flicker)
-            uint32_t h = (uint32_t)x * 2654435761u;
-            if ((h & 3) == 0) canvas.drawPixel(x, 104, dirtLite);
-        }
-        // Classic dense band for all seasons (winter just colder colors)
-        canvas.fillRect(0, 99, 240, 5, turf0);
-        for (int x = 0; x < 240; x += 2) {
-            uint32_t h = (uint32_t)x * 1103515245u + 12345u;  // static, not now
-            if ((h & 3) != 0) canvas.drawPixel(x, 98, turf1);
-            if ((h & 5) == 0) canvas.drawPixel(x + 1, 97, turf2);
-        }
-        // Darker turf patch under the pig (ground compression / shade)
-        {
-            int feet = currentX + 14 * PX;
-            int pl = feet - 16 * PX / 2;
-            int pr = feet + 18 * PX / 2;
-            uint16_t darkTurf = maybeFlash(isWinter ? 0x3186 : (wetGrass ? 0x2140 : 0x2A40));
-            uint16_t midDark  = maybeFlash(isWinter ? 0x4A49 : 0x3A60);
-            for (int x = pl; x <= pr; x++) {
-                if (x < 0 || x >= 240) continue;
-                int dist = x - feet;
-                if (dist < 0) dist = -dist;
-                int maxd = (pr - pl) / 2;
-                if (maxd < 1) maxd = 1;
-                if (dist * 2 > maxd * 3) continue;
-                canvas.drawPixel(x, 104, darkTurf);
-                canvas.drawPixel(x, 105, darkTurf);
-                if (dist * 3 < maxd * 2) {
-                    canvas.drawPixel(x, 103, midDark);
-                    canvas.drawPixel(x, 99, midDark);
-                }
-            }
-        }
-        if (isWinter) {
-            // Stable frost dust (no time-based flicker)
-            for (int x = 0; x < 240; x += 4) {
-                uint32_t h = (uint32_t)x * 2654435761u;
-                if ((h & 7) < 3) canvas.drawPixel(x, 97, maybeFlash(0xDEFB));
-                if ((h & 15) == 0) canvas.fillRect(x, 98, 2, 1, maybeFlash(0xBDF7));
-            }
-        } else if (isSpring) {
-            // Flower carpet on turf — little blooms (static hash, no flicker)
-            for (int x = 4; x < 236; x += 7) {
-                uint32_t h = (uint32_t)x * 2654435761u + 0x9E37u;
-                if ((h & 7) > 4) continue;  // sparse
-                uint16_t fc = maybeFlash(FLOWER_COLS[(h >> 3) & 3]);
-                int16_t fy = 96 + (int)(h & 3);
-                canvas.drawPixel(x, fy, fc);
-                canvas.drawPixel(x + 1, fy, fc);
-                // yellow daisy center on white blooms
-                if (((h >> 3) & 3) == 0)
-                    canvas.drawPixel(x, fy, maybeFlash(0xFFE0));
-            }
-        }
-    }
-
-    // Crouch phase of jump still counts as "on ground" for grass bend / shade
-    bool jumpInAir = jumpActive && (millis() - jumpStartTime >= JUMP_CROUCH_MS);
-    bool pigOnGround = !jumpInAir && !attackHopActive;
-    int feet = currentX + 14 * PX;
-    int pigLeft  = feet - 14 * PX;
-    int pigRight = feet + 16 * PX;
-    int pigCenter = (pigLeft + pigRight) / 2;
-    int pigHalf  = (pigRight - pigLeft) / 2;
-    if (pigHalf < 1) pigHalf = 1;
-
-    int16_t treeScreenX = Trees::getFruitTreeScreenX();  // -1 if no fruit tree
-
-    // Winter: frosty blades a bit shorter; spring: tender young shoots (+flowers)
-    const int16_t heightBoost = isWinter ? 2 : (isSpring ? 3 : 4);
-
-    for (int i = 0; i < GRASS_BLADE_COUNT; i++) {
-        int16_t cx = i * GRASS_STRIDE + grassOffset;
-        if (cx < -GRASS_STRIDE) cx += 240 + GRASS_STRIDE;
-        if (cx >= 240) continue;
-
-        // Depth split — pig sits BETWEEN layers:
-        // near pig: ~half blades front (ankles only), half stay behind body
-        // far: occasional tall front pops for parallax
-        bool nearPig = (cx >= pigLeft - 6 && cx <= pigRight + 6);
-        bool frontBlade;
-        if (nearPig) {
-            // NOT all blades front (was hiding the whole body/legs)
-            frontBlade = ((i % 3) != 0);  // 2/3 front, 1/3 back
-        } else {
-            frontBlade = ((i % 5) == 0 && grassBlades[i].height >= 12);
-        }
-        if (frontLayer && !frontBlade) continue;
-        if (!frontLayer && frontBlade) continue;
-
-        // Winter: only lightly thinned (keep density for "иней" look)
-        if (isWinter && ((i & 3) == 0)) continue;
-
-        int16_t xJit = (int16_t)(((i * 17) ^ (i >> 2)) & 1);
-        const GrassBlade& b = grassBlades[i];
-        // Spring: force more flower stems visually (without rewriting blade table)
-        uint8_t kind = b.kind;
-        if (isSpring && kind == 0 && ((i % 3) == 0)) kind = 2;       // extra blooms
-        if (isSpring && kind == 4 && ((i % 2) == 0)) kind = 2;       // stubble → sprouts
-        int16_t drawHeight = (int16_t)(b.height + heightBoost);
-        if (isSpring && kind == 2) drawHeight = (int16_t)(b.height + 5);  // flower stems taller
-        // Front near pig: ankle-high only so body/legs stay readable
-        if (frontLayer && nearPig) {
-            if (drawHeight > 11) drawHeight = 11;
-        } else if (frontLayer) {
-            drawHeight = (int16_t)(drawHeight + 1);
-        }
-        if (drawHeight > 24) drawHeight = 24;
-        int8_t drawLean = b.lean;
-
-        // Wind sway — stronger so grass visibly waves
-        {
-            uint32_t phase = now + (uint32_t)i * 197;
-            int period = wetGrass ? 1400 : (isWinter ? 1800 : 2200);
-            int wave = (int)(phase % period);
-            int half = period / 2;
-            int sway = (wave < half) ? (wave - half / 2) : (period * 3 / 4 - wave);
-            // Scale to ~±2..4 px lean (was weak / half-zero)
-            sway = (sway * 4) / (half > 0 ? half : 1);
-            if (wetGrass) sway = (sway * 3) / 2;
-            if (isWinter) sway = (sway * 5) / 4;  // cold wind
-            if (sway > 4) sway = 4;
-            if (sway < -4) sway = -4;
-            drawLean += (int8_t)sway;
-        }
-
-        // Bend under pig
-        if (pigOnGround && cx >= pigLeft && cx <= pigRight) {
-            int distFromCenter = cx - pigCenter;
-            if (distFromCenter < 0) distFromCenter = -distFromCenter;
-            float bend = 1.0f - (float)distFromCenter / (float)pigHalf;
-            if (bend < 0) bend = 0;
-            // Front blades bend less so they still poke past the pig
-            float bendAmt = frontLayer ? 0.45f : 0.70f;
-            drawHeight = drawHeight - (int16_t)((float)drawHeight * bendAmt * bend);
-            if (drawHeight < 4) drawHeight = 4;
-            int8_t leanPush = (int8_t)((frontLayer ? 3.0f : 5.0f) * bend);
-            drawLean = (cx < pigCenter) ? (int8_t)(b.lean - leanPush)
-                                        : (int8_t)(b.lean + leanPush);
-        }
-
-        if (shakeActive && shakeDecay > 0.05f) {
-            float edgeDist = 1.0f - (float)(cx > 120 ? cx - 120 : 120 - cx) / 120.0f;
-            if (edgeDist < 0.0f) edgeDist = 0.0f;
-            float impact = edgeDist * shakeDecay * ((float)shakeIntensity / 5.0f);
-            if (impact > 0.15f) {
-                int8_t jitter = ((now / 33) % 2 == 0) ? 1 : -1;
-                drawLean += jitter;
-            }
-        }
-
-        if (treeColliding && treeScreenX >= 0) {
-            int16_t dist = cx > treeScreenX ? cx - treeScreenX : treeScreenX - cx;
-            int16_t radius = 60;  // fruit crown influence on grass
-            if (dist < radius) {
-                float falloff = 1.0f - (float)dist / (float)radius;
-                uint32_t phase = now + (uint32_t)(dist * 7);
-                int8_t jitter = ((phase / 33) % 2 == 0) ? 1 : -1;
-                drawLean += (int8_t)((float)jitter * falloff);
-            }
-        }
-
-        uint8_t sh = b.shade & 3;
-        uint16_t colBase = maybeFlash(GRASS_BASE[sh]);
-        uint16_t colTip  = maybeFlash(GRASS_TIP[sh]);
-        // Darker blades under/around the pig (ground shade)
-        if (pigOnGround && cx >= pigLeft && cx <= pigRight) {
-            colBase = maybeFlash(GRASS_BASE[0]);
-            colTip  = maybeFlash(GRASS_TIP[0]);
-            if (frontLayer) {
-                // slightly less dark on front so ankles still read
-                colBase = maybeFlash(GRASS_BASE[sh > 0 ? sh - 1 : 0]);
-            }
-        }
-        if (wetGrass && !isWinter) {
-            colBase = maybeFlash(GRASS_BASE[0]);
-            colTip  = maybeFlash(GRASS_TIP[1]);
-        }
-
-        int16_t bx = cx + xJit;
-        int16_t by = baseY;
-
-        if (kind == 3) {
-            // Pebbles only on back layer (spring: tiny flower buds instead)
-            if (frontLayer) continue;
-            if (bx >= 0 && bx < 239) {
-                if (isSpring) {
-                    uint16_t fc = maybeFlash(FLOWER_COLS[b.shade % 4]);
-                    canvas.drawPixel(bx, by - 2, fc);
-                    canvas.drawPixel(bx + 1, by - 2, fc);
-                    canvas.drawPixel(bx, by - 3, maybeFlash(0xFFE0));
-                } else {
-                    canvas.drawPixel(bx, by - 1, maybeFlash(isWinter ? 0xBDF7 : 0x9CD3));
-                    canvas.drawPixel(bx + 1, by - 1, maybeFlash(0x8410));
-                    canvas.drawPixel(bx, by - 2, maybeFlash(isWinter ? 0xFFFF : 0xBDF7));
-                }
-            }
-            continue;
-        }
-
-        // === Classic fat double-stroke blades (all seasons) ===
-        int16_t tipX = snapPx(cx + drawLean);
-        int16_t tipY = snapPx(by - drawHeight);
-
-        if (kind == 4) {
-            // Short stubble — fat single stroke
-            fatLine(canvas, bx, by, tipX, tipY, colBase);
-            canvas.drawPixel(tipX, tipY, colTip);
-            continue;
-        }
-
-        if (kind == 2) {
-            // Flower / winter frost tip
-            int16_t hy = tipY;
-            int16_t hx = snapPx(bx + drawLean / 2);
-            fatLine(canvas, bx, by, hx, hy, colBase);
-            fatLine(canvas, bx + 1, by, hx + 1, hy, colBase);
-            uint16_t fc = maybeFlash(FLOWER_COLS[b.shade % 4]);
-            if (isWinter) {
-                canvas.fillRect(hx, hy - 2, 2, 2, maybeFlash(0xDEFB));
-                canvas.drawPixel(hx + 1, hy - 3, maybeFlash(0xFFFF));
-            } else if (isSpring) {
-                // Daisy / dandelion: petals + yellow center
-                canvas.fillRect(hx - 1, hy - PX - 1, PX + 2, PX + 1, fc);
-                canvas.drawPixel(hx - 2, hy - PX + 1, fc);
-                canvas.drawPixel(hx + PX + 1, hy - PX + 1, fc);
-                canvas.drawPixel(hx + 1, hy - PX - 2, fc);
-                canvas.drawPixel(hx, hy - PX, maybeFlash(0xFFE0));
-            } else {
-                canvas.fillRect(hx, hy - PX, PX, PX, fc);
-                canvas.drawPixel(hx - 1, hy - PX + 1, fc);
-                canvas.drawPixel(hx + PX, hy - PX + 1, fc);
-            }
-            continue;
-        }
-
-        if (kind == 1) {
-            // Thick tuft — full 5 blades; spring = clover cluster on top
-            for (int t = -2; t <= 2; t++) {
-                int16_t tx = snapPx(cx + drawLean + t * 2);
-                int16_t ty = snapPx(by - drawHeight + abs(t));
-                fatLine(canvas, bx, by, tx, ty, colBase);
-                fatLine(canvas, bx + 1, by, tx + 1, ty, colBase);
-                canvas.drawPixel(tx, ty, colTip);
-                if (isWinter) {
-                    canvas.fillRect(tx, ty - 2, 2, 2, maybeFlash(0xDEFB));
-                } else if (isAutumn && (t & 1) && ty > 0) {
-                    canvas.drawPixel(tx, ty - 1, maybeFlash(0xFD20));
-                }
-            }
-            if (isSpring) {
-                int16_t cxC = snapPx(cx + drawLean);
-                int16_t cyC = snapPx(by - drawHeight - 1);
-                uint16_t leaf = maybeFlash(0x07E0);
-                canvas.fillRect(cxC - 2, cyC, 2, 2, leaf);
-                canvas.fillRect(cxC + 1, cyC, 2, 2, leaf);
-                canvas.fillRect(cxC - 1, cyC - 2, 2, 2, leaf);
-                canvas.drawPixel(cxC, cyC + 1, maybeFlash(0x04A0));
-            }
-            continue;
-        }
-
-        // Normal blade: double fat stroke base → tip
-        int16_t midY = (by + tipY) / 2;
-        fatLine(canvas, bx, by, tipX, midY, colBase);
-        fatLine(canvas, bx + 1, by, tipX + 1, midY, colBase);
-        fatLine(canvas, tipX, midY, tipX, tipY, colTip);
-        fatLine(canvas, tipX + 1, midY, tipX + 1, tipY, colTip);
-        // Winter: icy tip (blue-white frost)
-        if (isWinter) {
-            canvas.fillRect(tipX, tipY - 2, 2, 2, maybeFlash(0xDEFB));
-            canvas.drawPixel(tipX + 1, tipY - 3, maybeFlash(0xFFFF));
-        } else if (isSpring && drawHeight >= 12) {
-            canvas.drawPixel(tipX, tipY - 1, maybeFlash(0xEFF8));
-            if ((b.shade & 1) && !frontLayer)
-                canvas.drawPixel(tipX + 1, tipY, maybeFlash(0xFFFF));
-        } else if (isAutumn && drawHeight >= 14 && (b.shade & 1)) {
-            canvas.drawPixel(tipX, tipY - 1, maybeFlash(0xFD20));
-        }
-    }
-
-    // Trail particles only once (front pass — after pig, so dust is on top)
-    if (!frontLayer) return;
-
-    // === Trail particles (dust from running pig) ===
-    bool isRunning = transitioning || grassMoving;
-
-    // Spawn one particle per ~70ms while pig is moving on the ground
-    if (isRunning && pigOnGround && now - lastTrailSpawn > 70) {
-        lastTrailSpawn = now;
-        TrailParticle& p = trailParticles[trailSpawnIdx];
-        trailSpawnIdx = (trailSpawnIdx + 1) % TRAIL_COUNT;
-
-        // Spawn at pig trailing edge near the feet
-        if (facingRight) {
-            p.x = (float)(currentX + random(0, 3 * PX));
-            p.vx = -(1.0f + (float)random(0, 20) / 10.0f);
-        } else {
-            p.x = (float)(currentX + (PIG_LAYOUT_W - 3) * PX + random(0, 3 * PX));
-            p.vx = 1.0f + (float)random(0, 20) / 10.0f;
-        }
-        p.y = (float)(96 + random(0, 10));
-        p.vy = -(0.2f + (float)random(0, 10) / 20.0f);  // slight upward drift
-        p.startX = p.x;
-        p.maxDist = 30.0f + (float)random(0, 31);  // 30-60px
-        p.baseSize = random(1, 3);  // 1-2 px radius
-        p.active = true;
-    }
-
-    // Update trail particles
-    if (now - lastTrailUpdate > 50) {
-        lastTrailUpdate = now;
-        for (int i = 0; i < TRAIL_COUNT; i++) {
-            if (!trailParticles[i].active) continue;
-            trailParticles[i].x += trailParticles[i].vx;
-            trailParticles[i].y += trailParticles[i].vy;
-            float dx = trailParticles[i].x - trailParticles[i].startX;
-            if (dx < 0) dx = -dx;
-            if (dx >= trailParticles[i].maxDist) {
-                trailParticles[i].active = false;
-            }
-        }
-    }
-
-    // Draw trail particles (fat-pixel dust)
-    for (int i = 0; i < TRAIL_COUNT; i++) {
-        if (!trailParticles[i].active) continue;
-        int tpx = snapPx((int16_t)trailParticles[i].x);
-        int tpy = snapPx((int16_t)trailParticles[i].y);
-        if (tpx < 0 || tpx >= 240) continue;
-
-        float tdx = trailParticles[i].x - trailParticles[i].startX;
-        if (tdx < 0) tdx = -tdx;
-        if (tdx >= trailParticles[i].maxDist) continue;
-
-        canvas.fillRect(tpx, tpy, PX, PX, maybeFlash(C_DUST));
-    }
-
-    // === Fruit splash particles (burst on ground impact) ===
-    static uint32_t lastSplashUpdate = 0;
-    if (now - lastSplashUpdate > 50) {
-        lastSplashUpdate = now;
-        for (uint8_t i = 0; i < FRUIT_SPLASH_COUNT; i++) {
-            if (!fruitSplashes[i].active) continue;
-            fruitSplashes[i].x += fruitSplashes[i].vx;
-            fruitSplashes[i].y += fruitSplashes[i].vy;
-            fruitSplashes[i].vy += 0.15f;  // slight gravity pull-back
-            if (now - fruitSplashes[i].spawnTime > 500) {
-                fruitSplashes[i].active = false;
-            }
-        }
-    }
-
-    // Draw cheese splash particles
-    for (uint8_t i = 0; i < FRUIT_SPLASH_COUNT; i++) {
-        if (!fruitSplashes[i].active) continue;
-        int spx = snapPx((int16_t)fruitSplashes[i].x);
-        int spy = snapPx((int16_t)fruitSplashes[i].y);
-        if (spx < 0 || spx >= 240) continue;
-
-        float progress = (float)(now - fruitSplashes[i].spawnTime) / 500.0f;
-        if (progress >= 1.0f) continue;
-
-        canvas.fillRect(spx, spy, PX, PX, maybeFlash(C_FRUIT));
-    }
+    Ground::DrawCtx ctx;
+    ctx.pigX = currentX;
+    ctx.pigLift = getJumpLiftPx();
+    bool jumpInAir = jumpActive && (millis() - jumpStartTime >= (uint32_t)JUMP_CROUCH_MS);
+    ctx.pigOnGround = !jumpInAir && !attackHopActive;
+    ctx.treeColliding = treeColliding;
+    ctx.treeScreenX = Trees::getFruitTreeScreenX();
+    ctx.attackShake = attackShakeActive;
+    ctx.attackShakeStrong = attackShakeStrong;
+    Ground::draw(canvas, frontLayer, ctx);
 }
-
-// --- Fruit tree system (delegates to Trees module) ---
-// Kinds: (1) FRUIT pushes pig + drops, (2) DECOR no fruit no push, (3) BERRY bush static berries no push
 
 void Avatar::generateTree(uint8_t /*fruitCount*/) {
     // Legacy stub — generation lives in Trees::showFruit
@@ -2919,200 +2033,16 @@ void Avatar::drawTree(M5Canvas& canvas, int16_t yOffset, bool /*doUpdate*/) {
 
 // --- Night sky star system ---
 // skyMode: 0=AUTO (RTC/synthetic with dusk/dawn), 1=always DAY, 2=always NIGHT
-bool Avatar::isNightTime() {
-    uint32_t now = millis();
-    uint16_t amt = (s_lastNightBlendMs != 0) ? s_nightBlend : computeNightTarget(now);
-    return (amt >= 128);
-}
+bool Avatar::isNightTime() { return Sky::isNight(); }
 
-void Avatar::getSkyHud(char* out, size_t len) {
-    if (!out || len < 8) return;
-    out[0] = '\0';
-    const char* sn = Weather::getSeasonShort();
-    uint8_t sky = Config::personality().skyMode;
-    if (sky == (uint8_t)SkyMode::DAY) {
-        snprintf(out, len, "DAY %s", sn);
-        return;
-    }
-    if (sky == (uint8_t)SkyMode::NIGHT) {
-        snprintf(out, len, "NITE %s", sn);
-        return;
-    }
+void Avatar::getSkyHud(char* out, size_t len) { Sky::getHud(out, len); }
 
-    Season season = Weather::getActiveSeason();
-    int hour = -1, minute = 0, mins = 0;
-    auto dt = M5.Rtc.getDateTime();
-    if (dt.date.year >= 2024) {
-        hour = (int)dt.time.hours;
-        minute = (int)dt.time.minutes;
-        mins = hour * 60 + minute;
-    } else {
-        time_t unixNow = time(nullptr);
-        if (unixNow >= 1700000000) {
-            struct tm timeinfo;
-            localtime_r(&unixNow, &timeinfo);
-            hour = timeinfo.tm_hour;
-            minute = timeinfo.tm_min;
-            mins = hour * 60 + minute;
-        }
-    }
-
-    char phase = isNightTime() ? 'N' : 'D';
-    if (hour >= 0) {
-        int dawn0, dusk0;
-        if (season == Season::SUMMER) {
-            dawn0 = 4 * 60; dusk0 = 20 * 60;
-        } else if (season == Season::WINTER) {
-            dawn0 = 8 * 60; dusk0 = 15 * 60;
-        } else {
-            dawn0 = 5 * 60; dusk0 = 17 * 60;
-        }
-        int leftMin;
-        if (!isNightTime()) {
-            leftMin = dusk0 - mins;
-            if (leftMin < 0) leftMin += 24 * 60;
-        } else {
-            leftMin = dawn0 - mins;
-            if (leftMin < 0) leftMin += 24 * 60;
-        }
-        if (leftMin >= 60)
-            snprintf(out, len, "%02d:%02d %c %s", hour, minute, phase, sn);
-        else
-            snprintf(out, len, "%02d:%02d %c%dm %s", hour, minute, phase, leftMin, sn);
-        return;
-    }
-
-    uint32_t sec = (millis() / 1000u) % 360u;
-    uint32_t dayS, duskS, nightS, dawnS;
-    if (season == Season::SUMMER) {
-        dayS = 200; duskS = 40; nightS = 80; dawnS = 40;
-    } else if (season == Season::WINTER) {
-        dayS = 80; duskS = 40; nightS = 200; dawnS = 40;
-    } else {
-        dayS = 140; duskS = 40; nightS = 140; dawnS = 40;
-    }
-    uint32_t left = 0;
-    if (sec < dayS) {
-        left = dayS - sec;
-        phase = 'D';
-    } else if (sec < dayS + duskS) {
-        left = dayS + duskS - sec;
-        phase = 'D';
-    } else if (sec < dayS + duskS + nightS) {
-        left = dayS + duskS + nightS - sec;
-        phase = 'N';
-    } else {
-        left = 360u - sec;
-        if (left == 0) left = dawnS ? dawnS : 1;
-        phase = 'N';
-    }
-    snprintf(out, len, "%c %u:%02u %s", phase, (unsigned)(left / 60),
-             (unsigned)(left % 60), sn);
-}
 
 void Avatar::drawTreeBarOverflow(M5Canvas& bar) {
     Trees::drawBarOverflow(bar);
 }
-void Avatar::initStarPositions() {
-    // Pre-gen star positions, hide until spawn
-    for (uint8_t i = 0; i < MAX_STARS; i++) {
-        // y 20-100 sky/backdrop, bubble still wins
-        // x 5-235 near full width
-        stars[i].x = random(5, 235);
-        // Match rain clip: keep stars above grass (rain clips at y < 88)
-        stars[i].y = random(35, 103);
-        stars[i].size = 1;
-        stars[i].brightness = 0;
-        stars[i].fadeInStart = 0;
-        // About 20 percent twinkle
-        stars[i].isBlinking = (random(0, 100) < 20);
-    }
-}
-
-void Avatar::updateStars() {
-    uint32_t now = millis();
-    // Keep blend advancing even if sky draw order varies
-    updateNightBlend(now);
-    const uint16_t nb = s_nightBlend;
-
-    // Never show stars while raining
-    if (Weather::isRaining()) {
-        if (starsActive) {
-            starsActive = false;
-            starCount = 0;
-        }
-        return;
-    }
-
-    // Stars appear mid-dusk; fade out toward dawn (no hard kill)
-    if (nb >= 140 && !starsActive) {
-        starsActive = true;
-        starCount = 0;
-        lastStarSpawn = now;
-        nextSpawnDelay = random(600, 2500);
-        initStarPositions();
-    } else if (nb < 80 && starsActive) {
-        starsActive = false;
-        starCount = 0;
-        return;
-    }
-
-    if (!starsActive) return;
-
-    // Spawn new star when timer expires
-    if (starCount < MAX_STARS && (now - lastStarSpawn >= nextSpawnDelay)) {
-        stars[starCount].fadeInStart = now;
-        stars[starCount].brightness = 0;
-        starCount++;
-        lastStarSpawn = now;
-        nextSpawnDelay = random(800, 4001);
-    }
-
-    // Fade-in per star + global gate from night blend (smooth dusk/dawn)
-    // nb 80..200 maps to gate 0..255
-    uint16_t gate = 255;
-    if (nb < 200) {
-        if (nb <= 80) gate = 0;
-        else gate = (uint16_t)(((nb - 80) * 255) / 120);
-    }
-
-    for (uint8_t i = 0; i < starCount; i++) {
-        uint32_t age = now - stars[i].fadeInStart;
-        uint16_t local = (age < 500) ? (uint16_t)((age * 255) / 500) : 255;
-        stars[i].brightness = (uint8_t)((local * gate) / 255);
-    }
-}
-
-
-void Avatar::drawStars(M5Canvas& canvas) {
-    if (!starsActive || starCount == 0) return;
-
-    uint32_t now = millis();
-
-    for (uint8_t i = 0; i < starCount; i++) {
-        if (stars[i].brightness < 40) continue;
-        if (stars[i].y >= 103) continue;  // Match rain clip above grass
-
-        int16_t sx = snapPx(stars[i].x);
-        int16_t sy = snapPx(stars[i].y);
-        // Dim stars: softer color until fully bright
-        uint16_t col = maybeFlash(C_STAR);
-        if (stars[i].brightness < 200) {
-            col = lerp565(s_skyTop, C_STAR, (uint8_t)((stars[i].brightness * 16) / 255));
-            col = maybeFlash(col);
-        }
-        canvas.fillRect(sx, sy, PX, PX, col);
-        if (stars[i].isBlinking && stars[i].brightness > 180) {
-            uint32_t phase = (now + i * 700) % 4000;
-            if (phase >= 1700 && phase < 2300) {
-                canvas.fillRect(sx - PX, sy, PX, PX, col);
-                canvas.fillRect(sx + PX, sy, PX, PX, col);
-                canvas.fillRect(sx, sy - PX, PX, PX, col);
-                canvas.fillRect(sx, sy + PX, PX, PX, col);
-            }
-        }
-    }
-}
+void Avatar::updateStars() { Sky::updateStars(); }
+void Avatar::drawStars(M5Canvas& canvas) { Sky::drawStars(canvas); }
 
 // --- Phase 8: Direction control helpers ---
 void Avatar::setFacingLeft() {
@@ -3243,10 +2173,10 @@ void Avatar::drawWaveRipples(M5Canvas& canvas, bool faceRight, int startX, int s
     }
 
     // Ring color = invert of current sky (always readable over day/night/rain)
-    uint16_t color = maybeFlash(invert565(s_skyTop));
+    uint16_t color = maybeFlash(invert565(Sky::topColor()));
     // Soft second tone (slightly dimmer invert) for outer edge depth
     uint16_t colorOuter = maybeFlash(invert565(
-        (uint16_t)(((s_skyTop >> 1) & 0x7BEF) | 0x1082)));  // slightly lifted sky
+        (uint16_t)(((Sky::topColor() >> 1) & 0x7BEF) | 0x1082)));  // slightly lifted sky
 
     const bool outgoing = (waveMode == WaveMode::OUTGOING);
 

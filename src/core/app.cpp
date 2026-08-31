@@ -12,6 +12,8 @@
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
 #include "../piglet/avatar.h"
+#include "../piglet/props.h"
+#include "../piglet/credits.h"
 #include "../piglet/mood.h"
 #include "../piglet/wolf.h"
 #include "../audio/sfx.h"
@@ -124,6 +126,8 @@ static void animTestPoll() {
         "TAIL WIGGLE", "SPARKLES", "ATTACK HOP", "WAVE IN", "WAVE OUT",
         "FACE LEFT", "FACE RIGHT", "TREE ON", "TREE OFF", "WOLF",
         "SIT", "PLAY DEAD", "STAND",
+        "PROP HIVE", "PROP SNOWMAN", "PROP FOX", "PROP FIRE",
+        "PROP CAT", "PROP SKULL", "PROP CLEAR",
     };
     static const uint8_t kAnimCount =
         (uint8_t)(sizeof(kAnimNames) / sizeof(kAnimNames[0]));
@@ -180,6 +184,13 @@ static void animTestPoll() {
             Avatar::setPlayDead(false);
             Avatar::setState(AvatarState::NEUTRAL);
             break;
+        case 27: Props::forceDemo(0); break;  // hive
+        case 28: Props::forceDemo(1); break;  // snowman
+        case 29: Props::forceDemo(2); break;  // fox
+        case 30: Props::forceDemo(3); break;  // fire
+        case 31: Props::forceDemo(4); break;  // cat
+        case 32: Props::forceDemo(5); break;  // skull
+        case 33: Props::forceDemo(6); break;  // clear
         default: break;
     }
 
@@ -195,6 +206,7 @@ static void animTestPoll() {
 //   . sit hold
 //   ANIM TEST: - previous  = next
 static void farmPoll() {
+    if (Credits::isPlaying()) return;  // unskippable credits
     animTestPoll();
     bool left  = M5Cardputer.Keyboard.isKeyPressed(',');
     bool right = M5Cardputer.Keyboard.isKeyPressed('/');

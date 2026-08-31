@@ -35,6 +35,18 @@ static bool snowBanksInited = false;
 static bool snowingWas = false;
 static uint32_t lastRainSfxMs = 0;
 
+// DESERT: sandstorm grit (horizontal streaks)
+struct SandGrit {
+    float x, y;
+    float vx;
+    uint8_t shade;
+    bool active;
+};
+static constexpr int SAND_GRIT_COUNT = 48;  // denser sandstorm
+static SandGrit sandGrit[SAND_GRIT_COUNT] = {};
+static uint32_t lastSandMs = 0;
+
+
 // ---------------------------------------------------------------------------
 // Autumn: falling leaves (denser / more visible)
 // ---------------------------------------------------------------------------
@@ -113,6 +125,7 @@ static bool isSummer() { return Weather::getActiveSeason() == Season::SUMMER; }
 static bool isAutumn() { return Weather::getActiveSeason() == Season::AUTUMN; }
 static bool isWinter() { return Weather::getActiveSeason() == Season::WINTER; }
 static bool isNoir()   { return Weather::getActiveSeason() == Season::NOIR; }
+static bool isDesert() { return Weather::getActiveSeason() == Season::DESERT; }
 
 // Noir: moths around the street lamp (center lane)
 struct Moth {
@@ -239,8 +252,52 @@ static void initSnowBanks() {
     lastBankGrowMs = millis();
 }
 
+
+static void updateSandstorm(uint32_t now) {
+    if (!isDesert()) {
+        for (int i = 0; i < SAND_GRIT_COUNT; i++) sandGrit[i].active = false;
+        return;
+    }
+    if (now - lastSandMs < 28) return;  // faster churn
+    lastSandMs = now;
+    for (int i = 0; i < SAND_GRIT_COUNT; i++) {
+        if (!sandGrit[i].active) {
+            // High spawn — real storm, mostly mid/low band
+            if ((esp_random() % 100) < 55) {
+                sandGrit[i].active = true;
+                sandGrit[i].x = (float)((int)(esp_random() % 40) - 30); // enter from left
+                sandGrit[i].y = (float)(35 + (esp_random() % 70));
+                sandGrit[i].vx = 2.8f + (float)(esp_random() % 55) / 10.f;
+                sandGrit[i].shade = (uint8_t)(esp_random() % 4);
+            }
+            continue;
+        }
+        sandGrit[i].x += sandGrit[i].vx;
+        sandGrit[i].y += ((int)(esp_random() % 5) - 2) * 0.35f;
+        if (sandGrit[i].y < 30.f) sandGrit[i].y = 30.f;
+        if (sandGrit[i].y > 105.f) sandGrit[i].y = 105.f;
+        if (sandGrit[i].x > 255.f) sandGrit[i].active = false;
+    }
+}
+
+static void drawSandstorm(M5Canvas& canvas, bool flash) {
+    if (!isDesert()) return;
+    static const uint16_t COL[4] = { 0xB460, 0xC480, 0xD4A0, 0xE5C0 };
+    for (int i = 0; i < SAND_GRIT_COUNT; i++) {
+        if (!sandGrit[i].active) continue;
+        uint16_t c = flash ? 0xFFFF : COL[sandGrit[i].shade & 3];
+        int x = (int)sandGrit[i].x;
+        int y = (int)sandGrit[i].y;
+        if (y < 28 || y > 106 || x < -4 || x > 244) continue;
+        int len = 3 + (sandGrit[i].shade & 3) + ((i & 1) ? 2 : 0);
+        canvas.drawFastHLine(x, y, len, c);
+        if ((i & 2) == 0) canvas.drawFastHLine(x - 1, y + 1, len - 1, COL[(sandGrit[i].shade + 1) & 3]);
+        if ((i & 3) == 0) canvas.drawPixel(x + len / 2, y - 1, c);
+    }
+}
+
 static void updateSnowBanks(uint32_t now) {
-    if (!isWinter()) {
+    if (!isWinter() && !isDesert()) {
         snowBanksInited = false;
         snowingWas = false;
         for (int i = 0; i < SNOW_BANK_COUNT; i++) snowBanks[i].h = 0;
@@ -249,7 +306,7 @@ static void updateSnowBanks(uint32_t now) {
     }
     if (!snowBanksInited) initSnowBanks();
 
-    const bool snowing = Weather::isSnowing();
+    const bool snowing = isDesert() ? true : Weather::isSnowing();
     if (!snowing) {
         snowingWas = false;
         return;
@@ -276,7 +333,8 @@ static void updateSnowBanks(uint32_t now) {
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         if (snowBanks[i].h < 1) continue;
         live++;
-        if (snowBanks[i].h < SNOW_BANK_MAX_H && (esp_random() % 100) < 70)
+        uint8_t maxH = isDesert() ? 9 : SNOW_BANK_MAX_H;  // higher sand ridges
+        if (snowBanks[i].h < maxH && (esp_random() % 100) < (isDesert() ? 40 : 70))
             snowBanks[i].h++;
     }
 
@@ -300,12 +358,46 @@ static void drawSnowPuff(M5Canvas& canvas, int cx, int cy, int r, uint16_t color
 }
 
 static void drawSnowBanks(M5Canvas& canvas, bool flash) {
-    if (!isWinter() || !snowBanksInited) return;
+    if ((!isWinter() && !isDesert()) || !snowBanksInited) return;
     const int16_t ground = 107;
-    const uint16_t C_TOP   = flash ? 0xFFFF : 0xFFFF;
-    const uint16_t C_MID   = flash ? 0xFFFF : 0xEF7D;
-    const uint16_t C_SHADE = flash ? 0xFFFF : 0xC618;
-    const uint16_t C_RIM   = flash ? 0xFFFF : 0xDEFB;
+    const bool sand = isDesert();
+
+    if (sand) {
+        // Flat sand ridges — low trapezoids on the ground, NOT snow balls
+        const uint16_t S_DARK = flash ? 0xFFFF : (uint16_t)0xB4A0;
+        const uint16_t S_MID  = flash ? 0xFFFF : (uint16_t)0xD4A0;
+        const uint16_t S_LIT  = flash ? 0xFFFF : (uint16_t)0xE5E0;
+        const uint16_t S_TOP  = flash ? 0xFFFF : (uint16_t)0xF6E0;
+        for (int i = 0; i < SNOW_BANK_COUNT; i++) {
+            int rows = (int)snowBanks[i].h;
+            if (rows < 1) continue;
+            if (rows > 9) rows = 9;  // higher visible ridges
+            int16_t bx = snowBanks[i].x;
+            wrapWorldX(bx);
+            int w = (int)snowBanks[i].w;
+            if (w < 26) w = 26;
+            if (w > 64) w = 64;
+            // stacked horizontal bands, wider at bottom → sand pile profile
+            for (int r = 0; r < rows; r++) {
+                int inset = r * 2;
+                int ww = w - inset * 2;
+                if (ww < 6) ww = 6;
+                int yy = ground - 1 - r;
+                uint16_t c = (r == 0) ? S_DARK : (r == rows - 1) ? S_TOP : ((r & 1) ? S_MID : S_LIT);
+                canvas.fillRect(bx + inset, yy, ww, 1, c);
+                // soft lit crest
+                if (r == rows - 1)
+                    canvas.drawFastHLine(bx + inset + 2, yy, ww / 2, S_TOP);
+            }
+        }
+        return;
+    }
+
+    // Winter: original snow puffs
+    const uint16_t C_TOP   = flash ? 0xFFFF : (uint16_t)0xFFFF;
+    const uint16_t C_MID   = flash ? 0xFFFF : (uint16_t)0xEF7D;
+    const uint16_t C_SHADE = flash ? 0xFFFF : (uint16_t)0xC618;
+    const uint16_t C_RIM   = flash ? 0xFFFF : (uint16_t)0xDEFB;
 
     for (int i = 0; i < SNOW_BANK_COUNT; i++) {
         int rows = (int)snowBanks[i].h;
@@ -316,7 +408,7 @@ static void drawSnowBanks(M5Canvas& canvas, bool flash) {
         int w = (int)snowBanks[i].w;
         if (w < 12) w = 12;
 
-        int maxR = 4 + rows;  // h=1 → 5px, h=8 → 12px (~same cap as old stacks)
+        int maxR = 4 + rows;
         if (maxR > 12) maxR = 12;
 
         int nPuff = 2 + w / 16;
@@ -353,7 +445,7 @@ void scroll(int dir) {
 }
 
 void trampleSnow(int pigFeetX) {
-    if (!isWinter() || !snowBanksInited) return;
+    if ((!isWinter() && !isDesert()) || !snowBanksInited) return;
     static uint32_t lastTrampleMs = 0;
     uint32_t now = millis();
     if (now - lastTrampleMs < 80) return;
@@ -809,6 +901,7 @@ void update() {
     }
     uint32_t now = millis();
     updateSnowBanks(now);
+    updateSandstorm(now);
     updateLeaves(now);
     updateTumbleweed(now);
     updateButterflies(now);
@@ -833,6 +926,7 @@ void draw(M5Canvas& canvas) {
     }
     // Order: ground decor first, then air
     drawSnowBanks(canvas, flash);
+    drawSandstorm(canvas, flash);
     drawLeaves(canvas, flash);
     drawTumbleweed(canvas, flash);
     drawPollen(canvas, flash);

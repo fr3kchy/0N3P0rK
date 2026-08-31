@@ -5,6 +5,7 @@
 #include "../core/config.h"
 #include "../core/xp.h"
 #include "../piglet/avatar.h"
+#include "../piglet/credits.h"
 #include "../piglet/mood.h"
 #include "../piglet/weather.h"
 #include "../piglet/seasonal_fx.h"
@@ -390,6 +391,8 @@ void Display::drawFarm() {
         if (SceneLayers::mood) Mood::draw(mainCanvas);
     }
 
+    Credits::update();
+    if (Credits::isPlaying()) Credits::draw(mainCanvas);
     drawToast();
 }
 
@@ -445,6 +448,8 @@ void Display::drawTopBar() {
         case Season::WINTER: appleOn = 0xC618; stemOn = 0x7BEF; break;
         case Season::RETRO:  appleOn = 0xC618; stemOn = 0x8410; break;
         case Season::NOIR:   appleOn = 0xFE60; stemOn = 0xC480; break;
+        case Season::CITY:   appleOn = 0xFD20; stemOn = 0x7BEF; break;
+        case Season::DESERT: appleOn = 0xFFE0; stemOn = 0x6B40; break;
     }
     if (retro) { appleOn = 0xC618; stemOn = 0x8410; }
     auto fat = [&](int px, int py, uint16_t c) {
@@ -535,6 +540,8 @@ void Display::drawBottomBar() {
         case Season::WINTER: fringeTop = 0xDEFB; DIRT_MID = 0x6B6D; break;
         case Season::RETRO:  fringeTop = 0x9CF3; DIRT_MID = 0x4208; TEXT_COL = 0xE73C; break;
         case Season::NOIR:   fringeTop = 0xFE60; DIRT_MID = 0x2104; TEXT_COL = 0xFE60; break;
+        case Season::CITY:   fringeTop = 0x8410; DIRT_MID = 0x4208; TEXT_COL = 0xC618; break;
+        case Season::DESERT: fringeTop = 0xE5C0; DIRT_MID = 0xD4A0; TEXT_COL = 0xFEA0; break;
     }
 
     bottomBar.fillSprite(DIRT_MID);

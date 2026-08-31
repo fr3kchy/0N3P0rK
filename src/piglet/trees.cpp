@@ -101,12 +101,17 @@ enum class Phase : uint8_t { HIDDEN = 0, GROWING, ALIVE, COLLAPSING };
 // FRUIT:  SPRING=cherry  SUMMER=apple  AUTUMN=old apple  WINTER=fir
 // DECOR:  SPRING=willow  SUMMER=apple  AUTUMN=old apple  WINTER=snowy apple
 enum class SeasonTree : uint8_t {
-    CHERRY    = 0,
-    APPLE     = 1,
-    OLD_APPLE = 2,  // autumn "old apple tree" (was oak)
-    FIR       = 3,
-    WILLOW    = 4,  // spring decorative only — weeping, not a 2nd cherry
-    LAMP      = 5   // noir decorative — street lamp, not a 2nd tree
+    CHERRY     = 0,
+    APPLE      = 1,
+    OLD_APPLE  = 2,  // autumn "old apple tree" (was oak)
+    FIR        = 3,
+    WILLOW     = 4,  // spring decorative only — weeping, not a 2nd cherry
+    LAMP       = 5,  // noir decorative — street lamp
+    STALL      = 6,  // CITY market stall (fruit lane)
+    TRASH      = 7,  // CITY trash can (bush lane)
+    PALM_FRUIT = 8,  // DESERT palm with bananas
+    PALM_DECOR = 9,  // DESERT plain palm
+    CACTUS     = 10  // DESERT cactus (bush lane)
 };
 
 struct Branch { int16_t x1, y1, x2, y2; uint8_t thickness; };
@@ -159,6 +164,8 @@ static SeasonTree styleFromSeason(Season s) {
         case Season::WINTER: return SeasonTree::FIR;
         case Season::RETRO:  return SeasonTree::APPLE;  // round canopy, mono colors applied at draw
         case Season::NOIR:   return SeasonTree::APPLE;  // dark canopy; decor becomes a lamp
+        case Season::CITY:   return SeasonTree::STALL;  // fruit lane = market stall
+        case Season::DESERT: return SeasonTree::PALM_FRUIT;
         default: return SeasonTree::APPLE;
     }
 }
@@ -193,6 +200,8 @@ static Produce produceForSlot(const Slot& t) {
     if (t.style == SeasonTree::OLD_APPLE) return Produce::GREEN_APPLE;
     if (t.style == SeasonTree::CHERRY) return Produce::CHERRY;
     if (t.style == SeasonTree::FIR) return Produce::CONE;
+    if (t.style == SeasonTree::PALM_FRUIT) return Produce::YELLOW_APPLE;
+    if (t.style == SeasonTree::CACTUS) return Produce::BERRY;
     return Produce::RED_APPLE;
 }
 
@@ -246,8 +255,21 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
             t.style = SeasonTree::WILLOW;
         if (t.kind == Kind::DECOR && Weather::getActiveSeason() == Season::NOIR)
             t.style = SeasonTree::LAMP;
+        if (t.kind == Kind::DECOR && Weather::getActiveSeason() == Season::CITY)
+            t.style = SeasonTree::LAMP;
+        if (t.kind == Kind::FRUIT && Weather::getActiveSeason() == Season::CITY)
+            t.style = SeasonTree::STALL;
+        if (t.kind == Kind::FRUIT && Weather::getActiveSeason() == Season::DESERT)
+            t.style = SeasonTree::PALM_FRUIT;
+        if (t.kind == Kind::DECOR && Weather::getActiveSeason() == Season::DESERT)
+            t.style = SeasonTree::PALM_DECOR;
     } else {
-        t.style = SeasonTree::APPLE;  // bush shape; produce color from season
+        if (Weather::getActiveSeason() == Season::CITY)
+            t.style = SeasonTree::TRASH;
+        else if (Weather::getActiveSeason() == Season::DESERT)
+            t.style = SeasonTree::CACTUS;  // bush lane = cactus with tip flowers
+        else
+            t.style = SeasonTree::APPLE;  // bush shape; produce color from season
     }
 
     // Position opposite the pig (berry mid-ground)
@@ -271,6 +293,11 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
     if (t.kind == Kind::BERRY) fullH = 40 + (uint8_t)(lcg(s) % 10);
     else if (t.style == SeasonTree::FIR) fullH = 70 + (uint8_t)(lcg(s) % 10);   // tall fir
     else if (t.style == SeasonTree::LAMP) fullH = 64 + (uint8_t)(lcg(s) % 6);   // street lamp
+    else if (t.style == SeasonTree::STALL) fullH = 52 + (uint8_t)(lcg(s) % 8);
+    else if (t.style == SeasonTree::TRASH) fullH = 36 + (uint8_t)(lcg(s) % 6);
+    else if (t.style == SeasonTree::PALM_FRUIT || t.style == SeasonTree::PALM_DECOR)
+        fullH = 72 + (uint8_t)(lcg(s) % 12);  // a bit taller — crowns above pig
+    else if (t.style == SeasonTree::CACTUS) fullH = 52 + (uint8_t)(lcg(s) % 12);
     else if (t.style == SeasonTree::WILLOW) fullH = 66 + (uint8_t)(lcg(s) % 8); // tall weeping willow
     else if (t.style == SeasonTree::OLD_APPLE) fullH = 58 + (uint8_t)(lcg(s) % 8); // stout old apple
     else if (t.style == SeasonTree::CHERRY) fullH = 60 + (uint8_t)(lcg(s) % 10); // elegant cherry
@@ -344,11 +371,57 @@ static void genClassicTree(Slot& t, uint8_t fruitCount, uint8_t scalePct) {
         return;
     }
 
-    // --- Noir street lamp: pole + arm (drawn in drawLamp) ---
-    if (t.kind != Kind::BERRY && t.style == SeasonTree::LAMP) {
+    // --- Noir/city props: drawn by dedicated drawers ---
+    if (t.style == SeasonTree::LAMP || t.style == SeasonTree::STALL ||
+        t.style == SeasonTree::TRASH || t.style == SeasonTree::PALM_FRUIT ||
+        t.style == SeasonTree::PALM_DECOR || t.style == SeasonTree::CACTUS) {
         t.branchCount = 0;
         t.leafCount = 0;
-        t.fruitCount = 0;
+        // Stall still drops "fruit" (produce) for gameplay
+        if (t.style != SeasonTree::STALL && t.style != SeasonTree::PALM_FRUIT &&
+            t.style != SeasonTree::CACTUS) {
+            t.fruitCount = 0;
+        } else if (t.fruitCount == 0) {
+            if (t.style == SeasonTree::STALL) {
+                // Produce sits ON the counter (see drawStall counter Y)
+                t.fruitCount = (uint8_t)(4 + (lcg(t.seed) % 3));
+                static const int8_t slotX[] = { -14, -7, 0, 7, 14, -10, 4 };
+                for (uint8_t i = 0; i < t.fruitCount; i++) {
+                    t.fruits[i].ox = (int16_t)(slotX[i % 7] + (int)(lcg(t.seed) % 3) - 1);
+                    t.fruits[i].oy = 0;  // meaning: on counter (drawer places Y)
+                    t.fruits[i].r = 2 + (uint8_t)(lcg(t.seed) % 2);
+                    t.fruits[i].bob = (uint8_t)(lcg(t.seed) % 4);
+                    uint8_t k = (uint8_t)(lcg(t.seed) % 4);
+                    t.fruits[i].produce = (k == 0) ? Produce::RED_APPLE
+                                       : (k == 1) ? Produce::YELLOW_APPLE
+                                       : (k == 2) ? Produce::GREEN_APPLE
+                                       : Produce::CHERRY;
+                }
+                if (XP::goldAppleUnlocked() && (esp_random() % 100) < 12)
+                    t.fruits[0].produce = Produce::GOLD_APPLE;
+            } else if (t.style == SeasonTree::PALM_FRUIT) {
+                // Banana bunch under the crown (cluster left of trunk)
+                t.fruitCount = (uint8_t)(3 + (lcg(t.seed) % 3));
+                for (uint8_t i = 0; i < t.fruitCount; i++) {
+                    t.fruits[i].ox = (int16_t)(-6 - (int)(i % 3) * 3 + (int)(lcg(t.seed) % 2));
+                    t.fruits[i].oy = (int16_t)(4 + (int)(i / 2) * 4);  // below top
+                    t.fruits[i].r = 2;
+                    t.fruits[i].bob = (uint8_t)i;
+                    t.fruits[i].produce = Produce::YELLOW_APPLE;
+                }
+            } else { // CACTUS flowers at arm tips / top
+                t.fruitCount = (uint8_t)(2 + (lcg(t.seed) % 3));
+                for (uint8_t i = 0; i < t.fruitCount; i++) {
+                    // ox: -1 left arm, 0 top, +1 right arm
+                    int arm = (int)(lcg(t.seed) % 3) - 1;
+                    t.fruits[i].ox = (int16_t)arm;
+                    t.fruits[i].oy = (int16_t)(lcg(t.seed) % 3);
+                    t.fruits[i].r = 2;
+                    t.fruits[i].bob = (uint8_t)(lcg(t.seed) % 4);
+                    t.fruits[i].produce = Produce::BERRY;
+                }
+            }
+        }
         t.lean = 0;
         t.stompHits = 0;
         t.stompArmed = true;
@@ -657,7 +730,9 @@ static void placeInWorld(Slot& t, bool preferOffscreen) {
 }
 
 static uint8_t produceWant(const Slot& t) {
-    if (t.kind == Kind::DECOR || t.style == SeasonTree::LAMP) return 0;
+    if (t.kind == Kind::DECOR || t.style == SeasonTree::LAMP ||
+        t.style == SeasonTree::STALL || t.style == SeasonTree::TRASH ||
+        t.style == SeasonTree::PALM_DECOR) return 0;
     if (t.kind == Kind::BERRY) return 6;
     if (t.style == SeasonTree::FIR) return 5;
     if (t.style == SeasonTree::CHERRY) return 6;
@@ -1150,7 +1225,448 @@ static void drawFir(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     }
 }
 
-// Noir street lamp — pole, arm, sodium glow (decorative only)
+
+
+
+
+// DESERT palms — living tree, not a stick:
+// thick ringed trunk + seed-varied frond "branches" (rachis + leaflets),
+// same spirit as spring/summer/autumn canopies.
+// withFruit=true  → banana bunches (fruit tree)
+// withFruit=false → coconut cluster at hub (decor)
+static void drawBanana(M5Canvas& canvas, int16_t cx, int16_t cy, bool tipLeft) {
+    uint16_t yel = fl(0xFFE0);
+    uint16_t yelD = fl(0xD5A0);
+    uint16_t tip = fl(0x5A20);
+    if (tipLeft) {
+        canvas.fillRect(cx, cy, PX * 2, PX, yel);
+        canvas.fillRect(cx - PX, cy + PX, PX * 2, PX, yel);
+        canvas.fillRect(cx - PX * 2, cy + PX * 2, PX * 2, PX, yelD);
+        canvas.fillRect(cx - PX * 2, cy + PX * 3, PX, PX, tip);
+    } else {
+        canvas.fillRect(cx - PX, cy, PX * 2, PX, yel);
+        canvas.fillRect(cx, cy + PX, PX * 2, PX, yel);
+        canvas.fillRect(cx + PX, cy + PX * 2, PX * 2, PX, yelD);
+        canvas.fillRect(cx + PX * 2, cy + PX * 3, PX, PX, tip);
+    }
+}
+
+static void drawCoconut(M5Canvas& canvas, int16_t cx, int16_t cy) {
+    uint16_t nut  = fl(0x82C0);
+    uint16_t nutD = fl(0x5140);
+    uint16_t nutH = fl(0xC4A0);
+    canvas.fillRect(cx - PX, cy - PX, PX * 2, PX * 2, nut);
+    canvas.fillRect(cx - PX, cy - PX, PX, PX, nutH);
+    canvas.drawPixel(cx + PX - 1, cy + PX - 1, nutD);
+}
+
+// One palm frond = solid continuous blade (no dotted gaps).
+// Step along the rachis with OVERLAPPING blocks so the leaf reads as one piece.
+static void drawPalmFrond(M5Canvas& canvas, int16_t x0, int16_t y0,
+                          int8_t dx, int8_t dy, int len,
+                          uint16_t rachis, uint16_t leaf, uint16_t leafH, uint16_t leafD,
+                          uint8_t seedJit) {
+    if (len < 4) len = 4;
+
+    // Normalize step so consecutive segments overlap (kills the "dash" look)
+    // Move ~PX/2 per sub-step, draw full PX blocks.
+    int steps = len * 2;  // denser sampling
+    int16_t prevX = x0, prevY = y0;
+    for (int s = 0; s <= steps; s++) {
+        float t = (float)s / (float)steps;  // 0..1 along frond
+        // mild droop toward tip
+        int droop = (int)(t * t * 4.f);
+        int jx = ((int)(seedJit + s * 2) % 2);  // tiny variety, not sparse holes
+        int jy = ((int)(seedJit + s * 3) % 2);
+
+        int16_t px = (int16_t)(x0 + (dx * s * PX) / 4 + jx);
+        int16_t py = (int16_t)(y0 + (dy * s * PX) / 4 + droop + jy);
+
+        // width: thicker near base, taper to tip
+        int halfW = (s < steps / 3) ? (PX + 1) : (s < (steps * 2) / 3) ? PX : (PX - 1);
+        if (halfW < 2) halfW = 2;
+
+        // perpendicular offset for "blade width" (solid leaf body, not dots)
+        int pdx = -dy;  // rough perpendicular
+        int pdy = dx;
+        if (pdx == 0 && pdy == 0) { pdx = 1; pdy = 0; }
+
+        uint16_t cBody = (s < steps / 4) ? rachis : ((s & 2) ? leaf : leafH);
+        if (s > (steps * 3) / 4) cBody = leafH;  // bright tip zone
+
+        // solid core
+        canvas.fillRect(px - halfW / 2, py - 1, halfW, PX, cBody);
+        // fill gap from previous sample (continuous stroke)
+        if (s > 0) {
+            int midx = (prevX + px) / 2;
+            int midy = (prevY + py) / 2;
+            canvas.fillRect(midx - halfW / 2, midy - 1, halfW, PX, cBody);
+        }
+
+        // solid side leaflets every other step — filled slabs, not single pixels
+        if (s > 1 && (s % 2) == 0) {
+            int side = PX + (s < steps / 2 ? 1 : 0);
+            int16_t lx = (int16_t)(px - pdx * side / 2);
+            int16_t ly = (int16_t)(py - pdy * side / 2);
+            int16_t rx = (int16_t)(px + pdx * side / 2);
+            int16_t ry = (int16_t)(py + pdy * side / 2);
+            uint16_t cL = leaf;
+            uint16_t cR = leafD;
+            // 2x1 / 1x2 blocks so leaflets look like leaf tissue
+            canvas.fillRect(lx - 1, ly, PX, PX - 1, cL);
+            canvas.fillRect(rx - 1, ry, PX, PX - 1, cR);
+            // soft underside
+            canvas.drawFastHLine(lx - 1, ly + PX - 2, PX, leafD);
+            canvas.drawFastHLine(rx - 1, ry + PX - 2, PX, rachis);
+        }
+
+        prevX = px;
+        prevY = py;
+    }
+    // tip highlight blob
+    canvas.fillRect(prevX - 1, prevY - 1, PX, PX, leafH);
+}
+
+static void drawPalm(M5Canvas& canvas, Slot& t, int16_t yOffset, bool withFruit) {
+    const int16_t baseY = (int16_t)(106 + yOffset);
+    int16_t bx = screenX(t);
+    float g = t.growth;
+    if (g < 0.05f) return;
+    int16_t h = (int16_t)(t.trunkH * g);
+    if (t.phase == Phase::COLLAPSING) {
+        float ct = 1.0f - t.growth;
+        h -= (int16_t)(ct * ct * t.trunkH);
+        if (h < 0) h = 0;
+    }
+    if (t.kind == Kind::BERRY) {
+        h = (int16_t)(h * 88 / 100);
+        if (h < PX * 10) h = PX * 10;
+    }
+    int16_t x = bx + stompShake;
+
+    // Seed-driven variety (like seasonal trees)
+    uint32_t s = t.seed ? t.seed : 1u;
+    auto rnd = [&]() -> uint32_t {
+        s = s * 1664525u + 1013904223u;
+        return s;
+    };
+
+    uint16_t trunk  = fl(0x9A40);
+    uint16_t trunkD = fl(0x6180);
+    uint16_t trunkH = fl(0xC4A0);
+    uint16_t rachis = fl(0x1A40);
+    uint16_t leaf   = fl(0x0B60);
+    uint16_t leafM  = fl(0x1CE0);
+    uint16_t leafH  = fl(0x3E80);
+    uint16_t leafD  = fl(0x0440);
+    uint16_t hub    = fl(0x82C0);
+    uint16_t hubD   = fl(0x5140);
+
+    // Lean unique per tree
+    int16_t lean = (int16_t)((int)(rnd() % 7) - 3);
+    if (g < 0.5f) lean = 0;
+    x += lean;
+
+    // === Thick ringed trunk (base wider — not a stick) ===
+    if (h > 0) {
+        for (int y = 0; y < h; y += PX) {
+            int16_t yy = baseY - y - PX;
+            // base ~5px wide, mid ~4, top ~3 (in PX units)
+            int16_t w;
+            if (y < h / 4)      w = PX * 5;
+            else if (y < h / 2) w = PX * 4;
+            else if (y < (h * 3) / 4) w = PX * 3 + 1;
+            else                w = PX * 3;
+            if ((y / PX) & 1) w += 1; // ring offset
+            canvas.fillRect(x - w / 2, yy, w, PX, ((y / PX) & 1) ? trunkD : trunk);
+            // highlight edge
+            canvas.drawFastVLine(x - w / 2, yy, PX, trunkH);
+            if (((y / PX) % 3) == 0)
+                canvas.drawFastHLine(x - w / 2, yy, w, trunkH);
+        }
+        // base flare (roots / thicker foot)
+        canvas.fillRect(x - PX * 3, baseY - PX, PX * 6, PX, trunkD);
+        canvas.fillRect(x - PX * 2, baseY - PX * 2, PX * 4, PX, trunk);
+    }
+    int16_t top = baseY - h;
+
+    // Crown hub — chunky attachment point
+    canvas.fillRect(x - PX * 3, top - PX, PX * 6, PX * 2, hub);
+    canvas.fillRect(x - PX * 2, top - PX * 2, PX * 4, PX, hubD);
+    canvas.fillRect(x - PX, top - PX, PX * 2, PX, trunkH);
+
+    if (g < 0.25f) return;
+
+    // === Frond set varies by seed (count, angles, lengths) ===
+    // Base directions; we pick a subset + jitter so no two palms match
+    struct Dir { int8_t dx, dy; };
+    static const Dir BASE[] = {
+        {-4, -2}, {-3, -3}, {-1, -4}, { 1, -4}, { 3, -3}, { 4, -2},
+        {-5,  0}, { 5,  0}, {-5,  1}, { 5,  1},
+        {-4,  2}, {-2,  3}, { 2,  3}, { 4,  2},
+        {-3,  1}, { 3,  1}, {-2, -1}, { 2, -1},
+    };
+    const int NBASE = (int)(sizeof(BASE) / sizeof(BASE[0]));
+    int nFronds = 10 + (int)(rnd() % 7); // 10..16 fronds
+    if (t.kind == Kind::BERRY) nFronds = 8 + (int)(rnd() % 4);
+    if (nFronds > NBASE) nFronds = NBASE;
+
+    // Shuffle-ish pick via seed walk
+    bool used[18] = {};
+    for (int n = 0; n < nFronds; n++) {
+        int idx = (int)(rnd() % NBASE);
+        for (int tries = 0; tries < NBASE && used[idx]; tries++)
+            idx = (idx + 1) % NBASE;
+        used[idx] = true;
+
+        int8_t dx = BASE[idx].dx;
+        int8_t dy = BASE[idx].dy;
+        // angle jitter
+        dx = (int8_t)(dx + (int)(rnd() % 3) - 1);
+        dy = (int8_t)(dy + (int)(rnd() % 3) - 1);
+        if (dx == 0 && dy == 0) dx = 2;
+
+        int len = 5 + (int)(rnd() % 5); // 5..9 steps
+        if (t.kind == Kind::BERRY) len = 4 + (int)(rnd() % 3);
+        uint8_t jit = (uint8_t)(rnd() & 0xFF);
+
+        drawPalmFrond(canvas, x, top, dx, dy, len, rachis, leaf, leafH, leafD, jit);
+        // secondary shorter frond sometimes (fuller canopy)
+        if ((rnd() % 100) < 40 && g > 0.6f) {
+            int8_t dx2 = (int8_t)(dx + ((rnd() & 1) ? 1 : -1));
+            int8_t dy2 = (int8_t)(dy + 1);
+            drawPalmFrond(canvas, x, top + PX, dx2, dy2, len - 2,
+                          rachis, leafM, leafH, leafD, (uint8_t)(jit + 17));
+        }
+    }
+
+    if (g < 0.4f || t.phase == Phase::COLLAPSING) return;
+
+    if (withFruit) {
+        int16_t bx0 = x - PX * 5;
+        int16_t by0 = top + PX;
+        uint8_t n = t.fruitCount ? t.fruitCount : 5;
+        for (uint8_t i = 0; i < n && i < 6; i++) {
+            int16_t fx = bx0 + (int16_t)((i % 3) * PX * 2);
+            int16_t fy = by0 + (int16_t)((i / 3) * PX * 2);
+            drawBanana(canvas, fx, fy, (i & 1) == 0);
+        }
+        // second small bunch on the right sometimes
+        if ((t.seed & 2) == 0) {
+            drawBanana(canvas, x + PX * 2, top + PX * 2, false);
+            drawBanana(canvas, x + PX * 4, top + PX * 3, true);
+        }
+    } else {
+        drawCoconut(canvas, x - PX * 3, top + PX);
+        drawCoconut(canvas, x + PX, top + PX);
+        drawCoconut(canvas, x - PX, top + PX * 2);
+        drawCoconut(canvas, x + PX * 2, top + PX * 2);
+        if ((t.seed & 1) == 0)
+            drawCoconut(canvas, x, top + PX * 3);
+    }
+}
+
+// DESERT cactus — bigger pixel saguaro; arm layout RANDOM per seed.
+static void drawCactus(M5Canvas& canvas, Slot& t, int16_t yOffset) {
+    const int16_t baseY = (int16_t)(106 + yOffset);
+    int16_t bx = screenX(t);
+    float g = t.growth;
+    if (g < 0.05f) return;
+
+    uint32_t rs = t.seed ? t.seed : 1u;
+    auto rnd = [&]() -> uint32_t { rs = rs * 1664525u + 1013904223u; return rs; };
+
+    int16_t fullH = (int16_t)(48 + (t.trunkH / 2) + (int)(rnd() % 14)); // bigger
+    int16_t h = (int16_t)(fullH * g);
+    if (t.phase == Phase::COLLAPSING) {
+        float ct = 1.0f - t.growth;
+        h -= (int16_t)(ct * ct * fullH);
+        if (h < 0) h = 0;
+    }
+    int16_t x = bx + stompShake;
+
+    uint16_t outC  = fl(0x1A40);
+    uint16_t darkC = fl(0x2C80);
+    uint16_t midC  = fl(0x45A0);
+    uint16_t litC  = fl(0x6EC0);
+    uint16_t topC  = fl(0x8FE0);
+    uint16_t sandD = fl(0xC480);
+    uint16_t sandM = fl(0xE5C0);
+    uint16_t sandL = fl(0xF6E0);
+    uint16_t flower = fl(0xF81F);
+    uint16_t flowerY = fl(0xFFE0);
+
+    int16_t W = 12 + (int)(rnd() % 4); // 12..15 — chunkier
+
+    auto stem = [&](int16_t cx, int16_t bottom, int16_t height, int16_t width) {
+        if (height < 4 || width < 6) return;
+        int16_t left = cx - width / 2;
+        canvas.fillRect(left, bottom - height, width, height, midC);
+        canvas.fillRect(left, bottom - height, 2, height, darkC);
+        canvas.fillRect(left + 2, bottom - height, 1, height, outC);
+        canvas.fillRect(left + width - 3, bottom - height, 2, height, litC);
+        canvas.fillRect(left + width - 1, bottom - height, 1, height, topC);
+        canvas.drawFastVLine(cx, bottom - height + 1, height - 2, darkC);
+        // pixel-step cap
+        canvas.fillRect(left + 1, bottom - height - 2, width - 2, 2, midC);
+        canvas.fillRect(left + 2, bottom - height - 3, width - 4, 1, topC);
+        canvas.fillRect(left + 3, bottom - height - 4, width - 6, 1, litC);
+        canvas.drawFastVLine(left - 1, bottom - height, height, outC);
+        canvas.drawFastVLine(left + width, bottom - height, height, outC);
+        // pixel nubs on sides (spines as 1px blocks)
+        for (int y = 4; y < height; y += 5 + (int)(y & 1)) {
+            canvas.drawPixel(left - 1, bottom - y, litC);
+            canvas.drawPixel(left + width, bottom - y - 1, darkC);
+        }
+    };
+
+    // Sand mound
+    {
+        int16_t mw = W + 14;
+        canvas.fillRect(x - mw / 2, baseY - 1, mw, 2, sandD);
+        canvas.fillRect(x - mw / 2 + 2, baseY - 2, mw - 4, 1, sandM);
+        canvas.fillRect(x - mw / 2 + 4, baseY - 3, mw - 8, 1, sandL);
+        canvas.fillRect(x - mw / 2 + 6, baseY - 4, mw - 12, 1, sandL);
+    }
+
+    stem(x, baseY - 1, h, W);
+
+    // Random arms: 1..3, each side/height/length from seed
+    if (g > 0.35f) {
+        int nArms = 1 + (int)(rnd() % 3); // 1..3 arms
+        int16_t aw = W * 2 / 3;
+        if (aw < 8) aw = 8;
+
+        for (int a = 0; a < nArms; a++) {
+            bool left = (rnd() & 1) != 0;
+            // random attach height 30%..70% of trunk
+            int pct = 30 + (int)(rnd() % 41);
+            int16_t armY = baseY - 1 - h * pct / 100;
+            int16_t armUp = 10 + (int)(rnd() % (h / 3 + 6));
+            armUp = (int16_t)(armUp * ((g - 0.35f) / 0.65f));
+            if (armUp < 8) armUp = 8;
+            int out = 6 + (int)(rnd() % 5); // how far arm sticks out
+            int thick = 4 + (int)(rnd() % 3);
+
+            if (left) {
+                int16_t lx = x - W / 2 - out;
+                canvas.fillRect(lx, armY, out + 2, thick, midC);
+                canvas.fillRect(lx, armY, out + 2, 2, litC);
+                canvas.fillRect(lx, armY + thick - 1, out + 2, 1, darkC);
+                // elbow pixel step
+                canvas.fillRect(lx, armY - 2, 3, 2, midC);
+                stem(lx + 2, armY + 1, armUp, aw);
+                if (g > 0.55f && t.phase != Phase::COLLAPSING) {
+                    canvas.fillRect(lx, armY + 1 - armUp - 4, 4, 4, flower);
+                    canvas.fillRect(lx + 1, armY - armUp - 2, 2, 2, flowerY);
+                }
+            } else {
+                int16_t rx = x + W / 2 - 1;
+                canvas.fillRect(rx, armY, out + 2, thick, midC);
+                canvas.fillRect(rx, armY, out + 2, 2, litC);
+                canvas.fillRect(rx, armY + thick - 1, out + 2, 1, darkC);
+                canvas.fillRect(rx + out - 1, armY - 2, 3, 2, midC);
+                stem(rx + out - 1, armY + 1, armUp, aw);
+                if (g > 0.55f && t.phase != Phase::COLLAPSING) {
+                    canvas.fillRect(rx + out - 2, armY + 1 - armUp - 4, 4, 4, flower);
+                    canvas.fillRect(rx + out - 1, armY - armUp - 2, 2, 2, flowerY);
+                }
+            }
+        }
+        // top flower
+        if (g > 0.55f && t.phase != Phase::COLLAPSING) {
+            canvas.fillRect(x - 2, baseY - 1 - h - 5, 4, 4, flower);
+            canvas.fillRect(x - 1, baseY - h - 4, 2, 2, flowerY);
+        }
+    }
+}
+
+// CITY market stall — produce ON the counter top
+static void drawStall(M5Canvas& canvas, Slot& t, int16_t yOffset) {
+    uint32_t now = millis();
+    const int16_t baseY = (int16_t)(106 + yOffset);
+    int16_t bx = screenX(t);
+    float g = t.growth;
+    if (g < 0.05f) return;
+    int16_t h = (int16_t)((48 + t.trunkH / 4) * g);
+    if (t.phase == Phase::COLLAPSING) {
+        float ct = 1.0f - t.growth;
+        h -= (int16_t)(ct * ct * 40);
+        if (h < 0) h = 0;
+    }
+    int16_t x = bx + stompShake;
+    uint16_t wood = fl(0x9A40);
+    uint16_t woodD = fl(0x5140);
+    uint16_t awn = fl(0xE8C4);
+    uint16_t awn2 = fl(0xC986);
+    uint16_t shelf = fl(0xC408);
+
+    int16_t counterTop = baseY - h / 2 - PX * 2; // top of counter board
+
+    // legs
+    canvas.fillRect(x - PX * 7, baseY - h / 2, PX * 2, h / 2, woodD);
+    canvas.fillRect(x + PX * 5, baseY - h / 2, PX * 2, h / 2, woodD);
+    // crates under
+    canvas.fillRect(x - PX * 5, baseY - h / 2 + PX, PX * 4, h / 2 - PX * 2, woodD);
+    canvas.fillRect(x + PX, baseY - h / 2 + PX, PX * 4, h / 2 - PX * 2, woodD);
+    // counter
+    canvas.fillRect(x - PX * 8, counterTop, PX * 17, PX * 3, wood);
+    canvas.fillRect(x - PX * 8, counterTop, PX * 17, PX, shelf);
+    // posts + awning
+    int16_t top = baseY - h;
+    canvas.fillRect(x - PX * 7, top, PX * 2, counterTop - top, woodD);
+    canvas.fillRect(x + PX * 5, top, PX * 2, counterTop - top, woodD);
+    canvas.fillRect(x - PX * 9, top, PX * 19, PX * 4, awn);
+    for (int i = 0; i < 6; i++)
+        canvas.fillRect(x - PX * 9 + i * PX * 3, top, PX * 2, PX * 4, awn2);
+    canvas.fillRect(x - PX * 9, top + PX * 3, PX * 19, PX, woodD);
+
+    // Fruit ON counter (in front of posts, on the board)
+    if (g > 0.45f && t.phase != Phase::COLLAPSING) {
+        for (uint8_t i = 0; i < t.fruitCount; i++) {
+            int16_t fx = x + t.fruits[i].ox;
+            // sit on counter top, slightly above board
+            int16_t fy = counterTop - t.fruits[i].r * 2 - 1;
+            int bob = 0; // no bob — stays on shelf
+            (void)now; (void)bob;
+            drawProduce(canvas, fx, fy, t.fruits[i].r, t.fruits[i].produce);
+        }
+    }
+}
+
+static void drawTrash(M5Canvas& canvas, Slot& t, int16_t yOffset) {
+    const int16_t baseY = (int16_t)(106 + yOffset);
+    int16_t bx = screenX(t);
+    float g = t.growth;
+    if (g < 0.05f) return;
+    int16_t h = (int16_t)((26 + t.trunkH / 3) * g);
+    if (t.phase == Phase::COLLAPSING) {
+        float ct = 1.0f - t.growth;
+        h -= (int16_t)(ct * ct * 22);
+        if (h < 0) h = 0;
+    }
+    int16_t x = bx + stompShake;
+    uint16_t body = fl(0x4A69);
+    uint16_t bodyD = fl(0x3186);
+    uint16_t lid = fl(0x6B6D);
+    uint16_t rim = fl(0x9CF3);
+    // body
+    canvas.fillRect(x - PX * 5, baseY - h, PX * 10, h, body);
+    canvas.fillRect(x - PX * 4, baseY - h + PX, PX * 8, h - PX * 2, bodyD);
+    // vertical ribs
+    canvas.fillRect(x - PX * 2, baseY - h + PX, PX, h - PX * 2, body);
+    canvas.fillRect(x + PX, baseY - h + PX, PX, h - PX * 2, body);
+    // lid
+    canvas.fillRect(x - PX * 6, baseY - h - PX * 2, PX * 12, PX * 2, lid);
+    canvas.fillRect(x - PX * 6, baseY - h - PX * 2, PX * 12, PX, rim);
+    // handle
+    canvas.fillRect(x - PX, baseY - h - PX * 3, PX * 2, PX, rim);
+    // wheel dots
+    canvas.fillRect(x - PX * 4, baseY - PX, PX * 2, PX, 0x2104);
+    canvas.fillRect(x + PX * 2, baseY - PX, PX * 2, PX, 0x2104);
+}
+
+
 static void drawLamp(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     uint32_t now = millis();
     const int16_t baseY = (int16_t)(106 + yOffset);
@@ -1193,14 +1709,35 @@ static void drawLamp(M5Canvas& canvas, Slot& t, int16_t yOffset) {
 }
 
 // One drawer for FRUIT / DECOR / BERRY — seasonal trunk/leaves/produce
+
 static void drawTreeSlot(M5Canvas& canvas, Slot& t, int16_t yOffset) {
     if (t.phase == Phase::HIDDEN) return;
     const bool isDecor = (t.kind == Kind::DECOR);
     const bool isBerry = (t.kind == Kind::BERRY);
 
-    // Noir lamp / winter fir have their own silhouettes
-    if (!isBerry && t.style == SeasonTree::LAMP) {
+    // Specialty silhouettes
+    if (t.style == SeasonTree::LAMP) {
         drawLamp(canvas, t, yOffset);
+        return;
+    }
+    if (t.style == SeasonTree::STALL) {
+        drawStall(canvas, t, yOffset);
+        return;
+    }
+    if (t.style == SeasonTree::TRASH) {
+        drawTrash(canvas, t, yOffset);
+        return;
+    }
+    if (t.style == SeasonTree::PALM_FRUIT) {
+        drawPalm(canvas, t, yOffset, true);
+        return;
+    }
+    if (t.style == SeasonTree::PALM_DECOR) {
+        drawPalm(canvas, t, yOffset, false);
+        return;
+    }
+    if (t.style == SeasonTree::CACTUS) {
+        drawCactus(canvas, t, yOffset);
         return;
     }
     if (!isBerry && t.style == SeasonTree::FIR) {

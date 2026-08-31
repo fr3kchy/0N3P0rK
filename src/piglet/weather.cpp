@@ -481,6 +481,8 @@ const char* getSeasonName() {
         case Season::WINTER: return "WINTER";
         case Season::RETRO:  return "RETRO";
         case Season::NOIR:   return "NOIR";
+        case Season::CITY:   return "CITY";
+        case Season::DESERT: return "DESERT";
     }
     return "SUMMER";
 }
@@ -493,6 +495,8 @@ const char* getSeasonShort() {
         case Season::WINTER: return "WIN";
         case Season::RETRO:  return "RET";
         case Season::NOIR:   return "NOI";
+        case Season::CITY:   return "CIT";
+        case Season::DESERT: return "DES";
     }
     return "SUM";
 }
@@ -539,6 +543,16 @@ static void updateSeasonCycle(uint32_t now) {
                 forced = Season::SUMMER;
             else
                 forced = Season::NOIR;
+        } else if (mode == (uint8_t)SeasonMode::CITY) {
+            if (XP::isSeasonLocked((uint8_t)SeasonMode::CITY))
+                forced = Season::SUMMER;
+            else
+                forced = Season::CITY;
+        } else if (mode == (uint8_t)SeasonMode::DESERT) {
+            if (XP::isSeasonLocked((uint8_t)SeasonMode::DESERT))
+                forced = Season::SUMMER;
+            else
+                forced = Season::DESERT;
         }
         bool changed = (lastSeasonModeCfg != mode) || (activeSeason != forced);
         setActiveSeason(forced, now, changed && lastSeasonModeCfg != 255);
@@ -549,7 +563,8 @@ static void updateSeasonCycle(uint32_t now) {
     // AUTO — advance every 15 minutes (SPRING..WINTER only, never RETRO)
     if (lastSeasonModeCfg != mode) {
         // Just switched to AUTO: leave RETRO if stuck there
-        if (activeSeason == Season::RETRO || activeSeason == Season::NOIR)
+        if (activeSeason == Season::RETRO || activeSeason == Season::NOIR ||
+            activeSeason == Season::CITY || activeSeason == Season::DESERT)
             activeSeason = Season::SUMMER;
         lastSeasonModeCfg = mode;
         seasonStartedMs = now;
@@ -607,6 +622,11 @@ static void applyPhase(Phase p, uint32_t now) {
     if (seasonIsWinter() && p == Phase::STORM) {
         // keep STORM phase for density, but thunder disabled below
     }
+    // DESERT: no rain / snow / lightning — only clear or hazy cloudy
+    if (activeSeason == Season::DESERT) {
+        if (p == Phase::RAIN || p == Phase::STORM) p = Phase::CLEAR;
+        setRaining(false);
+    }
 
     weatherPhase = p;
     phaseStartMs = now;
@@ -626,13 +646,13 @@ static void applyPhase(Phase p, uint32_t now) {
             break;
         case Phase::RAIN:
             phaseDurationMs = (uint32_t)random(20000, 45000);
-            setRaining(true);
+            setRaining(activeSeason != Season::DESERT);
             thunderMinInterval = 999999;
             thunderMaxInterval = 999999;
             break;
         case Phase::STORM:
             phaseDurationMs = (uint32_t)random(15000, 30000);
-            setRaining(true);
+            setRaining(activeSeason != Season::DESERT);
             if (seasonIsSpring()) {
                 // Spring: real thunderstorms
                 thunderMinInterval = 8000;
@@ -665,6 +685,12 @@ static void applyPhase(Phase p, uint32_t now) {
 }
 
 static Phase pickNextPhase(Phase cur) {
+    // DESERT: never schedule rain/storm — sandstorm is seasonal_fx only
+    if (activeSeason == Season::DESERT) {
+        if (cur == Phase::CLEAR) return (random(0, 100) < 35) ? Phase::CLOUDY : Phase::CLEAR;
+        return (random(0, 100) < 50) ? Phase::CLEAR : Phase::CLOUDY;
+    }
+
     int roll = random(0, 100);
     int rainBias = 0;
     if (currentMood <= -40) rainBias = 20;
@@ -1028,10 +1054,12 @@ bool isThunderFlashing() {
 }
 
 bool isRaining() {
+    if (activeSeason == Season::DESERT) return false;
     return rainActive;
 }
 
 bool isSnowing() {
+    if (activeSeason == Season::DESERT) return false;
     return rainActive && seasonIsWinter();
 }
 

@@ -38,8 +38,9 @@ uint32_t PigpassMode::lastUpdateTime = 0;
 char PigpassMode::handshakePath[72] = {0};
 char PigpassMode::wordlistPath[72] = {0};
 std::vector<PigpassFileEntry> PigpassMode::files;
-uint8_t PigpassMode::selectedIndex = 0;
-uint8_t PigpassMode::scrollOffset = 0;
+PigpassHsTab PigpassMode::hsTab = PigpassHsTab::PCAP;
+uint16_t PigpassMode::selectedIndex = 0;
+uint16_t PigpassMode::scrollOffset = 0;
 bool PigpassMode::keyWasPressed = false;
 bool PigpassMode::uiDirty = true;
 bool PigpassMode::maskMode = false;
@@ -952,17 +953,23 @@ void PigpassMode::scanHandshakeFiles() {
         return;
     }
 
-    static const char* const hsExts[] = {".pcap", ".cap", ".22000"};
+    // Tab filters: PCAP = frame captures, HC22000 = hashcat lines.
+    static const char* const pcapExts[] = {".pcap", ".cap"};
+    static const char* const hcExts[] = {".22000", ".hc22000"};
+    const char* const* hsExts = (hsTab == PigpassHsTab::HC22000) ? hcExts : pcapExts;
+    const size_t nExt = (hsTab == PigpassHsTab::HC22000) ? 2 : 2;
+
     const char* hsDir = resolveHandshakeDir();
-    scanDirForExt(hsDir, hsExts, 3);
-    scanDirForExt(SDLayout::pigpassDir(), hsExts, 3);
-    scanDirForExt("/0N3P0rK/hs", hsExts, 3);
-    scanDirForExt("/0N3P0rK/pwncrack", hsExts, 3);
-    scanDirForExt("/0N3P0rK/wpa-sec", hsExts, 3);
+    scanDirForExt(hsDir, hsExts, nExt);
+    scanDirForExt(SDLayout::pigpassDir(), hsExts, nExt);
+    scanDirForExt("/0N3P0rK/hs", hsExts, nExt);
+    scanDirForExt("/0N3P0rK/pwncrack", hsExts, nExt);
+    scanDirForExt("/0N3P0rK/wpa-sec", hsExts, nExt);
 
     selectedIndex = 0;
     scrollOffset = 0;
-    Serial.printf("[PIGPASS] Handshake files found: %u in %s\n",
+    Serial.printf("[PIGPASS] Handshake tab=%s files=%u in %s\n",
+                  hsTab == PigpassHsTab::HC22000 ? "22000" : "PCAP",
                   (unsigned)files.size(), hsDir);
 }
 
@@ -1106,7 +1113,7 @@ void PigpassMode::scanWordlistFiles() {
     if (loadLastWordlist(last, sizeof(last))) {
         for (size_t i = 0; i < files.size(); i++) {
             if (strcmp(files[i].path, last) == 0) {
-                selectedIndex = (uint8_t)i;
+                selectedIndex = (uint16_t)i;
                 if (selectedIndex >= VISIBLE_ITEMS) {
                     scrollOffset = selectedIndex - VISIBLE_ITEMS + 1;
                 }
@@ -1136,6 +1143,8 @@ void PigpassMode::init() {
 
 void PigpassMode::start() {
     Serial.println("[PIGPASS] Starting PigPass mode");
+    // Keep last hsTab if user re-enters; only ensure valid.
+    if ((uint8_t)hsTab > (uint8_t)PigpassHsTab::HC22000) hsTab = PigpassHsTab::PCAP;
     // Visible PigPass: kill farm anims so PBKDF2 gets the core. Minimize → resume.
     Avatar::suspendScene();
 
@@ -1724,34 +1733,61 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
     }
 
     canvas.setTextWrap(false);
-    canvas.setTextColor(UiStyle::TITLE);
-    canvas.drawString(title ? title : "SELECT FILE", 4, 2);
 
-    char countBuf[28];
-    snprintf(countBuf, sizeof(countBuf), "%u file(s)", (unsigned)files.size());
-    canvas.setTextColor(UiStyle::DIM);
-    canvas.drawString(countBuf, 4, 14);
+    const bool hsBrowser = (state == PigpassState::SELECT_HANDSHAKE);
+    int listTop = 28;
+
+    if (hsBrowser) {
+        // LOOT-style dual tabs: PCAP | 22000
+        const bool tabPcap = (hsTab == PigpassHsTab::PCAP);
+        canvas.fillRect(4, 2, 112, 13, tabPcap ? UiStyle::PINK : UiStyle::PANEL);
+        canvas.fillRect(124, 2, 112, 13, !tabPcap ? UiStyle::PINK : UiStyle::PANEL);
+        canvas.setTextDatum(top_center);
+        canvas.setTextColor(tabPcap ? UiStyle::BG : UiStyle::TEXT);
+        canvas.drawString("PCAP", 60, 5);
+        canvas.setTextColor(!tabPcap ? UiStyle::BG : UiStyle::TEXT);
+        canvas.drawString("22000", 180, 5);
+        canvas.setTextDatum(top_left);
+
+        char countBuf[32];
+        snprintf(countBuf, sizeof(countBuf), "%u file(s)", (unsigned)files.size());
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString(countBuf, 4, 17);
+        listTop = 30;
+    } else {
+        canvas.setTextColor(UiStyle::TITLE);
+        canvas.drawString(title ? title : "SELECT FILE", 4, 2);
+
+        char countBuf[28];
+        snprintf(countBuf, sizeof(countBuf), "%u file(s)", (unsigned)files.size());
+        canvas.setTextColor(UiStyle::DIM);
+        canvas.drawString(countBuf, 4, 14);
+        listTop = 28;
+    }
 
     if (files.empty()) {
         canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString("NO FILES FOUND", 4, 40);
+        canvas.drawString("NO FILES FOUND", 4, listTop + 12);
         canvas.setTextColor(UiStyle::DIM);
-        if (state == PigpassState::SELECT_HANDSHAKE) {
-            canvas.drawString("NEED .PCAP IN HANDSHAKES", 4, 56);
+        if (hsBrowser) {
+            if (hsTab == PigpassHsTab::PCAP)
+                canvas.drawString("NEED .PCAP/.CAP IN HS DIR", 4, listTop + 28);
+            else
+                canvas.drawString("NEED .22000 IN HS DIR", 4, listTop + 28);
         } else {
-            canvas.drawString("PUT .TXT:", 4, 56);
-            canvas.drawString("/0N3P0rK/Passworld", 4, 68);
+            canvas.drawString("PUT .TXT:", 4, listTop + 28);
+            canvas.drawString("/0N3P0rK/Passworld", 4, listTop + 40);
         }
         canvas.setTextColor(UiStyle::GOLD);
-        canvas.drawString("` =EXIT", 4, MAIN_H - 10);
+        canvas.drawString(hsBrowser ? ",/ tab  ` exit" : "` =EXIT", 4, MAIN_H - 10);
         return;
     }
 
     const int lineHeight = 13;
     const int nameMaxPx = DISPLAY_W - 18;
-    int y = 28;
+    int y = listTop;
 
-    for (uint8_t i = scrollOffset;
+    for (uint16_t i = scrollOffset;
          i < files.size() && i < scrollOffset + VISIBLE_ITEMS;
          i++) {
         bool sel = (i == selectedIndex);
@@ -1779,15 +1815,18 @@ void PigpassMode::drawFileBrowser(M5Canvas& canvas, const char* title) {
 
     if (scrollOffset > 0) {
         canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("^", DISPLAY_W - 10, 28);
+        canvas.drawString("^", DISPLAY_W - 10, listTop);
     }
     if (scrollOffset + VISIBLE_ITEMS < files.size()) {
         canvas.setTextColor(UiStyle::DIM);
-        canvas.drawString("v", DISPLAY_W - 10, 28 + (VISIBLE_ITEMS - 1) * lineHeight);
+        canvas.drawString("v", DISPLAY_W - 10, listTop + (VISIBLE_ITEMS - 1) * lineHeight);
     }
 
     canvas.setTextColor(UiStyle::GOLD);
-    canvas.drawString(";/. move  ENT sel  ` back", 4, MAIN_H - 10);
+    if (state == PigpassState::SELECT_HANDSHAKE)
+        canvas.drawString(";/. move  ,/ tab  ENT  `", 4, MAIN_H - 10);
+    else
+        canvas.drawString(";/. move  ENT sel  ` back", 4, MAIN_H - 10);
 }
 
 void PigpassMode::drawMaskSetup(M5Canvas& canvas) {
@@ -2016,6 +2055,18 @@ void PigpassMode::handleInput() {
             } else {
                 stop();
             }
+            return;
+        }
+
+        // Handshake tabs: , / like LOOT (WPASEC / PWNCRACK)
+        if (state == PigpassState::SELECT_HANDSHAKE &&
+            (M5Cardputer.Keyboard.isKeyPressed(',') ||
+             M5Cardputer.Keyboard.isKeyPressed('/'))) {
+            hsTab = (hsTab == PigpassHsTab::PCAP)
+                        ? PigpassHsTab::HC22000
+                        : PigpassHsTab::PCAP;
+            scanHandshakeFiles();
+            uiDirty = true;
             return;
         }
 

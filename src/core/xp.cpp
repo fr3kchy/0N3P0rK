@@ -1,6 +1,7 @@
 #include "xp.h"
 #include "config.h"
 #include "../ui/display.h"
+#include "../piglet/credits.h"
 #include "../piglet/avatar.h"
 #include "../piglet/mood.h"
 #include "../audio/sfx.h"
@@ -18,7 +19,11 @@ static bool s_dirty = false;
 static uint32_t s_lastPersist = 0;
 static bool s_allOnDisk = false;
 
-// Growing ladder: 100, 250, 500, 1000, 2500, 5000, 7500, then +2500 each level.
+// Early soft ramp (lv 1..7). From lv 8 onward each level costs a flat amount:
+//   same XP as old climb 1→8 (100+250+500+1000+2500+5000+7500 = 16850) + 500.
+// No more +2500 escalation after 10 — late levels stay playable.
+static constexpr uint32_t XP_FLAT_LATE = 16850u + 500u;  // 17350
+
 static uint32_t xpNeed(uint8_t fromLevel) {
     if (fromLevel < 1) fromLevel = 1;
     switch (fromLevel) {
@@ -28,9 +33,9 @@ static uint32_t xpNeed(uint8_t fromLevel) {
         case 4: return 1000;
         case 5: return 2500;
         case 6: return 5000;
-        case 7: return 7500;
+        case 7: return 7500;           // last step of the 1→8 climb
         default:
-            return 7500u + 2500u * (uint32_t)(fromLevel - 7);
+            return XP_FLAT_LATE;       // every further level ≈ 1→8 + 500
     }
 }
 
@@ -92,6 +97,8 @@ bool XP::blushUnlocked() { return s_all || getLevel() >= 5; }
 bool XP::goldAppleUnlocked() { return s_all || getLevel() >= 10; }
 bool XP::retroUnlocked() { return s_all || getLevel() >= 15; }
 bool XP::noirUnlocked() { return s_all || getLevel() >= 18; }
+bool XP::cityUnlocked() { return s_all || getLevel() >= 25; }
+bool XP::desertUnlocked() { return s_all || getLevel() >= 30; }
 bool XP::allUnlocked() { return s_all; }
 
 void XP::unlockAll() {
@@ -113,6 +120,7 @@ bool XP::isSkinLocked(uint8_t skin) {
     if (skin == (uint8_t)PigSkin::CANDY)  return getLevel() < 12;
     if (skin == (uint8_t)PigSkin::RETRO)  return getLevel() < 15;
     if (skin == (uint8_t)PigSkin::GOLD)   return getLevel() < 20;
+    if (skin == (uint8_t)PigSkin::DIRTY)  return getLevel() < 25;
     return false;
 }
 
@@ -120,6 +128,8 @@ bool XP::isSeasonLocked(uint8_t seasonMode) {
     if (s_all) return false;
     if (seasonMode == (uint8_t)SeasonMode::RETRO) return getLevel() < 15;
     if (seasonMode == (uint8_t)SeasonMode::NOIR)  return getLevel() < 18;
+    if (seasonMode == (uint8_t)SeasonMode::CITY)  return getLevel() < 25;
+    if (seasonMode == (uint8_t)SeasonMode::DESERT) return getLevel() < 30;
     return false;
 }
 
@@ -146,6 +156,20 @@ static void celebrate(uint8_t newLvl) {
         Display::notify(NoticeKind::REWARD, "SECRET NOIR", 3200, NoticeChannel::TOP_BAR);
     if (newLvl == 20)
         Display::notify(NoticeKind::REWARD, "SECRET GOLD", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 25)
+        Display::notify(NoticeKind::REWARD, "SECRET CITY", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 30)
+        Display::notify(NoticeKind::REWARD, "SECRET DESERT", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 35)
+        Display::notify(NoticeKind::REWARD, "SECRET PROPS", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 40)
+        Display::notify(NoticeKind::REWARD, "SECRET FRIEND", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 45)
+        Display::notify(NoticeKind::REWARD, "SECRET TABLE", 3200, NoticeChannel::TOP_BAR);
+    if (newLvl == 50) {
+        Display::notify(NoticeKind::REWARD, "MAX LEVEL", 3200, NoticeChannel::TOP_BAR);
+        Credits::start();
+    }
 }
 
 void XP::begin() {
@@ -169,6 +193,8 @@ void XP::begin() {
     if (sk == (uint8_t)PigSkin::RETRO || sm == (uint8_t)SeasonMode::RETRO) bump(xpToReach(15));
     if (sm == (uint8_t)SeasonMode::NOIR) bump(xpToReach(18));
     if (sk == (uint8_t)PigSkin::GOLD)   bump(xpToReach(20));
+    if (sk == (uint8_t)PigSkin::DIRTY || sm == (uint8_t)SeasonMode::CITY) bump(xpToReach(25));
+    if (sm == (uint8_t)SeasonMode::DESERT) bump(xpToReach(30));
     s_ready = true;
     if (bumped) {
         s_dirty = true;

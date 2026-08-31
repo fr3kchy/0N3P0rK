@@ -1,105 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>0N3P0rK — Firmware &amp; Tools</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="0N3P0rK for M5Cardputer — web installer, docs, gallery.">
+  <title>0N3P0rK</title>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
     :root {
-      --bg: #0b0d12; --card: #12151c; --border: #1e2430; --text: #e8ecf4;
-      --muted: #8b93a7; --accent: #3dffa8; --danger: #ff6b7a; --radius: 14px;
+      --bg: #0b0e14; --card: #12171f; --text: #e8ecf4; --muted: #8b93a7;
+      --accent: #7cfc9a; --border: #1e2633; --pink: #ff7eb9;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
     body {
-      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-      background:
-        radial-gradient(1200px 600px at 10% -10%, #13201a 0%, transparent 55%),
-        radial-gradient(900px 500px at 100% 0%, #12182a 0%, transparent 50%),
-        var(--bg);
-      color: var(--text); min-height: 100vh; line-height: 1.5;
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.5;
     }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .wrap { max-width: 920px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
-    header.hero { text-align: center; padding: 2rem 0 1.25rem; }
-    .logo { display: inline-flex; font-weight: 800; font-size: 1.75rem; letter-spacing: -0.02em; }
-    .logo span { color: var(--accent); }
-    .tagline { color: var(--muted); margin-top: 0.45rem; font-size: 0.98rem; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    header { text-align: center; margin-bottom: 0.5rem; }
+    header h1 { margin: 0; font-size: 1.75rem; letter-spacing: 0.04em; }
+    header p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
     nav.tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin: 1.25rem 0 1.5rem; }
     nav.tabs button {
-      background: transparent; border: 1px solid var(--border); color: var(--muted);
-      padding: 0.55rem 1rem; border-radius: 999px; cursor: pointer; font-size: 0.88rem; font-weight: 600;
+      background: var(--card); border: 1px solid var(--border); color: var(--muted);
+      border-radius: 999px; padding: 0.45rem 0.95rem; cursor: pointer; font-size: 0.9rem;
     }
     nav.tabs button:hover { border-color: #3a4458; color: var(--text); }
     nav.tabs button.active {
-      background: linear-gradient(135deg, #1a2e26, #162033); border-color: #2f4a40; color: var(--accent);
+      border-color: var(--accent); color: var(--accent); background: #0f1a14;
     }
     section.panel { display: none; }
     section.panel.active { display: block; }
     .card {
-      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 1.35rem 1.4rem; margin-bottom: 1rem;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
     }
-    .card h2 { font-size: 1.15rem; margin-bottom: 0.75rem; }
+    .card h2 { margin: 0 0 0.65rem; font-size: 1.1rem; }
     .card p, .card li { color: var(--muted); font-size: 0.95rem; }
-    .card ul { padding-left: 1.15rem; margin: 0.5rem 0; }
-    .card li { margin: 0.35rem 0; }
-    .card b, .card strong { color: var(--text); }
-    label.field {
-      display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--muted); margin-bottom: 0.4rem;
+    .card ul { padding-left: 1.2rem; margin: 0.4rem 0 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+    .btn {
+      display: inline-block; text-decoration: none; border-radius: 8px;
+      padding: 0.5rem 0.9rem; border: 1px solid var(--border); color: var(--text);
+      background: #1a2030; font-size: 0.9rem;
     }
+    .btn.primary { border-color: var(--accent); color: #0b0e14; background: var(--accent); font-weight: 600; }
+    .btn.donate { border-color: var(--pink); color: var(--pink); }
+    label.field { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.35rem; }
     select {
-      width: 100%; background: #0c0f15; color: var(--text); border: 1px solid var(--border);
-      border-radius: 10px; padding: 0.75rem 0.95rem; font-size: 0.95rem; margin-bottom: 0.85rem;
-      appearance: none; cursor: pointer;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b93a7'%3E%3Cpath d='M6 9L1 4h10z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 0.95rem center;
+      width: 100%; max-width: 100%; padding: 0.55rem 0.65rem; border-radius: 8px;
+      border: 1px solid var(--border); background: #0b0e14; color: var(--text); margin-bottom: 0.75rem;
     }
-    select:focus { outline: none; border-color: var(--accent); }
-    .status { font-size: 0.88rem; color: var(--muted); min-height: 1.3em; margin-bottom: 0.9rem; }
+    .status { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.75rem; min-height: 1.2em; }
     .status.ok { color: var(--accent); }
-    .status.err { color: var(--danger); }
-    esp-web-install-button {
-      --esp-tools-button-color: var(--accent); --esp-tools-button-text-color: #06140e;
-      --esp-tools-button-border-radius: 10px; width: 100%; display: block; margin-bottom: 1rem;
+    .status.err { color: #ff8a8a; }
+    esp-web-install-button { display: block; margin-top: 0.5rem; }
+    esp-web-install-button button {
+      background: var(--accent); color: #0b0e14; border: none; border-radius: 8px;
+      padding: 0.65rem 1.1rem; font-weight: 600; cursor: pointer; font-size: 0.95rem;
     }
-    .hint {
-      font-size: 0.85rem; color: var(--muted); background: #0c0f15; border-radius: 10px;
-      padding: 0.9rem 1rem; line-height: 1.55;
-    }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.85rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.65rem; }
     .shot {
-      background: #0c0f15; border: 1px solid var(--border); border-radius: 12px; aspect-ratio: 16/10;
-      display: flex; align-items: center; justify-content: center; color: var(--muted);
-      font-size: 0.85rem; text-align: center; padding: 0.75rem; overflow: hidden;
+      aspect-ratio: 16/10; background: #0b0e14; border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 0.8rem; text-align: center; padding: 0.4rem;
     }
     .shot img { width: 100%; height: 100%; object-fit: cover; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.75rem; }
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center; padding: 0.55rem 1rem;
-      border-radius: 999px; border: 1px solid var(--border); color: var(--text); font-weight: 600;
-      font-size: 0.88rem; background: #0c0f15; cursor: pointer; text-decoration: none;
-    }
-    .btn:hover { border-color: #3a4458; text-decoration: none; }
-    .btn.primary {
-      background: linear-gradient(135deg, #1d3a30, #1a2740); border-color: #2f4a40; color: var(--accent);
-    }
-    .btn.donate {
-      background: linear-gradient(135deg, #3a2418, #2a1a28); border-color: #5a3a30; color: #ffb086;
-    }
-    footer.site { margin-top: 2.25rem; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    footer.site { text-align: center; margin-top: 2rem; color: var(--muted); font-size: 0.85rem; }
     footer.site .donate-wrap { margin: 1rem 0 0.75rem; }
-    footer.site .legal { color: #5c6478; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <header class="hero">
-      <div class="logo">0N3<span>P0rK</span></div>
-      <p class="tagline">Tamagotchi pig + lab radio tools for M5Cardputer</p>
+    <header>
+      <h1>0N3P0rK</h1>
+      <p>v1.2.8 · M5Cardputer companion + radio lab</p>
     </header>
 
     <nav class="tabs" id="tabs" role="tablist">
@@ -119,7 +94,6 @@
         <div class="actions">
           <a class="btn primary" href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">GitHub</a>
           <a class="btn" href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank" rel="noopener">Releases</a>
-          <!-- #readme on repo root follows the DEFAULT branch (not hard-coded main) -->
           <a class="btn" href="https://github.com/lexilexiko/0N3P0rK#readme" target="_blank" rel="noopener">README</a>
         </div>
       </div>
@@ -136,34 +110,21 @@
     <section class="panel" id="tab-install">
       <div class="card">
         <h2>Web Installer</h2>
-        <p style="margin-bottom:0.9rem">
-          Lists every <b>.bin</b> in <code>firmware/</code> by extension.
-          Labels: <b>[Direct / Full]</b> for USB / web install, <b>[Launcher]</b> for M5Launcher.
-        </p>
-        <label class="field" for="fileSelect">Firmware image (.bin)</label>
+        <p style="margin-bottom:0.9rem">Pick a firmware image and flash over USB.</p>
+        <label class="field" for="fileSelect">Firmware image</label>
         <select id="fileSelect"><option value="">Scanning…</option></select>
-        <div class="status" id="status">Looking for .bin files…</div>
+        <div class="status" id="status">Looking for firmware…</div>
         <esp-web-install-button id="installBtn">
           <button slot="activate">Install Firmware</button>
         </esp-web-install-button>
-        <div class="hint">
-          <b>Steps</b><br>
-          1. Chrome / Edge / Opera · 2. USB-C · 3. Pick a .bin → Install → COM port (VID 303A)<br>
-          4. Use SD card for loot (internal flash is not used for user files)<br><br>
-          Drop any <code>*.bin</code> into <code>docs/firmware/</code> and refresh.
-          Discovery: folder listing → GitHub API (default branch) → optional <code>files.json</code>.
-        </div>
       </div>
     </section>
 
     <section class="panel" id="tab-gallery">
       <div class="card">
         <h2>Gallery</h2>
-        <p style="margin-bottom:0.9rem">Screenshots from <code>docs/gallery/</code> (png / jpg).</p>
         <div class="grid" id="galleryGrid">
-          <div class="shot">Farm scene<br><small>coming soon</small></div>
-          <div class="shot">Spectrum<br><small>coming soon</small></div>
-          <div class="shot">Capture<br><small>coming soon</small></div>
+          <div class="shot"><small>Loading…</small></div>
         </div>
       </div>
     </section>
@@ -182,10 +143,7 @@
       <div class="donate-wrap">
         <a class="btn donate" href="#donate" data-goto="donate">♥ Donate</a>
       </div>
-      <div class="legal">
-        MIT License · Lab / educational use only<br>
-        <a href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">github.com/lexilexiko/0N3P0rK</a>
-      </div>
+      <div>0N3P0rK · not affiliated with M5Stack</div>
     </footer>
   </div>
 
@@ -199,26 +157,31 @@
       const btn = e.target.closest('button[data-tab]');
       if (btn) showTab(btn.dataset.tab);
     });
-    document.querySelectorAll('[data-goto]').forEach(el => {
-      el.addEventListener('click', e => { e.preventDefault(); showTab(el.getAttribute('data-goto')); });
+    document.querySelectorAll('[data-goto]').forEach(a => {
+      a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); });
     });
     if (location.hash === '#donate') showTab('donate');
 
     const select = document.getElementById('fileSelect');
     const status = document.getElementById('status');
     const installBtn = document.getElementById('installBtn');
+    const GH_FW = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/firmware';
+    const GH_GAL = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/gallery';
 
     function isBinName(name) {
       return typeof name === 'string' && /\.bin$/i.test(name) && !name.includes('..');
     }
+    function isImgName(name) {
+      return typeof name === 'string' && /\.(png|jpe?g|gif|webp)$/i.test(name) && !name.includes('..');
+    }
     function baseName(path) {
       return decodeURIComponent(String(path).split('?')[0].split('#')[0].split('/').pop());
     }
-    function uniqueBins(list) {
+    function uniqueNames(list, pred) {
       const out = [], seen = new Set();
       for (const raw of list) {
         const name = baseName(raw);
-        if (!isBinName(name)) continue;
+        if (!pred(name)) continue;
         const key = name.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -239,68 +202,56 @@
       return '[Direct] ' + name;
     }
 
-    async function headOk(url) {
-      try { return (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok; }
-      catch { return false; }
-    }
-
-    async function fromDirectoryListing() {
+    async function listFromDir(url, pred) {
       try {
-        const r = await fetch('./firmware/', { cache: 'no-store' });
+        const r = await fetch(url, { cache: 'no-store' });
         if (!r.ok) return [];
         const text = await r.text();
         const matches = text.match(/href\s*=\s*["']([^"']+)["']/gi) || [];
-        return uniqueBins(matches.map(m => m.replace(/^href\s*=\s*["']/i, '').replace(/["']$/, '')));
+        return uniqueNames(matches.map(m => m.replace(/^href\s*=\s*["']/i, '').replace(/["']$/, '')), pred);
       } catch { return []; }
     }
-
-    /** Public repo · default branch contents (no fixed branch name). */
-    async function fromGitHubApi() {
+    async function listFromGitHub(apiUrl, pred) {
       try {
-        const r = await fetch(
-          'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/firmware',
-          { headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store' }
-        );
+        const r = await fetch(apiUrl, {
+          headers: { 'Accept': 'application/vnd.github+json' }, cache: 'no-store'
+        });
         if (!r.ok) return [];
         const data = await r.json();
         if (!Array.isArray(data)) return [];
-        return uniqueBins(data.filter(x => x && x.type === 'file').map(x => x.name));
+        return uniqueNames(data.filter(x => x && x.type === 'file').map(x => x.name), pred);
       } catch { return []; }
     }
-
-    async function fromFilesJson() {
+    async function listFromJson(url, pred) {
       try {
-        const r = await fetch('./firmware/files.json', { cache: 'no-store' });
+        const r = await fetch(url, { cache: 'no-store' });
         if (!r.ok) return [];
         const data = await r.json();
         const arr = Array.isArray(data) ? data : (Array.isArray(data.files) ? data.files : []);
-        return uniqueBins(arr);
+        return uniqueNames(arr, pred);
       } catch { return []; }
     }
 
-    async function fromProbePatterns() {
-      const patterns = ['0N3P0rK.bin', 'firmware.bin', 'latest.bin'];
-      const found = [];
-      for (const name of patterns) {
-        if (await headOk('./firmware/' + name)) found.push(name);
-      }
-      return uniqueBins(found);
+    async function findBins() {
+      let files = await listFromDir('./firmware/', isBinName);
+      if (files.length) return files;
+      files = await listFromGitHub(GH_FW, isBinName);
+      if (files.length) return files;
+      return listFromJson('./firmware/files.json', isBinName);
     }
 
-    async function findBins() {
-      let files = await fromDirectoryListing();
+    async function findImages() {
+      let files = await listFromDir('./gallery/', isImgName);
       if (files.length) return files;
-      files = await fromGitHubApi();
+      files = await listFromGitHub(GH_GAL, isImgName);
       if (files.length) return files;
-      files = await fromFilesJson();
-      if (files.length) return files;
-      return fromProbePatterns();
+      return listFromJson('./gallery/files.json', isImgName);
     }
 
     function setManifest(filename) {
       if (!filename) {
         installBtn.removeAttribute('manifest');
-        status.textContent = 'Select a .bin firmware image';
+        status.textContent = 'Select a firmware image';
         status.className = 'status';
         return;
       }
@@ -312,7 +263,7 @@
       };
       const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
       installBtn.setAttribute('manifest', URL.createObjectURL(blob));
-      status.textContent = 'Ready: ' + filename + ' · ' + kindOf(filename);
+      status.textContent = 'Ready: ' + filename;
       status.className = 'status ok';
     }
 
@@ -320,8 +271,8 @@
       const files = await findBins();
       select.innerHTML = '';
       if (!files.length) {
-        select.innerHTML = '<option value="">No .bin files found</option>';
-        status.textContent = 'Put .bin files in docs/firmware/ (Direct/Full or Launcher names)';
+        select.innerHTML = '<option value="">No firmware found</option>';
+        status.textContent = 'No firmware images available';
         status.className = 'status err';
         return;
       }
@@ -342,25 +293,27 @@
 
     async function initGallery() {
       const grid = document.getElementById('galleryGrid');
-      try {
-        const r = await fetch('./gallery/files.json', { cache: 'no-store' });
-        if (!r.ok) return;
-        const data = await r.json();
-        const arr = Array.isArray(data) ? data : (Array.isArray(data.files) ? data.files : []);
-        const imgs = arr.filter(n => /\.(png|jpe?g|gif|webp)$/i.test(String(n)));
-        if (!imgs.length) return;
-        grid.innerHTML = '';
-        imgs.forEach(name => {
-          const div = document.createElement('div');
-          div.className = 'shot';
-          const img = document.createElement('img');
-          img.src = './gallery/' + baseName(name);
-          img.alt = baseName(name);
-          img.loading = 'lazy';
-          div.appendChild(img);
-          grid.appendChild(div);
-        });
-      } catch (_) {}
+      const imgs = await findImages();
+      grid.innerHTML = '';
+      if (!imgs.length) {
+        const d = document.createElement('div');
+        d.className = 'shot';
+        d.innerHTML = '<small>No photos yet</small>';
+        grid.appendChild(d);
+        return;
+      }
+      imgs.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      imgs.forEach(name => {
+        const div = document.createElement('div');
+        div.className = 'shot';
+        const img = document.createElement('img');
+        img.src = './gallery/' + name;
+        img.alt = name;
+        img.loading = 'lazy';
+        img.onerror = () => { div.innerHTML = '<small>' + name + '</small>'; };
+        div.appendChild(img);
+        grid.appendChild(div);
+      });
     }
 
     initInstaller();

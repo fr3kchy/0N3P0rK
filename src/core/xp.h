@@ -28,6 +28,8 @@ public:
     static bool goldAppleUnlocked();
     static bool retroUnlocked();
     static bool noirUnlocked();
+    static bool cityUnlocked();
+    static bool desertUnlocked();
     static bool allUnlocked();
     static void unlockAll();
     static bool isSkinLocked(uint8_t skin);

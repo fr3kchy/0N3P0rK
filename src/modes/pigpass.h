@@ -16,6 +16,12 @@ enum class PigpassState : uint8_t {
     DONE = 6
 };
 
+// Handshake browser tabs (same idea as LOOT WPASEC / PWNCRACK).
+enum class PigpassHsTab : uint8_t {
+    PCAP = 0,   // .pcap / .cap
+    HC22000 = 1 // .22000 / .hc22000
+};
+
 struct PigpassFileEntry {
     char name[40];
     char path[72];
@@ -68,13 +74,15 @@ private:
 
     // File browser state
     static std::vector<PigpassFileEntry> files;
-    static uint8_t selectedIndex;
-    static uint8_t scrollOffset;
+    static PigpassHsTab hsTab;   // only used on SELECT_HANDSHAKE
+    static uint16_t selectedIndex;
+    static uint16_t scrollOffset;
     static bool keyWasPressed;
     static bool uiDirty;
 
+    // Screen shows 5 rows; scroll for the rest. List capacity matches Cap HS limit.
     static constexpr uint8_t VISIBLE_ITEMS = 5;
-    static constexpr size_t MAX_FILES = 48;
+    static constexpr size_t MAX_FILES = 200;
 
     // Mask / charset generator (on-the-fly, no SD dictionary file)
     static bool maskMode;

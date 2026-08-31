@@ -52,6 +52,9 @@ bool Config::init() {
     p.seasonMode = s_prefs.getUChar("season", p.seasonMode);
     p.animTest = s_prefs.getBool("anim", p.animTest);
     p.wolfEnabled = s_prefs.getBool("wolf", p.wolfEnabled);
+    p.propsEnabled = s_prefs.getBool("props", p.propsEnabled);
+    p.friendEnabled = s_prefs.getBool("friend", p.friendEnabled);
+    p.cardsEnabled = s_prefs.getBool("cards", p.cardsEnabled);
     p.scrollSpeed = s_prefs.getUChar("scroll", p.scrollSpeed);
     p.talkIntervalSec = s_prefs.getUChar("talkint", p.talkIntervalSec);
     p.fruitTreesAmbient = s_prefs.getBool("fruit", p.fruitTreesAmbient);
@@ -164,6 +167,9 @@ bool Config::save() {
     s_prefs.putUChar("season", p.seasonMode);
     s_prefs.putBool("anim", p.animTest);
     s_prefs.putBool("wolf", p.wolfEnabled);
+    s_prefs.putBool("props", p.propsEnabled);
+    s_prefs.putBool("friend", p.friendEnabled);
+    s_prefs.putBool("cards", p.cardsEnabled);
     s_prefs.putUChar("scroll", p.scrollSpeed);
     s_prefs.putUChar("talkint", p.talkIntervalSec);
     s_prefs.putBool("fruit", p.fruitTreesAmbient);
