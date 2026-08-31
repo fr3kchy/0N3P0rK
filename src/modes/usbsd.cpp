@@ -147,7 +147,7 @@ void start() {
         return;
     }
 
-    s_msc.vendorID("0N3P0rK");
+    s_msc.vendorID("fR3k");
     s_msc.productID("SD CARD");
     s_msc.productRevision("1.0");
     s_msc.onRead(onRead);

@@ -54,9 +54,13 @@ static const char* const H_LOOT[] = {
     "WPASEC + PWNCRACK. ONE BAG.",
     ",/ SWITCH TAB. S SYNC."
 };
-static const char* const H_PIG[] = {
-    "HER FACE. HER WORLD.",
-    "SKIN SEASON SKY LAYERS LIFE."
+static const char* const H_DEMON[] = {
+    "YOUR DEMON. YOUR WORLD.",
+    "PALETTE SEASON SKY LAYERS LIFE."
+};
+static const char* const H_GPS[] = {
+    "GNSS FIX, UTC, COURSE AND CSV.",
+    "GPIO15 RX / GPIO13 TX."
 };
 static const char* const H_SET[] = {
     "SYSTEM STATUS RADIO.",
@@ -144,13 +148,25 @@ static const char* const H_TWEAK[] = {
     ",/ CYCLE  ENT NAME."
 };
 
+#if FR3K_SAFE_BUILD
+static const RootItem ROOT[] = {
+    {"^v", "DEMON",   H_DEMON,   2, RootType::DIRECT, GroupId::NONE,  7},
+    {"@ ", "GPS",     H_GPS,     2, RootType::DIRECT, GroupId::NONE, 21},
+    {"::", "STATUS",  H_STAT,    2, RootType::DIRECT, GroupId::NONE, 19},
+    {"[]", "SYSTEM",  H_SYS,     2, RootType::DIRECT, GroupId::NONE, 14},
+    {"[:", "FILES",   H_FILEMGR, 2, RootType::DIRECT, GroupId::NONE, 20},
+    {"))", "CONNECT", H_CONN,    2, RootType::DIRECT, GroupId::NONE,  6}
+};
+static const uint8_t ROOT_COUNT = 6;
+#else
 static const RootItem ROOT[] = {
     {"/>", "ATTACK", H_ATTACK, 2, RootType::GROUP,  GroupId::ATTACK, 0},
     {"[$", "LOOT",   H_LOOT,   2, RootType::DIRECT, GroupId::NONE,   4},
-    {"^.", "PIG",    H_PIG,    2, RootType::DIRECT, GroupId::NONE,   7},
+    {"^v", "DEMON",  H_DEMON,  2, RootType::DIRECT, GroupId::NONE,   7},
     {"::", "SET",    H_SET,    2, RootType::GROUP,  GroupId::SET,    0}
 };
 static const uint8_t ROOT_COUNT = 4;
+#endif
 
 static const Item G_ATTACK[] = {
     {"/>", "LIGHT",   1,  H_LIGHT, 2},
@@ -210,6 +226,13 @@ static const char* groupName(GroupId g) {
 }
 
 static void doAction(uint8_t id) {
+#if FR3K_SAFE_BUILD
+    if (id == 1 || id == 2 || id == 9 || id == 10 || id == 11 ||
+        id == 12 || id == 13 || id == 15 || id == 16 || id == 18) {
+        Display::showToast("DISABLED: SAFE BUILD", 1500);
+        return;
+    }
+#endif
     switch (id) {
         case 1:
             if (Cap::isRunning() && Cap::runMode() == Cap::RunMode::Light) {
@@ -294,6 +317,9 @@ static void doAction(uint8_t id) {
         case 10:
             if (Cap::isRunning()) Cap::stop();
             App::setMode(AppMode::PIGPASS);
+            break;
+        case 21:
+            App::setMode(AppMode::GPS);
             break;
         case 8: {
             PersonalityConfig& p = Config::personality();
@@ -394,6 +420,9 @@ void handleKey(char c, bool enter, bool del, bool fn) {
 }
 
 bool tryHotkey() {
+#if FR3K_SAFE_BUILD
+    return false;
+#else
     static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4, 11, 20 };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
@@ -408,6 +437,7 @@ bool tryHotkey() {
         }
     }
     return false;
+#endif
 }
 
 void update() {
@@ -490,7 +520,7 @@ static void drawRoot(M5Canvas& canvas) {
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);
     canvas.setTextColor(UI_TITLE);
-    canvas.drawString("0N3P0rK", DISPLAY_W / 2, 2);
+    canvas.drawString("fR3k", DISPLAY_W / 2, 2);
     canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
 
     canvas.setTextDatum(top_left);

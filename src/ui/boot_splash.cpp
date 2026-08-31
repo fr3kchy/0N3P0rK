@@ -20,16 +20,16 @@ static void restoreGfx() {
     M5.Display.setTextColor(UiStyle::TEXT);
 }
 
-static void drawTalk(M5Canvas& canvas, int pigX, const char* ph) {
+static void drawTalk(M5Canvas& canvas, int demonX, const char* ph) {
     if (!ph || !ph[0]) return;
     int chars = (int)strlen(ph);
     int bubbleW = chars * 6 + 12;
     if (bubbleW < 44) bubbleW = 44;
     if (bubbleW > 168) bubbleW = 168;
     int bubbleH = 16;
-    int bubbleX = pigX + 20;
+    int bubbleX = demonX + 20;
     int bubbleY = 8;
-    if (bubbleX + bubbleW > 236) bubbleX = pigX - bubbleW - 4;
+    if (bubbleX + bubbleW > 236) bubbleX = demonX - bubbleW - 4;
     if (bubbleX < 2) bubbleX = 2;
 
     const uint16_t fg = 0xEF5D;
@@ -46,13 +46,13 @@ static void drawTalk(M5Canvas& canvas, int pigX, const char* ph) {
 }
 
 void runBootSplash() {
-    SFX::play(SFX::OINK_HAPPY);
+    SFX::play(SFX::MODE_ENTER);
     Avatar::setFacingRight();
     Avatar::setGrassMoving(true, false, true);
 
     M5Canvas& farm = Display::getMain();
-    const int pigFrom = -36;
-    const int pigTo = 88;
+    const int demonFrom = -36;
+    const int demonTo = 88;
     const int frames = 56;
     bool skipped = false;
 
@@ -63,30 +63,30 @@ void runBootSplash() {
         }
         float t = (float)f / (float)frames;
         float e = t * t * (3.0f - 2.0f * t);
-        int px = pigFrom + (int)((float)(pigTo - pigFrom) * e);
+        int px = demonFrom + (int)((float)(demonTo - demonFrom) * e);
         Avatar::setX(px);
         Avatar::setManualWalk(true);
         Avatar::draw(farm);
-        if (px > 8) drawTalk(farm, px, "0N3P0rK");
+        if (px > 8) drawTalk(farm, px, "fR3k");
         Display::blitFrame();
         delay(28);
         yield();
     }
 
     if (!skipped) {
-        Avatar::setX(pigTo);
+        Avatar::setX(demonTo);
         Avatar::setManualWalk(true);
         uint32_t hold = millis();
         while ((millis() - hold) < 700) {
             if (wantSkip()) break;
             Avatar::draw(farm);
-            drawTalk(farm, pigTo, "0N3P0rK");
+            drawTalk(farm, demonTo, "fR3k");
             Display::blitFrame();
             delay(28);
             yield();
         }
     } else {
-        Avatar::setX(pigTo);
+        Avatar::setX(demonTo);
         Avatar::draw(farm);
         Display::blitFrame();
     }

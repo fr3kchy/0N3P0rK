@@ -53,6 +53,8 @@ const char* const DIR_PASSWORLD  = "/0N3P0rK/Passworld";
 const char* const DIR_IR         = "/0N3P0rK/ir";
 const char* const DIR_WOLF       = "/0N3P0rK/wolf";
 const char* const DIR_TALK       = "/0N3P0rK/talk";
+const char* const DIR_GPS        = "/0N3P0rK/gps";
+const char* const FILE_GPS_TRACK = "/0N3P0rK/gps/track.csv";
 
 const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/key.txt";
 const char* const FILE_WPASEC_RESULTS    = "/0N3P0rK/wpa-sec/results.txt";
@@ -67,6 +69,8 @@ bool removeCapture(const char* name);  // handshake file + companion .txt
 bool fileExists(const char* path);
 size_t fileSize(const char* path);
 bool formatStorage();
+// Append one bounded CSV record under the legacy-compatible project root.
+bool appendGpsCsv(const char* line);
 
 // Read first line of a key file into dest. Returns true if non-empty.
 bool loadKeyFile(const char* path, char* dest, size_t destLen);

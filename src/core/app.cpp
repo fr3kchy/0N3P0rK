@@ -11,6 +11,7 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
+#include "../modes/gps_mode.h"
 #include "../piglet/avatar.h"
 #include "../piglet/props.h"
 #include "../piglet/credits.h"
@@ -40,6 +41,7 @@ bool overlayMode() {
            s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
            s_mode == AppMode::IR || s_mode == AppMode::SPECTRUM ||
            s_mode == AppMode::USBSD || s_mode == AppMode::FILEMGR ||
+           s_mode == AppMode::GPS ||
            s_mode == AppMode::PIG ||
            s_mode == AppMode::TUNE || s_mode == AppMode::WIFI;
 }
@@ -75,6 +77,7 @@ const char* modeName() {
         case AppMode::SPECTRUM: return "SPEC";
         case AppMode::USBSD:    return "USB";
         case AppMode::FILEMGR:  return "FILES";
+        case AppMode::GPS:      return "GPS";
         default:                return "?";
     }
 }
@@ -91,6 +94,7 @@ void setMode(AppMode m) {
     if (s_mode == AppMode::SPECTRUM && SpectrumMode::isRunning()) SpectrumMode::stop();
     if (s_mode == AppMode::USBSD && UsbSdMode::isRunning()) UsbSdMode::stop();
     if (s_mode == AppMode::FILEMGR && FileMgrMode::isRunning()) FileMgrMode::stop();
+    if (s_mode == AppMode::GPS && GpsMode::isRunning()) GpsMode::stop();
     s_winHid = false;
     s_mode = m;
     Menu::onEnter(m);
@@ -102,6 +106,7 @@ void setMode(AppMode m) {
     if (m == AppMode::SPECTRUM) SpectrumMode::start();
     if (m == AppMode::USBSD) UsbSdMode::start();
     if (m == AppMode::FILEMGR) FileMgrMode::start();
+    if (m == AppMode::GPS) GpsMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
 }
 
@@ -306,6 +311,9 @@ void loop() {
     } else if (s_mode == AppMode::FILEMGR) {
         FileMgrMode::update();
         if (!FileMgrMode::isRunning()) setMode(AppMode::MENU);
+    } else if (s_mode == AppMode::GPS) {
+        GpsMode::update();
+        if (!GpsMode::isRunning()) setMode(AppMode::MENU);
     } else if (s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
                s_mode == AppMode::WIFI) {
         SettingsMenu::update();
@@ -322,7 +330,7 @@ void loop() {
         s_mode == AppMode::PIGPASS || s_mode == AppMode::BLE ||
         s_mode == AppMode::IR ||
         s_mode == AppMode::SPECTRUM ||
-        s_mode == AppMode::USBSD ||
+        s_mode == AppMode::USBSD || s_mode == AppMode::GPS ||
         s_mode == AppMode::PIG || s_mode == AppMode::TUNE ||
         s_mode == AppMode::WIFI) return;
 

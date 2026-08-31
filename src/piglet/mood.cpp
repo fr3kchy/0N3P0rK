@@ -30,118 +30,43 @@ static uint32_t s_statusUntil = 0;
 static bool s_moodDirty = false;
 static uint32_t s_moodSavedAt = 0;
 
-// 0n3 barn voice — hacker / tech / game jokes (max ~24 chars for bubble).
+// fR3k demon voice — short farm, weather and navigation lines for the bubble.
 static const char* PH_IDLE[] = {
-    "my tail is wifi",
-    "snout is the antenna",
-    "remember Diablo snout",
-    "one-shotted with hoof",
-    "SSID smells like loot",
-    "beacon farm AFK",
-    "oink.exe still running",
-    "heap did not explode",
-    "RF mud tastes spicy",
-    "I am the router",
-    "channel hop and chill",
-    "EAPOL in my dreams",
-    "sudo make me bacon",
-    "logs say I am cute",
-    "prod is the barn",
-    "compiler likes me",
-    "packet soup today",
-    "hidden SSID energy",
-    "0N3P0rK never sleeps",
-    "MAC address and vibes"
+    "horns online", "tail calibration", "watching the clouds",
+    "farm loop stable", "tiny demon, big plans", "trees look suspicious",
+    "weather tastes electric", "fR3k never sleeps", "compass wants a walk"
 };
 static const char* PH_HAPPY[] = {
-    "GG no re oink",
-    "handshake bagged",
-    "PWNED with style",
-    "loot screen go brrr",
-    "root access mood",
-    "main character pig",
-    "200 OK and dancing",
-    "truffle raid success",
-    "snout high five",
-    "level up bacon",
-    "crit hit on WiFi",
-    "boss drop: password",
-    "speedrun the 4-way",
-    "clutch HS capture"
+    "GG, farm secured", "level up", "tail high five", "fruit raid success",
+    "200 OK and dancing", "mischief complete", "sunny side achieved"
 };
 static const char* PH_HUNGRY[] = {
-    "404 fruit not found",
-    "low HP need apples",
-    "malloc snack please",
-    "trough is out of band",
-    "no packets no lunch",
-    "feed the snout ASAP",
-    "disk full of hunger",
-    "IRQ for more fruit",
-    "empty loot table",
-    "starving like RAID 0",
-    "need sudo sandwich"
+    "404 fruit not found", "low HP, need apples", "snack please",
+    "empty fruit table", "need sudo sandwich"
 };
 static const char* PH_SAD[] = {
-    "handshake ghosted me",
-    "deploy failed again",
-    "blame the DNS pig",
-    "conn refused mood",
-    "segfault in my heart",
-    "ticket number oink",
-    "prod barn is down",
-    "MIC check failed",
-    "no clients online",
-    "channel was empty",
-    "wolf ate my packets"
+    "rain in my horns", "deploy failed again", "segfault in my heart",
+    "wolf stole my lunch", "clouds got dramatic"
 };
 static const char* PH_SLEEPY[] = {
-    "admin mode: sleep",
-    "cron job at 3am",
-    "dreaming of handshakes",
-    "low power snout mode",
-    "idle process oink",
-    "screensaver of mud",
-    "radio silence zzz",
-    "five more minutes",
-    "AFK in the trough"
+    "admin mode: sleep", "cron job at 3am", "low power horn mode",
+    "five more minutes", "dreaming of orchards"
 };
 static const char* PH_FED[] = {
-    "cache is warm now",
-    "HP restored full",
-    "yum sector mounted",
-    "200 OK delicious",
-    "trough raid complete",
-    "bacon buffer filled",
-    "snack ACK received"
+    "cache is warm now", "HP restored full", "200 OK delicious",
+    "fruit buffer filled", "snack ACK received"
 };
 static const char* PH_PET[] = {
-    "best haxor pets me",
-    "snout approved human",
-    "scratch interrupt ok",
-    "purr-oink intensifies",
-    "more pets more uptime",
-    "good operator yes",
-    "tail wags for root"
+    "horn scratch approved", "more pets more uptime", "good operator yes",
+    "tail wags for Freek"
 };
 static const char* PH_PLAY[] = {
-    "catch me if deauth",
-    "ping flood playground",
-    "zoom across the barn",
-    "hack the planet oink",
-    "hop hop channel six",
-    "speedrun the trough",
-    "oscar mike bacon"
+    "catch me if you can", "zoom across the farm", "jump loop engaged",
+    "race you to the tree"
 };
 static const char* PH_BIRD[] = {
-    "bird process killed",
-    "feathers rm -rf",
-    "no fly zone active",
-    "packet shot landed",
-    "airspace denied oink",
-    "PULL and delete",
-    "drone not welcome",
-    "sky loot claimed"
+    "bird evaded", "feathers everywhere", "sky visitor spotted",
+    "bird wins this round"
 };
 
 #define COUNT(arr) ((int)(sizeof(arr) / sizeof((arr)[0])))
@@ -220,36 +145,36 @@ static void loadTalkFromSd() {
     if (!Storage::available()) return;
     Storage::ensureDir(Storage::DIR_TALK);
     writeTalkSeed("/0N3P0rK/talk/idle.txt",
-        "# 0N3P0rK talk — one line = one bubble\n"
+        "# fR3k talk - one line = one bubble\n"
         "# max 24 chars. # starts a comment.\n"
-        "my tail is wifi\n"
-        "snout is the antenna\n"
-        "SSID smells like loot\n");
+        "horns online\n"
+        "watching the clouds\n"
+        "compass wants a walk\n");
     writeTalkSeed("/0N3P0rK/talk/happy.txt",
-        "handshake bagged\n"
-        "GG no re oink\n"
-        "boss drop: password\n");
+        "fruit raid success\n"
+        "GG farm secured\n"
+        "mischief complete\n");
     writeTalkSeed("/0N3P0rK/talk/hungry.txt",
         "404 fruit not found\n"
         "need sudo sandwich\n");
     writeTalkSeed("/0N3P0rK/talk/sad.txt",
-        "handshake ghosted me\n"
-        "MIC check failed\n");
+        "rain in my horns\n"
+        "wolf stole my lunch\n");
     writeTalkSeed("/0N3P0rK/talk/sleepy.txt",
-        "dreaming of handshakes\n"
-        "radio silence zzz\n");
+        "dreaming of orchards\n"
+        "five more minutes\n");
     writeTalkSeed("/0N3P0rK/talk/fed.txt",
-        "bacon buffer filled\n"
+        "fruit buffer filled\n"
         "snack ACK received\n");
     writeTalkSeed("/0N3P0rK/talk/pet.txt",
-        "best haxor pets me\n"
-        "tail wags for root\n");
+        "horn scratch approved\n"
+        "tail wags for Freek\n");
     writeTalkSeed("/0N3P0rK/talk/play.txt",
-        "catch me if deauth\n"
-        "hop hop channel six\n");
+        "catch me if you can\n"
+        "race you to the tree\n");
     writeTalkSeed("/0N3P0rK/talk/bird.txt",
-        "feathers rm -rf\n"
-        "no fly zone active\n");
+        "feathers everywhere\n"
+        "bird wins this round\n");
     for (uint8_t k = 0; k < TK_COUNT; k++) loadTalkFile((TalkKind)k);
     Serial.printf("[TALK] sd lines idle=%u happy=%u\n",
                   (unsigned)s_talkN[TK_IDLE], (unsigned)s_talkN[TK_HAPPY]);

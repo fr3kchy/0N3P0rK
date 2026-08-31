@@ -16,7 +16,8 @@ enum class AppMode : uint8_t {
     IR,
     SPECTRUM,
     USBSD,
-    FILEMGR
+    FILEMGR,
+    GPS
 };
 
 namespace App {

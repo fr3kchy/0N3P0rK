@@ -9,6 +9,7 @@
 #include "../piglet/wolf.h"
 #include "../piglet/mood.h"
 #include "../storage/littlefs_ops.h"
+#include "../gps/gps_service.h"
 #include "../audio/sfx.h"
 #include "../net/ap_sta.h"
 #include "../cap/sniffer.h"
@@ -51,7 +52,7 @@ static const Item SCENE[] = {
     {"TREES",     Kind::TOGGLE, 8,  0, 1, 1},
     {"WEATHER",   Kind::TOGGLE, 9,  0, 1, 1},
     {"GRASS",     Kind::TOGGLE, 10, 0, 1, 1},
-    {"SHOW PIG",  Kind::TOGGLE, 11, 0, 1, 1},
+    {"SHOW DEMON",Kind::TOGGLE, 11, 0, 1, 1},
     {"SEASON FX", Kind::TOGGLE, 12, 0, 1, 1},
     {"MOOD",      Kind::TOGGLE, 13, 0, 1, 1},
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
@@ -134,13 +135,13 @@ static const char* const H_SCENE[] = {
     "MASTER: FULL SCENE OR BLANK.",
     "RANDOM WOLF VISITOR.",
     "SEASONAL PROPS ON FARM.",
-    "COMPANION PIG ON FARM.",
+    "COMPANION DEMON ON FARM.",
     "CARDS TABLE ON FARM (LV45).",
     "KILL EATS RANDOM HANDSHAKES.",
     "FRUIT TREES AND DROPS.",
     "RAIN SNOW CLOUDS BIRDS.",
     "GRASS / DIRT FLOOR.",
-    "DRAW THE PIG BODY.",
+    "DRAW THE DEMON BODY.",
     "LEAVES BANKS BUTTERFLIES.",
     "SPEECH BUBBLE ON/OFF.",
     "SEC BETWEEN MONOLOGUES.",
@@ -249,15 +250,15 @@ static bool allLayersOn() {
 
 static const char* skinName(uint8_t s) {
     switch ((PigSkin)s) {
-        case PigSkin::CLASSIC: return "CLASSIC";
-        case PigSkin::BLUSH:   return "BLUSH";
-        case PigSkin::HOG:     return "HOG";
-        case PigSkin::ZOMBIE:  return "ZOMBIE";
+        case PigSkin::CLASSIC: return "CRIMSON";
+        case PigSkin::BLUSH:   return "EMBER";
+        case PigSkin::HOG:     return "ASH";
+        case PigSkin::ZOMBIE:  return "UNDEAD";
         case PigSkin::RETRO:   return "RETRO";
         case PigSkin::SHADOW:  return "SHADOW";
         case PigSkin::CANDY:   return "CANDY";
         case PigSkin::GOLD:    return "GOLD";
-        case PigSkin::DIRTY:   return "DIRTY";
+        case PigSkin::DIRTY:   return "DUST";
         default: return "?";
     }
 }
@@ -934,7 +935,7 @@ void update() {
             PersonalityConfig& p = Config::personality();
             strncpy(p.name, s_edit, sizeof(p.name) - 1);
             p.name[sizeof(p.name) - 1] = '\0';
-            if (!p.name[0]) strncpy(p.name, "Pig", sizeof(p.name) - 1);
+            if (!p.name[0]) strncpy(p.name, "Imp", sizeof(p.name) - 1);
             Config::save();
             s_text = false;
             SFX::play(SFX::CONFIRM);
@@ -1160,13 +1161,13 @@ static void drawStatus(M5Canvas& canvas) {
     canvas.setTextSize(2);
     canvas.setTextDatum(top_center);
     canvas.setTextColor(UI_TITLE);
-    canvas.drawString("STATUS", DISPLAY_W / 2, 2);
+    canvas.drawString("fR3k STATUS", DISPLAY_W / 2, 2);
     canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
 
     canvas.setTextSize(1);
     canvas.setTextDatum(top_left);
 
-    char lvl[16], xp[16], batt[16], wifi[18], ver[16];
+    char lvl[16], xp[16], batt[16], gpsFix[18], gpsLog[18], ver[20];
     snprintf(lvl, sizeof(lvl), "%u", (unsigned)XP::getLevel());
     snprintf(xp, sizeof(xp), "%lu/%lu",
              (unsigned long)XP::intoLevel(), (unsigned long)XP::needForNext());
@@ -1175,20 +1176,20 @@ static void drawStatus(M5Canvas& canvas) {
     if (blv > 100) blv = 100;
     const bool chg = (M5.Power.isCharging() == m5::Power_Class::is_charging);
     snprintf(batt, sizeof(batt), "%d%%%s", (int)blv, chg ? " CHG" : "");
-    wifi[0] = '-'; wifi[1] = '-'; wifi[2] = '\0';
-    if (Net::hasStaCreds() && Net::cfg().staSsid[0]) {
-        strncpy(wifi, Net::cfg().staSsid, sizeof(wifi) - 1);
-        wifi[sizeof(wifi) - 1] = '\0';
-    }
-    snprintf(ver, sizeof(ver), "v%s", ON3PORK_VERSION);
+    const GpsSnapshot gs = GpsService::snapshot();
+    if (!gs.enabled) snprintf(gpsFix, sizeof(gpsFix), "OFF");
+    else if (!gs.fix) snprintf(gpsFix, sizeof(gpsFix), "SEARCH %lu SAT", (unsigned long)gs.satellites);
+    else snprintf(gpsFix, sizeof(gpsFix), "FIX %lu SAT", (unsigned long)gs.satellites);
+    snprintf(gpsLog, sizeof(gpsLog), "%s", Config::gps().logging ? "CSV ON" : "CSV OFF");
+    snprintf(ver, sizeof(ver), "fR3k v%s", FR3K_VERSION);
 
-    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "WIFI", "WPA", "PWN", "VER" };
+    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "GPS", "GPS LOG", "SAFE", "VER" };
     const char* v[] = {
         lvl, xp, Board::modelLabel(), batt,
         Config::isSDAvailable() ? "YES" : "NO",
-        wifi,
-        Net::cfg().wpaSecKey[0] ? "YES" : "NO",
-        Net::cfg().pwncrackKey[0] ? "YES" : "NO",
+        gpsFix,
+        gpsLog,
+        "RADIO TX OFF",
         ver
     };
     const uint8_t statN = 9;
@@ -1242,7 +1243,7 @@ void draw(M5Canvas& canvas) {
     const uint16_t UI_TEXT = 0xEF5D, UI_DIM = 0x9CD3, UI_SEL = 0xFDB6;
     canvas.fillSprite(UI_BG);
 
-    const char* title = "PIG";
+    const char* title = "DEMON";
     if (s_page == SettingsPage::SYSTEM) title = "SYSTEM";
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";

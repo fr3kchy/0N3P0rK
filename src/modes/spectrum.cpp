@@ -1,5 +1,5 @@
-// Rewritten 2.4 GHz spectrum for 0N3P0rK.
-// Look: OnePork lobes / grass / waterfall. Guts: our radio, no NetworkRecon.
+// Rewritten 2.4 GHz spectrum retained from the upstream architecture.
+// Safe builds do not expose or launch this radio mode.
 #include "spectrum.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"

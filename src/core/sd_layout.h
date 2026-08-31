@@ -27,5 +27,6 @@ inline void ensureDirs() {
     SD.mkdir("/0N3P0rK/ir");
     SD.mkdir("/0N3P0rK/wolf");
     SD.mkdir("/0N3P0rK/talk");
+    SD.mkdir("/0N3P0rK/gps");
 }
 }

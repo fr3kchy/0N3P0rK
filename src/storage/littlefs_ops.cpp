@@ -128,6 +128,7 @@ bool begin() {
     SD.mkdir(DIR_IR);
     SD.mkdir(DIR_WOLF);
     SD.mkdir(DIR_TALK);
+    SD.mkdir(DIR_GPS);
     migrateLegacy();
     unlockSd();
     return true;
@@ -179,6 +180,30 @@ bool writeSector(uint32_t lba, const uint8_t* buf) {
 }
 
 bool available() { return s_mounted; }
+
+bool appendGpsCsv(const char* line) {
+    if (!s_mounted || !line || !line[0]) return false;
+    lockSd();
+    SD.mkdir(DIR_GPS);
+    bool newFile = !SD.exists(FILE_GPS_TRACK);
+    if (!newFile) {
+        File existing = SD.open(FILE_GPS_TRACK, FILE_READ);
+        newFile = !existing || existing.size() == 0;
+        if (existing) existing.close();
+    }
+    File f = SD.open(FILE_GPS_TRACK, FILE_APPEND);
+    if (!f) {
+        unlockSd();
+        return false;
+    }
+    if (newFile) f.print("timestamp,latitude,longitude,altitude_m,satellites,speed_kph,heading_deg,hdop\n");
+    const size_t want = strlen(line);
+    const size_t wrote = f.write((const uint8_t*)line, want);
+    f.flush();
+    f.close();
+    unlockSd();
+    return wrote == want;
+}
 
 bool ensureDir(const char* path) {
     if (!s_mounted || !path) return false;

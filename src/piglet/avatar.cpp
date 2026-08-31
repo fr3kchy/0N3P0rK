@@ -1,6 +1,7 @@
 // Full-color chibi pixel pig (uint8 map matching classic pink piglet art)
 
 #include "avatar.h"
+#include "demon_renderer.h"
 #include "weather.h"
 #include "scene_layers.h"
 #include "seasonal_fx.h"
@@ -632,9 +633,9 @@ static void drawPixelPigDetailed(M5Canvas& canvas, int16_t ox, int16_t oy,
 static void drawPixelPig(M5Canvas& canvas, int16_t ox, int16_t oy,
                          AvatarState state, bool faceRight, bool blink, bool sniff,
                          uint8_t sniffPhase, bool earPerk, bool tailAlt, bool jumping,
-                         uint16_t fg, uint16_t bg) {
-    drawPixelPigDetailed(canvas, ox, oy, state, faceRight, blink, sniff,
-                         sniffPhase, earPerk, tailAlt, jumping, fg, bg);
+                         uint16_t /*fg*/, uint16_t /*bg*/) {
+    DemonRenderer::draw(canvas, ox, oy, state, faceRight, blink, sniff,
+                        sniffPhase, earPerk, tailAlt, jumping, s_deadBlend);
 }
 
 // Grass animation state

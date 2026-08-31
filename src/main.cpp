@@ -1,4 +1,4 @@
-// 0N3P0rK - Tamagotchi pig + barn on M5Cardputer / Cardputer ADV
+// fR3k - demon Tamagotchi + GPS on M5Cardputer / Cardputer ADV
 
 #include <M5Cardputer.h>
 #include <M5Unified.h>
@@ -11,6 +11,7 @@
 #include "ui/display.h"
 #include "ui/menu.h"
 #include "piglet/avatar.h"
+#include "gps/gps_service.h"
 #include "piglet/mood.h"
 #include "audio/sfx.h"
 #include "storage/littlefs_ops.h"
@@ -46,7 +47,7 @@ void setup() {
     Serial.begin(115200);
     delay(120);
     Serial.println();
-    Serial.printf(">>> %s v%s build=%s\n", ON3PORK_NAME, ON3PORK_VERSION, ON3PORK_BUILD);
+    Serial.printf(">>> %s v%s build=%s\n", FR3K_NAME, FR3K_VERSION, FR3K_BUILD);
 
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
@@ -68,6 +69,7 @@ void setup() {
     Display::init();
     SFX::init();
     Avatar::init();
+    GpsService::begin();
     Display::showBootSplash();
     Display::refreshBrightness();
     Mood::init();
@@ -75,15 +77,18 @@ void setup() {
     App::begin();
     yield();
 
+#if !FR3K_SAFE_BUILD
     Net::begin();
     Storage::loadKeysIntoNet();
     Cap::begin();
     EvilPigMode::init();
     PigpassMode::init();
+#endif
 
     Net::Status s = Net::status();
     Serial.printf("[BOOT] wifi mode ssid=%s ip=%s\n", s.ssid, s.ip);
-    Serial.printf("[BOOT] pig=%s ready\n", Config::personality().name);
+    Serial.printf("[BOOT] demon=%s ready safe=%u\n", Config::personality().name,
+                  (unsigned)FR3K_SAFE_BUILD);
 }
 
 static unsigned long s_lastHeapLog = 0;
@@ -94,15 +99,17 @@ void loop() {
     Display::update();
     SFX::update();
     XP::tick();
+    GpsService::loop();
+#if !FR3K_SAFE_BUILD
     Cap::loop();
+#endif
 
     if (millis() - s_lastHeapLog > 30000) {
         s_lastHeapLog = millis();
-        Serial.printf("[LOOP] heap=%u largest=%u cap=%s\n",
+        Serial.printf("[LOOP] heap=%u largest=%u safe=%u\n",
                       (unsigned)ESP.getFreeHeap(),
                       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-                      Cap::runMode() == Cap::RunMode::Aggressive ? "AGG" :
-                      (Cap::isRunning() ? "LITE" : "off"));
+                      (unsigned)FR3K_SAFE_BUILD);
     }
     delay(5);
     yield();

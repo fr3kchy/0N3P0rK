@@ -1,4 +1,4 @@
-// Full-color chibi pixel-art pig (uint8 map, not string sprites; API unchanged)
+// Procedural demon renderer; movement/gameplay API intentionally unchanged.
 #pragma once
 
 #include <M5Unified.h>
@@ -16,7 +16,7 @@ enum class AvatarState {
 enum class WaveMode : uint8_t {
     NONE,      // No waves (idle, cooldown, bored)
     INCOMING,  // Converging toward nose (scanning/sniffing)
-    OUTGOING   // Radiating from nose (deauth/sending)
+    OUTGOING   // Radiating from the demon during active effects
 };
 
 enum class TreePhase : uint8_t {

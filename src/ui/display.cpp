@@ -12,6 +12,7 @@
 #include "../piglet/wolf.h"
 #include "../piglet/trees.h"
 #include "../piglet/scene_layers.h"
+#include "../gps/gps_service.h"
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
 #include "../cap/hc22000.h"
@@ -25,6 +26,7 @@
 #include "../modes/spectrum.h"
 #include "../modes/usbsd.h"
 #include "../modes/filemgr.h"
+#include "../modes/gps_mode.h"
 #include "boot_splash.h"
 #include <M5Cardputer.h>
 #include <string.h>
@@ -477,6 +479,10 @@ void Display::drawTopBar() {
     char lv[8];
     snprintf(lv, sizeof(lv), "L%u", (unsigned)XP::getLevel());
     topBar.drawString(lv, x + 2, 4);
+    const GpsSnapshot gps = GpsService::snapshot();
+    topBar.setTextColor(gps.fix ? 0x07E0 : (gps.enabled ? 0xFE60 : barFg));
+    topBar.drawString(gps.fix ? "G+" : (gps.enabled ? "G~" : "G-"), x + 22, 4);
+    topBar.setTextColor(barFg);
 
     char sky[22];
     Avatar::getSkyHud(sky, sizeof(sky));
@@ -486,10 +492,17 @@ void Display::drawTopBar() {
 
     static int battPct = 100;
     static uint32_t battMs = 0;
+    static bool lowBattNotified = false;
     if (battMs == 0 || (millis() - battMs) > 2000) {
         battMs = millis();
         int32_t lv = M5.Power.getBatteryLevel();
         battPct = (lv < 0) ? 0 : ((lv > 100) ? 100 : (int)lv);
+        if (battPct <= 15 && !lowBattNotified) {
+            lowBattNotified = true;
+            showToast("LOW BATTERY", 1800);
+        } else if (battPct > 20) {
+            lowBattNotified = false;
+        }
     }
     const bool charging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
     uint16_t battCol = battPct > 40 ? (retro ? (uint16_t)0xC618 : (uint16_t)0x07E0)
@@ -517,7 +530,7 @@ void Display::drawTopBar() {
     topBar.setTextColor(barFg);
     topBar.setTextDatum(top_left);
 
-    // Snout-battery: body + pig-nose nub
+    // Battery body + terminal nub
     topBar.drawRoundRect(iconX, 2, 12, 12, 2, barFg);
     topBar.fillRect(iconX + 12, 6, 3, 4, barFg);
     topBar.drawPixel(iconX + 13, 7, charging ? 0xF800 : barBg);
@@ -666,6 +679,9 @@ void Display::drawBottomBar() {
             case AppMode::FILEMGR:
                 FileMgrMode::getStatusLine(left, sizeof(left));
                 break;
+            case AppMode::GPS:
+                GpsMode::getStatusLine(left, sizeof(left));
+                break;
             case AppMode::PIGPASS:
                 PigpassMode::getStatusLine(left, sizeof(left));
                 {
@@ -758,6 +774,7 @@ void Display::update() {
         else if (App::mode() == AppMode::SPECTRUM) SpectrumMode::draw(mainCanvas);
         else if (App::mode() == AppMode::USBSD) UsbSdMode::draw(mainCanvas);
         else if (App::mode() == AppMode::FILEMGR) FileMgrMode::draw(mainCanvas);
+        else if (App::mode() == AppMode::GPS) GpsMode::draw(mainCanvas);
         else Menu::draw(mainCanvas);
         drawToast();
     } else if (hid) {

@@ -8,6 +8,7 @@
 PersonalityConfig Config::personalityConfig;
 RadioConfig Config::radioConfig;
 BleConfig Config::bleConfig;
+GpsConfig Config::gpsConfig;
 HotkeyConfig Config::hotkeyConfig;
 bool Config::initialized = false;
 
@@ -36,8 +37,8 @@ bool Config::init() {
 
     PersonalityConfig& p = personalityConfig;
     s_prefs.getString("name", p.name, sizeof(p.name));
-    if (p.name[0] == '\0' || strcmp(p.name, "Lexi") == 0) {
-        strncpy(p.name, "Pig", sizeof(p.name) - 1);
+    if (p.name[0] == '\0' || strcmp(p.name, "Lexi") == 0 || strcmp(p.name, "Pig") == 0) {
+        strncpy(p.name, "Imp", sizeof(p.name) - 1);
         p.name[sizeof(p.name) - 1] = '\0';
     }
     p.soundLevel = s_prefs.getUChar("snd", p.soundLevel);
@@ -95,6 +96,13 @@ bool Config::init() {
     b.burstMs = s_prefs.getUShort("bleb", b.burstMs);
     b.advMs = s_prefs.getUShort("blea", b.advMs);
 
+    GpsConfig& g = gpsConfig;
+    g.enabled = s_prefs.getBool("gpsen", g.enabled);
+    g.baudMode = s_prefs.getUChar("gpsbaud", g.baudMode);
+    g.logging = s_prefs.getBool("gpslog", g.logging);
+    g.syncUtc = s_prefs.getBool("gpsutc", g.syncUtc);
+    g.timezoneQuarterHours = s_prefs.getChar("gpstz", g.timezoneQuarterHours);
+
     HotkeyConfig def{};
     hotkeyConfig = def;
     char raw[HOTKEY_COUNT];
@@ -145,9 +153,23 @@ bool Config::init() {
     if (b.burstMs > 500) b.burstMs = 500;
     if (b.advMs < 50) b.advMs = 50;
     if (b.advMs > 200) b.advMs = 200;
+    if (g.baudMode > 2) g.baudMode = 0;
+    if (g.timezoneQuarterHours < -48) g.timezoneQuarterHours = -48;
+    if (g.timezoneQuarterHours > 56) g.timezoneQuarterHours = 56;
+
+#if FR3K_SAFE_BUILD
+    // Ignore legacy offensive settings in the safe distributable.
+    r.deauth = false;
+    r.bidirKick = false;
+    r.eapolTx = false;
+    r.pmkidProbe = false;
+    r.csaHerd = false;
+    r.authFlood = false;
+#endif
 
     initialized = true;
-    Serial.printf("[CFG] pig=%s skin=%u season=%u\n", p.name, p.pigSkin, p.seasonMode);
+    Serial.printf("[CFG] demon=%s skin=%u season=%u gps=%u\n", p.name, p.pigSkin,
+                  p.seasonMode, (unsigned)g.enabled);
     return true;
 }
 
@@ -209,6 +231,13 @@ bool Config::save() {
     const BleConfig& b = bleConfig;
     s_prefs.putUShort("bleb", b.burstMs);
     s_prefs.putUShort("blea", b.advMs);
+
+    const GpsConfig& g = gpsConfig;
+    s_prefs.putBool("gpsen", g.enabled);
+    s_prefs.putUChar("gpsbaud", g.baudMode);
+    s_prefs.putBool("gpslog", g.logging);
+    s_prefs.putBool("gpsutc", g.syncUtc);
+    s_prefs.putChar("gpstz", g.timezoneQuarterHours);
 
     char raw[HOTKEY_COUNT];
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++)

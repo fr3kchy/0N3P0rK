@@ -11,14 +11,13 @@ static constexpr uint32_t DURATION_MS = 10000;
 static const char* lines[] = {
     "THANK YOU",
     "FOR PLAYING",
-    "0N3P0rK",
-    "THANKS OCT0SEC",
-    "FOR THE SPARK",
-    "I TRIED MY BEST",
-    "FOR YOU",
-    "NEW PROJECTS SOON",
+    "fR3k",
+    "BASED ON 0N3P0rK",
+    "LEXILEXIKO",
+    "DEMON + GPS BUILD",
+    "SAFE RADIO PATHS",
     "STAY CURIOUS",
-    "OINK OINK",
+    "RAISE HELL",
 };
 static constexpr int LINE_N = 10;
 

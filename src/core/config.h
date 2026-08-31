@@ -51,7 +51,7 @@ enum class Season : uint8_t {
 static const uint8_t SEASON_COUNT = 4;
 
 struct PersonalityConfig {
-    char name[32] = "Pig";
+    char name[32] = "Imp";
     uint8_t soundLevel = 1;
     uint8_t brightness = 80;
     uint8_t dimLevel = 20;
@@ -165,6 +165,16 @@ struct RadioConfig {
     uint8_t depthHoldSec = 0;
 };
 
+struct GpsConfig {
+    bool enabled = true;
+    // 0=AUTO (115200 then 9600), 1=115200, 2=9600.
+    uint8_t baudMode = 0;
+    bool logging = false;
+    bool syncUtc = true;
+    // Signed 15-minute units. +40 = UTC+10:00.
+    int8_t timezoneQuarterHours = 40;
+};
+
 struct BleConfig {
     uint16_t burstMs = 200;    // 50..500 between bursts
     uint16_t advMs = 100;      // 50..200 per advertisement
@@ -192,6 +202,7 @@ public:
     static PersonalityConfig& personality() { return personalityConfig; }
     static RadioConfig& radio() { return radioConfig; }
     static BleConfig& ble() { return bleConfig; }
+    static GpsConfig& gps() { return gpsConfig; }
     static HotkeyConfig& hotkeys() { return hotkeyConfig; }
     static void setPersonality(const PersonalityConfig& cfg);
 
@@ -205,6 +216,7 @@ private:
     static PersonalityConfig personalityConfig;
     static RadioConfig radioConfig;
     static BleConfig bleConfig;
+    static GpsConfig gpsConfig;
     static HotkeyConfig hotkeyConfig;
     static bool initialized;
 };
