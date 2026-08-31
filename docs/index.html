@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="0N3P0rK for M5Cardputer — web installer, docs, gallery.">
-  <title>0N3P0rK</title>
+  <meta name="description" content="fR3k demon farm and GNSS firmware for M5Cardputer.">
+  <title>fR3k</title>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
     :root {
@@ -73,8 +73,8 @@
 <body>
   <div class="wrap">
     <header>
-      <h1>0N3P0rK</h1>
-      <p>v1.2.8 · M5Cardputer companion + radio lab</p>
+      <h1>fR3k</h1>
+      <p>v2.0.0-fr3k · M5Cardputer demon farm + GNSS</p>
     </header>
 
     <nav class="tabs" id="tabs" role="tablist">
@@ -86,15 +86,15 @@
 
     <section class="panel active" id="tab-info">
       <div class="card">
-        <h2>What is 0N3P0rK?</h2>
+        <h2>What is fR3k?</h2>
         <p>
-          Firmware for <b>M5Stack Cardputer</b> / Cardputer ADV: a living pig companion
-          plus Wi‑Fi lab tools (handshake capture, spectrum, PigPass, loot browser).
+          Safe firmware for <b>M5Stack Cardputer</b> / Cardputer ADV: a living demon companion,
+          preserved farm gameplay, Mesh Cap GNSS telemetry and optional SD CSV logging.
         </p>
         <div class="actions">
-          <a class="btn primary" href="https://github.com/lexilexiko/0N3P0rK" target="_blank" rel="noopener">GitHub</a>
-          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK/releases" target="_blank" rel="noopener">Releases</a>
-          <a class="btn" href="https://github.com/lexilexiko/0N3P0rK#readme" target="_blank" rel="noopener">README</a>
+          <a class="btn primary" href="https://github.com/fr3kchy/0N3P0rK" target="_blank" rel="noopener">GitHub</a>
+          <a class="btn" href="https://github.com/fr3kchy/0N3P0rK/releases" target="_blank" rel="noopener">Releases</a>
+          <a class="btn" href="https://github.com/fr3kchy/0N3P0rK#readme" target="_blank" rel="noopener">README</a>
         </div>
       </div>
       <div class="card">
@@ -143,7 +143,7 @@
       <div class="donate-wrap">
         <a class="btn donate" href="#donate" data-goto="donate">♥ Donate</a>
       </div>
-      <div>0N3P0rK · not affiliated with M5Stack</div>
+      <div>fR3k · based on 0N3P0rK · not affiliated with M5Stack</div>
     </footer>
   </div>
 
@@ -165,8 +165,8 @@
     const select = document.getElementById('fileSelect');
     const status = document.getElementById('status');
     const installBtn = document.getElementById('installBtn');
-    const GH_FW = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/firmware';
-    const GH_GAL = 'https://api.github.com/repos/lexilexiko/0N3P0rK/contents/docs/gallery';
+    const GH_FW = 'https://api.github.com/repos/fr3kchy/0N3P0rK/contents/docs/firmware';
+    const GH_GAL = 'https://api.github.com/repos/fr3kchy/0N3P0rK/contents/docs/gallery';
 
     function isBinName(name) {
       return typeof name === 'string' && /\.bin$/i.test(name) && !name.includes('..');
@@ -256,7 +256,7 @@
         return;
       }
       const manifest = {
-        name: '0N3P0rK',
+        name: 'fR3k',
         version: filename.replace(/\.bin$/i, ''),
         new_install_prompt_erase: true,
         builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: './firmware/' + filename, offset: 0 }] }]
