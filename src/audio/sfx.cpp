@@ -572,6 +572,14 @@ static volatile uint8_t queueTail = 0;  // next read position
 static portMUX_TYPE queueMutex = portMUX_INITIALIZER_UNLOCKED;
 // Bitmask of MUTE_* reasons — play() only when zero
 static volatile uint8_t s_muteMask = 0;
+// v3.0.2: per-screen audio gate. When true, the operator is in a menu
+// state and we suppress all audio (play/playPersonality/playCuntJingle/
+// playNav/update). Cleared by setMenuMode(false) on entering FARM or
+// any in-game mode. Independent of s_muteMask (IR blast etc).
+static volatile bool s_inMenu = false;
+// v3.0.2: when in menu mode and this is set, playNav() still fires a
+// 30 ms single piezo blip. Independent of s_inMenu.
+static volatile bool s_minimalTap = false;
 
 // ==[ IMPLEMENTATION ]==
 
@@ -602,7 +610,9 @@ void init() {
     queueHead = 0;
     queueTail = 0;
     s_muteMask = 0;
-    
+    s_inMenu = false;  // set true by App::setMode() when entering MENU/ATTACK
+    s_minimalTap = false;
+
     // Initialize queue
     for (int i = 0; i < QUEUE_SIZE; i++) {
         eventQueue[i] = NONE;
@@ -642,8 +652,20 @@ uint8_t muteMask() {
     return s_muteMask;
 }
 
+void setMenuMode(bool inMenu) {
+    s_inMenu = inMenu;
+}
+
+void setMinimalTap(bool enabled) {
+    s_minimalTap = enabled;
+}
+
 void play(Event event) {
     if (s_muteMask != 0) return;
+    // v3.0.2: drop everything in menu mode. The audio task must not
+    // contend with the main loop's debounce while the operator is
+    // navigating root menus.
+    if (s_inMenu) return;
     if (Config::personality().soundLevel == 0) return;
     if (event == NONE) return;
     
@@ -731,6 +753,16 @@ static bool pumpNav() {
 }
 
 bool update() {
+    // v3.0.2: in menu mode the audio task is fully silent. Skip the
+    // sequence pump and the nav-tap pump; both are unnecessary work
+    // while the operator is navigating. Personality events queued
+    // before entering the menu are NOT drained - they wait for the
+    // menu to close, then fire on the first update() in FARM.
+    if (s_inMenu) {
+        currentSequence = nullptr;
+        s_nav.active = false;
+        return false;
+    }
     // Skip if muted or sound disabled - but never clear the queue:
     // the queue may hold a personality event fired inside the mute
     // window (e.g. mood event during IR blast). The mute mask only
@@ -1034,6 +1066,10 @@ void playPersonality() {
     // v3.0.1: route through playNav() so the boot-splash and mood events
     // bypass the audio queue. This guarantees the operator hears the
     // configured word even when an IR blast is mid-mute.
+    // v3.0.2: drop everything in menu mode. The personality voice
+    // should never play while the operator is navigating root menus -
+    // it was a major source of the perceived UI lag.
+    if (s_inMenu) return;
     const PersonalityConfig& p = Config::personality();
     if (p.cuntJingle && p.voiceWord != (uint8_t)VOICE_CUNT) {
         // One-shot CUNT jingle: skip the queue and use the speaker
@@ -1059,6 +1095,17 @@ void playNav() {
     // note in the next update() tick.
     if (s_muteMask != 0) return;
     if (Config::personality().soundLevel == 0) return;
+    // v3.0.2: menu mode drops the nav tap entirely unless the
+    // operator explicitly asked for the minimal piezo blip.
+    if (s_inMenu) {
+        if (!s_minimalTap) return;
+        // 30 ms single note at 2 kHz. Direct call, no nav state
+        // pump, no audio task. The whole point is zero cost when
+        // the operator is in a hurry.
+        applyVolume();
+        M5.Speaker.tone(2000, 30);
+        return;
+    }
     const Note* seq = navSequence();
     if (!seq || !seq[0].freq) return;
     applyVolume();
@@ -1072,6 +1119,7 @@ void playNav() {
 }
 
 void playCuntJingle() {
+    if (s_inMenu) return;
     play(CUNT);
 }
 

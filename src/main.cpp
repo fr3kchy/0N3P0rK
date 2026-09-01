@@ -75,7 +75,9 @@ void setup() {
     Avatar::init();
     GpsService::begin();
     Telemetry::begin();
-    SpectrumSky::begin();
+    // fR3k v3.0.3: SpectrumSky::begin() removed. The spectrum overlay
+    // is off by default; the source in src/piglet/spectrum_sky.cpp is
+    // preserved for a future re-enable.
     Display::showBootSplash();
     Display::refreshBrightness();
     Mood::init();

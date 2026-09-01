@@ -108,6 +108,11 @@ void setMode(AppMode m) {
     if (m == AppMode::FILEMGR) FileMgrMode::start();
     if (m == AppMode::GPS) GpsMode::start();
     SFX::play(m == AppMode::FARM ? SFX::MODE_EXIT : SFX::MODE_ENTER);
+    // v3.0.2: silence the audio task while the operator is in a menu
+    // state. FARM = the only non-menu working screen; MENU and ATTACK
+    // are both root-menu shapes in v3. Personality voice still plays
+    // on FARM and in every in-game mode (IR, spectrum, GPS, etc).
+    SFX::setMenuMode(m != AppMode::FARM);
 }
 
 // SETTINGS → ANIM TEST: - previous / = next demo (OnePork lab).

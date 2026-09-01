@@ -160,6 +160,19 @@ void playPersonality();
 // SFX::play(SFX::CLICK).
 void playNav();
 
+// v3.0.2: per-screen audio gate. Called from setMode() in app.cpp.
+// When true: play() / playPersonality() / playCuntJingle() / playNav()
+// short-circuit to no-op. update() also no-ops so the sequence pump
+// doesn't run. Use this to silence MENU and ATTACK root navigation
+// without affecting FARM or any in-game mode.
+void setMenuMode(bool inMenu);
+
+// v3.0.2: when in menu mode AND Config::personality().menuMinimalTap
+// is true, playNav() fires a 30 ms single piezo blip instead of being
+// silent. Lets the operator keep audible feedback in the menu without
+// paying the sequence-pump cost. Default off.
+void setMinimalTap(bool enabled);
+
 // One-shot fire of the CUNT jingle regardless of the configured word -
 // used by settings UI / unlock confirmation when the operator wants
 // to hear the jingle out of band.

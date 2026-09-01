@@ -146,3 +146,58 @@ RAM usage unchanged at 57.1%.
 - `voiceWord == VOICE_CUNT` is still the shipped default. To hear the
   old "annoying click" again, set `SOUND WORD` to `ACK` and the nav tap
   reverts to NAV_ACK (~30 ms, higher pitch).
+
+## v3.0.2-lab follow-up (per-screen audio gate)
+
+- New `SFX::setMenuMode(bool)` API. When `App::setMode()` enters MENU
+  or ATTACK, the audio task is fully silent: `SFX::play()`,
+  `SFX::playPersonality()`, `SFX::playCuntJingle()`, `SFX::playNav()`,
+  and `SFX::update()` all short-circuit. FARM and every in-game mode
+  (IR, spectrum, GPS, etc.) still play normally.
+- New `MENU SOUND` settings row in the SCENE page (default OFF).
+  When OFF, root menu navigation is silent. When ON, plays the
+  configured demon word on every nav. Operator can flip it.
+- New `MENU TAP` settings row (default OFF). When MENU SOUND is OFF,
+  optionally still play a 30 ms single piezo blip on every keypress
+  as audible feedback.
+- New `PersonalityConfig::menuSound` and `PersonalityConfig::menuMinimalTap`
+  fields, persisted to NVS (`menusnd` / `menutap` keys).
+- The complaint that motivated this: a perceived ~100-200 ms lag on
+  every menu keypress while the audio task drove a 50-60 ms two-note
+  pair that contended with the main loop's debounce. The menu is now
+  zero-cost by default; the operator can opt back in.
+
+## Compatibility (v3.0.2)
+
+- All v3.0.1 user state preserved (NVS, SD, lab unlock flag).
+- The two new settings rows default to OFF, so existing operators
+  upgrading from v3.0.1 get the silent menu by default. Re-enable via
+  `SETTINGS > DEMON > MENU SOUND`.
+- `SOUND WORD` / `CUNT JINGLE` behaviour unchanged. Personality voice
+  still plays on FARM mood events, on boot splash, and during every
+  in-game mode.
+
+## v3.0.3-lab follow-up (spectrum-sky removed)
+
+- The 13-bar RSSI histogram overlay that drew between the sky gradient
+  and the cloud layer is no longer rendered. `main.cpp` no longer
+  calls `SpectrumSky::begin()`. `src/piglet/avatar.cpp` no longer
+  calls `SpectrumSky::drawBackground()`. The source in
+  `src/piglet/spectrum_sky.{h,cpp}` is preserved for a future re-enable.
+- The complaint: the overlay competed with the sky gradient for the
+  operator's attention and was identified as visual noise.
+- `PersonalityConfig::spectrumSky` is forced to `false` on every load.
+  The settings row id 23 (SPECTRUM SKY) is hard-coded to 0 in
+  `getValue()` and toasts "SPECTRUM SKY OFF (v3.0.3)" if the operator
+  toggles it. The row stays in the UI so future re-enables can
+  recover the value.
+
+## Compatibility (v3.0.3)
+
+- All v3.0.2 user state preserved (NVS, SD, lab unlock flag).
+- The SPECTRUM SKY setting is forced off on load — operators
+  upgrading from v3.0.0 / v3.0.1 / v3.0.2 with `spectrumSky = true`
+  see the sky return to clean.
+- The sniffer still fills the per-channel RSSI table
+  (`getRssi13()` / `rssiForChannel()` / `noteRssi()`) so re-enabling
+  the overlay later is a one-line change in the avatar draw path.

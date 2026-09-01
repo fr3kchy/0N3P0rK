@@ -1303,10 +1303,11 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
     } else {
         canvas.fillSprite(getBGColor());
     }
-    // fR3k v3 spectrum-sky overlay sits between the sky gradient and the
-    // cloud layer. Drawn from the existing main canvas (no second M5Canvas)
-    // because the v2 image is already at 79% flash budget.
-    SpectrumSky::drawBackground(canvas);
+    // fR3k v3.0.3: spectrum-sky overlay removed. The bar histogram
+    // competed with the sky gradient for the operator's attention and
+    // was identified as visual noise. The source is preserved (see
+    // src/piglet/spectrum_sky.{h,cpp}) so a future re-enable is a
+    // one-line change in this draw path.
     if (SceneLayers::weather) {
         Weather::drawClouds(canvas, getDrawColor());
     }

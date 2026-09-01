@@ -82,6 +82,18 @@ struct PersonalityConfig {
     bool cuntJingle = true;
     // Local spectrum-sky overlay (v3). Off = the sky gradient stays clean.
     bool spectrumSky = true;
+    // v3.0.2: per-screen audio gate for menu states (MENU / ATTACK).
+    // When true (default) the menu is silent: no nav tap, no personality
+    // event, no sequence pump. Personality voice still plays on FARM
+    // and during in-game modes (IR / spectrum / GPS). The complaint
+    // that motivated this was a perceived ~100-200 ms lag on every
+    // menu keypress; the audio task was driving a 50-60 ms two-note
+    // pair that contended with the main loop's debounce.
+    bool menuSound = false;
+    // v3.0.2: when menuSound is false, optionally still play a single
+    // 30 ms piezo blip on every keypress as audible feedback. Off by
+    // default - menu is fully silent unless the operator asks.
+    bool menuMinimalTap = false;
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

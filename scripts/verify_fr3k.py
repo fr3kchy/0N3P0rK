@@ -52,7 +52,7 @@ irport_cpp = text("src/modes/irport.cpp")
 # ===[ v2 carry-over ] ===]
 require("m5cardputer-safe" in pio, "v2 safe env missing")
 require("m5cardputer" in pio, "default env missing")
-require("custom_version = 3.0.0-fr3k-lab" in pio, "fR3k v3 version missing")
+require("custom_version = 3.0.3-fr3k-lab" in pio, "fR3k v3 version missing")
 require("-DFR3K_SAFE_BUILD=1" in pio, "safe build flag missing")
 require("FR3K_SAFE_DEFAULT" in pio, "FR3K_SAFE_DEFAULT flag missing")
 require('drawTalk(farm, px, "fR3k")' in boot, "boot splash is not fR3k branded")
@@ -118,8 +118,73 @@ require("playPersonality" in sfx_cpp,
         "SFX::playPersonality() helper missing")
 require("playCuntJingle" in sfx_cpp,
         "SFX::playCuntJingle() helper missing")
+require("setMenuMode" in sfx_cpp,
+        "SFX::setMenuMode() gate missing (v3.0.2 per-screen audio gate)")
+require("setMinimalTap" in sfx_cpp,
+        "SFX::setMinimalTap() helper missing (v3.0.2 menu minimal piezo blip)")
 require("playNav" in sfx_cpp,
         "SFX::playNav() helper missing (v3.0.1 queue-bypassing nav tap)")
+# v3.0.2: SFX::init() must seed s_inMenu / s_minimalTap so the gate
+# is well-defined at boot before App::setMode() runs the first time.
+require("s_inMenu = false" in sfx_cpp,
+        "SFX::init() must seed s_inMenu (v3.0.2 menu gate)")
+require("s_minimalTap = false" in sfx_cpp,
+        "SFX::init() must seed s_minimalTap (v3.0.2 menu gate)")
+# v3.0.2: app.cpp::setMode() must call SFX::setMenuMode() to drive
+# the gate from the current AppMode. FARM is the only non-menu state.
+require("SFX::setMenuMode" in open("src/core/app.cpp").read(),
+        "App::setMode() must call SFX::setMenuMode() (v3.0.2)")
+# v3.0.2: settings rows for the operator to override the default.
+require("MENU SOUND" in open("src/ui/settings_menu.cpp").read(),
+        "MENU SOUND settings row missing (v3.0.2)")
+require("MENU TAP" in open("src/ui/settings_menu.cpp").read(),
+        "MENU TAP settings row missing (v3.0.2)")
+# v3.0.2: PersonalityConfig carries the new fields.
+config_h = open("src/core/config.h").read()
+require("menuSound" in config_h,
+        "PersonalityConfig::menuSound missing (v3.0.2)")
+require("menuMinimalTap" in config_h,
+        "PersonalityConfig::menuMinimalTap missing (v3.0.2)")
+# v3.0.2: SFX::play / playPersonality / playCuntJingle / update all
+# gate on s_inMenu. play() / playPersonality() / playCuntJingle()
+# use single-line `if (s_inMenu) return;`; playNav() and update() use
+# multi-line `if (s_inMenu) { ... }` blocks. Require at least 3 of
+# each form so the gate is present in every audio path.
+# v3.0.3: spectrum-sky overlay removed from the render path. The
+# main loop must NOT call SpectrumSky::begin(); the avatar draw path
+# must NOT call SpectrumSky::drawBackground(). The source files are
+# still present (preserve for re-enable) so this is a behavioural
+# gate, not a presence gate.
+main_cpp = open("src/main.cpp").read()
+# Match a call site (not a comment). Look for the call preceded by
+# whitespace and not a `//` line.
+import re
+def has_call(source, call):
+    for line in source.splitlines():
+        s = line.strip()
+        if s.startswith("//"):
+            continue
+        if call in s:
+            return True
+    return False
+require(not has_call(main_cpp, "SpectrumSky::begin()"),
+        "main.cpp must not call SpectrumSky::begin() (v3.0.3 spectrum-sky removed)")
+avatar_cpp = open("src/piglet/avatar.cpp").read()
+require(not has_call(avatar_cpp, "SpectrumSky::drawBackground"),
+        "avatar.cpp must not call SpectrumSky::drawBackground() (v3.0.3 spectrum-sky removed)")
+# The settings row id 23 must be hard-coded to 0 (forced off) and
+# the setValue path must not toggle it back on.
+settings_cpp = open("src/ui/settings_menu.cpp").read()
+require("case 23: return 0;  // fR3k v3.0.3" in settings_cpp,
+        "settings row 23 (SPECTRUM SKY) must be forced off in getValue (v3.0.3)")
+require('"SPECTRUM SKY OFF (v3.0.3)"' in settings_cpp,
+        "settings row 23 setValue must toast SPECTRUM SKY OFF (v3.0.3)")
+require(not has_call(settings_cpp, "SpectrumSky::setEnabled"),
+        "settings must NOT call SpectrumSky::setEnabled (v3.0.3 removed)")
+require(sfx_cpp.count("if (s_inMenu) return") >= 3,
+        "play/playPersonality/playCuntJingle must all gate on s_inMenu (v3.0.2)")
+require(sfx_cpp.count("if (s_inMenu) {") >= 2,
+        "playNav/update must both gate on s_inMenu with multi-line form (v3.0.2)")
 # v3.0.1: CLICK/MENU_CLICK dispatcher arms must be no-ops so legacy
 # SFX::play(SFX::CLICK) callers don't double-strike the speaker.
 # playNav() is the new entry point and is wired at every call site.
@@ -156,10 +221,12 @@ require("RING_N" in telem_h, "Telemetry RING_N constant missing")
 require("DIR_TELEMETRY" in storage_h, "Telemetry dir constant missing")
 require("/0N3P0rK/telemetry" in storage_h, "Telemetry path missing")
 
-# ===[ v3 spectrum-sky ] ===]
-require("namespace SpectrumSky" in sky_h, "SpectrumSky namespace missing")
-require("SpectrumSky::drawBackground" in avatar,
-        "avatar does not call SpectrumSky::drawBackground")
+# ===[ v3 spectrum-sky (REMOVED in v3.0.3) ] ===
+# Source files preserved for future re-enable but the render path no
+# longer calls them. Behavioural gate: not the namespace's presence.
+require("namespace SpectrumSky" in sky_h, "SpectrumSky namespace missing (preserve)")
+require("SpectrumSky::drawBackground" not in avatar,
+        "avatar must NOT call SpectrumSky::drawBackground (v3.0.3 removed)")
 
 # ===[ v3 IR AU ] ===]
 require("AUS_PROTO_NEC" in au_db, "AU NEC protocol missing")
@@ -177,8 +244,8 @@ require("Pack::AU_BRANDS" in irport_cpp, "irport AU_BRANDS pack missing")
 # ===[ v3 status page ] ===]
 require('"LAB"' in settings and '"TELEM"' in settings,
         "STATUS page must include LAB + TELEM rows")
-require("SpectrumSky::setEnabled" in settings,
-        "settings must dispatch SpectrumSky enable")
+# v3.0.3 spectrum-sky enable/disable: behavioural check lives in the
+# v3.0.3 block above using has_call() to ignore comments.
 
 # User-facing surfaces may keep the legacy path, but not legacy character
 # branding.

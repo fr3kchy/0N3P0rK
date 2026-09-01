@@ -66,6 +66,13 @@ static const Item SCENE[] = {
     {"SOUND WORD",Kind::VALUE,  21, 0, SFX::VOICE_COUNT - 1, 1},
     {"CUNT JINGLE",Kind::TOGGLE,22, 0, 1, 1},
     {"SPECTRUM SKY",Kind::TOGGLE,23, 0, 1, 1},
+    // v3.0.2: per-screen audio gate. Default OFF (operator complaint
+    // about menu lag). When OFF, MENU + ATTACK root navigation is fully
+    // silent. When ON, plays the configured demon word on every nav.
+    {"MENU SOUND",Kind::TOGGLE, 24, 0, 1, 1},
+    // v3.0.2: when MENU SOUND is OFF, optionally still play a 30 ms
+    // single piezo blip on every keypress. Default OFF.
+    {"MENU TAP",  Kind::TOGGLE, 25, 0, 1, 1},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
 
@@ -403,7 +410,9 @@ static int getValue(const Item& it) {
             case 20: return p.cardsEnabled ? 1 : 0;
             case 21: return p.voiceWord;
             case 22: return p.cuntJingle ? 1 : 0;
-            case 23: return p.spectrumSky ? 1 : 0;
+            case 23: return 0;  // fR3k v3.0.3: forced off (spectrum overlay removed)
+            case 24: return p.menuSound ? 1 : 0;
+            case 25: return p.menuMinimalTap ? 1 : 0;
             default: return 0;
         }
     }
@@ -721,9 +730,27 @@ static bool setValue(const Item& it, int v) {
                 if (v) SFX::playCuntJingle();
                 break;
             case 23:
-                p.spectrumSky = v != 0;
-                SpectrumSky::setEnabled(p.spectrumSky);
-                Display::showToast(v ? "SPECTRUM SKY ON" : "SPECTRUM SKY OFF", 900);
+                // fR3k v3.0.3: spectrum-sky overlay removed from render
+                // path. The toggle is preserved so future re-enables can
+                // recover the value; for now it is forced to false.
+                // SpectrumSky::setEnabled() is intentionally not called
+                // here - SpectrumSky::begin() is no longer invoked in
+                // main.cpp, so the singleton state is not initialised
+                // in the default build. The setting is dead but the
+                // UI still shows it as OFF.
+                p.spectrumSky = false;
+                Display::showToast("SPECTRUM SKY OFF (v3.0.3)", 900);
+                break;
+            case 24:
+                p.menuSound = v != 0;
+                Display::showToast(v ? "MENU SOUND ON" : "MENU SOUND OFF", 900);
+                break;
+            case 25:
+                p.menuMinimalTap = v != 0;
+                // Live: refresh the sfx gate so the operator can hear
+                // the difference without leaving the menu.
+                SFX::setMinimalTap(p.menuMinimalTap);
+                Display::showToast(v ? "MENU TAP ON" : "MENU TAP OFF", 900);
                 break;
             default: return false;
         }

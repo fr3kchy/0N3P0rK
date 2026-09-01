@@ -63,7 +63,16 @@ bool Config::init() {
     p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
     p.voiceWord = s_prefs.getUChar("voice", p.voiceWord);
     p.cuntJingle = s_prefs.getBool("cunt", p.cuntJingle);
-    p.spectrumSky = s_prefs.getBool("specsky", p.spectrumSky);
+    // fR3k v3.0.3: spectrum-sky overlay removed from the render path.
+    // Default is false; any persisted `true` from v3.0.0-v3.0.2 is
+    // overridden to false on load so the operator's sky is clean.
+    p.spectrumSky = s_prefs.getBool("specsky", false) && false;
+    // Effectively: read the persisted value but always force false.
+    // The right-hand `&& false` keeps the NVS read (so future re-enables
+    // can recover by removing the `&& false`), but the result is fixed
+    // at false for v3.0.3.
+    p.menuSound = s_prefs.getBool("menusnd", p.menuSound);
+    p.menuMinimalTap = s_prefs.getBool("menutap", p.menuMinimalTap);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -208,6 +217,8 @@ bool Config::save() {
     s_prefs.putUChar("voice", p.voiceWord);
     s_prefs.putBool("cunt", p.cuntJingle);
     s_prefs.putBool("specsky", p.spectrumSky);
+    s_prefs.putBool("menusnd", p.menuSound);
+    s_prefs.putBool("menutap", p.menuMinimalTap);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

@@ -1,11 +1,11 @@
-# fR3k Cardputer Build Notes (v3.0.1-fr3k-lab)
+# fR3k Cardputer Build Notes (v3.0.3-fr3k-lab)
 
 ## Provenance
 
 - Upstream: `https://github.com/lexilexiko/0N3P0rK`
 - Upstream branch: `Methodik`
 - Upstream base commit: `4985112`
-- fR3k version: `3.0.1-fr3k-lab` (default env), `3.0.1-fr3k-safe` (safe env)
+- fR3k version: `3.0.3-fr3k-lab` (default env), `3.0.3-fr3k-safe` (safe env)
 - Build profile: lab-gated distributable + safe-v2 fallback
 
 ## Toolchain
@@ -45,8 +45,8 @@ Result: **both SUCCESS**
 
 | Build          | Image bytes  | % of app partition | SHA-256 |
 |----------------|-------------:|-------------------:|---------|
-| `m5cardputer`      | 2,091,088 | 79.8 % | `5a2715b24e9dd5768465c06df4750aa7fb2883bbd5d93f72ad70e5e887ae6ef6` |
-| `m5cardputer-safe` | 2,089,728 | 79.7 % | `1cca820d75b7128fd01527eef135d20c0d925d58b6e10294925117c7609c480d` |
+| `m5cardputer`      | 2,090,528 | 79.8 % | `6fcf418fd095046c3b1c3f3fb827c82aea8a1ac4fa5934ca6c3c468a60ceee04` |
+| `m5cardputer-safe` | 2,089,168 | 79.7 % | `9c5fff4b4ee82378febb38e75e54bf231b231feac41a71a1398f81f52183df04` |
 
 App partition size: 2,621,440 bytes. ~530 KB headroom in both builds.
 
@@ -159,6 +159,63 @@ App partition size: 2,621,440 bytes. ~530 KB headroom in both builds.
 - `pio run -e m5cardputer-safe`   : PASS
 - `python3 scripts/verify_fr3k.py`: PASS (incl. new click-call-site
   migration gate)
+- `python3 tools/aus_ir_codes_test.py` : PASS
+- `python3 tools/lab_unlock_check.py`  : PASS
+- `git diff --check`             : PASS
+
+## v3.0.2 follow-up (per-screen audio gate)
+
+- New `SFX::setMenuMode(bool)` and `SFX::setMinimalTap(bool)` runtime
+  API. When `setMenuMode(true)` is in effect (i.e. operator is in MENU
+  or ATTACK state), every audio entry point short-circuits:
+  - `SFX::play()` returns early
+  - `SFX::playPersonality()` returns early
+  - `SFX::playCuntJingle()` returns early
+  - `SFX::playNav()` returns early (unless `s_minimalTap` is on)
+  - `SFX::update()` skips the sequence pump + the nav-tap pump
+- `App::setMode()` calls `SFX::setMenuMode(m != AppMode::FARM)` so
+  every state transition drives the gate from the current mode.
+  FARM is the only non-menu working screen; MENU and ATTACK are
+  both root-menu shapes in v3. Personality voice still plays on FARM
+  and in every in-game mode (IR, spectrum, GPS, etc).
+- New `MENU SOUND` settings row in the SCENE page (default OFF).
+  When OFF: silent menu. When ON: plays the configured demon word
+  on every nav. Operator-controlled.
+- New `MENU TAP` settings row (default OFF). When MENU SOUND is OFF,
+  optionally still play a 30 ms single piezo blip on every keypress.
+- New `PersonalityConfig::menuSound` and `PersonalityConfig::menuMinimalTap`
+  fields, persisted to NVS (`menusnd` / `menutap` keys).
+- `SFX::init()` seeds the new `s_inMenu` and `s_minimalTap` static
+  state to false so the gate is well-defined at boot.
+
+## v3.0.3 follow-up (spectrum-sky removed)
+
+- The 13-bar RSSI histogram overlay that drew between the sky gradient
+  and the cloud layer is no longer rendered. `main.cpp` no longer
+  calls `SpectrumSky::begin()`. `src/piglet/avatar.cpp` no longer
+  calls `SpectrumSky::drawBackground()`. The source in
+  `src/piglet/spectrum_sky.{h,cpp}` is preserved for a future
+  re-enable (a one-line change in the avatar draw path).
+- `PersonalityConfig::spectrumSky` is forced to `false` on every
+  load. The settings row id 23 (SPECTRUM SKY) is hard-coded to 0 in
+  `getValue()` and toasts "SPECTRUM SKY OFF (v3.0.3)" if the
+  operator toggles it. The row is preserved in the UI so a future
+  re-enable can recover the value.
+- `src/cap/sniffer.cpp` and `src/cap/sniffer.h` keep the per-channel
+  RSSI tracking infrastructure (`getRssi13()` / `rssiForChannel()` /
+  `noteRssi()`) — the sniffer still fills the table; the sky is
+  just no longer reading it.
+- `verify_fr3k.py` extended with a `has_call()` helper that ignores
+  `//` comment lines, then asserts no live call sites for
+  `SpectrumSky::begin()`, `SpectrumSky::drawBackground()`, or
+  `SpectrumSky::setEnabled()`.
+
+## Build verification (v3.0.2 / v3.0.3)
+
+- `pio run -e m5cardputer`        : PASS
+- `pio run -e m5cardputer-safe`   : PASS
+- `python3 scripts/verify_fr3k.py`: PASS (incl. spectrum-sky
+  removal gate, per-screen audio gate, click-call-site gate)
 - `python3 tools/aus_ir_codes_test.py` : PASS
 - `python3 tools/lab_unlock_check.py`  : PASS
 - `git diff --check`             : PASS
