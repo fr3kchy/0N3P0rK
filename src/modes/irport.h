@@ -16,8 +16,8 @@ public:
 
 private:
     enum class Phase : uint8_t { REGION = 0, READY, BLAST, FILE_PICK, DONE };
-    enum class Pack : uint8_t { BUILTIN = 0, CUSTOM = 1 };
-    enum class Proto : uint8_t { NEC = 0, SAMSUNG, SONY };
+    enum class Pack : uint8_t { BUILTIN = 0, CUSTOM = 1, AU_BRANDS = 2 };
+    enum class Proto : uint8_t { NEC = 0, NEC42, SAMSUNG, SONY };
 
     struct Code {
         Proto proto;
@@ -48,6 +48,7 @@ private:
     static bool keyLatch;
 
     static void loadBuiltin();
+    static void loadAuBrands();
     static bool loadFile(const char* path);
     static void scanFiles();
     static void startBlast();

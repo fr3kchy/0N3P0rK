@@ -61,6 +61,9 @@ bool Config::init() {
     p.fruitTreesAmbient = s_prefs.getBool("fruit", p.fruitTreesAmbient);
     p.freeLife = s_prefs.getBool("life", p.freeLife);
     p.wolfEatLoot = s_prefs.getBool("weat", p.wolfEatLoot);
+    p.voiceWord = s_prefs.getUChar("voice", p.voiceWord);
+    p.cuntJingle = s_prefs.getBool("cunt", p.cuntJingle);
+    p.spectrumSky = s_prefs.getBool("specsky", p.spectrumSky);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -156,9 +159,14 @@ bool Config::init() {
     if (g.baudMode > 2) g.baudMode = 0;
     if (g.timezoneQuarterHours < -48) g.timezoneQuarterHours = -48;
     if (g.timezoneQuarterHours > 56) g.timezoneQuarterHours = 56;
+    // SFX::VOICE_COUNT would force an sfx.h include here; literal 6 matches
+    // the SFX::VoiceWord enum so the clamp stays header-free.
+    if (p.voiceWord > 5) p.voiceWord = 5;  // VOICE_CUNT
 
 #if FR3K_SAFE_BUILD
-    // Ignore legacy offensive settings in the safe distributable.
+    // v2 strict-safe distributable: ignore legacy offensive settings. The
+    // v3 default env (FR3K_SAFE_BUILD=0) honours these from NVS so the RADIO
+    // page exposes them, but only once Lab::isUnlocked() lets the user in.
     r.deauth = false;
     r.bidirKick = false;
     r.eapolTx = false;
@@ -197,6 +205,9 @@ bool Config::save() {
     s_prefs.putBool("fruit", p.fruitTreesAmbient);
     s_prefs.putBool("life", p.freeLife);
     s_prefs.putBool("weat", p.wolfEatLoot);
+    s_prefs.putUChar("voice", p.voiceWord);
+    s_prefs.putBool("cunt", p.cuntJingle);
+    s_prefs.putBool("specsky", p.spectrumSky);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

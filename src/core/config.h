@@ -73,6 +73,15 @@ struct PersonalityConfig {
     bool fruitTreesAmbient = true;
     bool freeLife = true;  // pig walks/jumps/hides even during functions
     bool wolfEatLoot = true;  // bite at 0 hearts stashes loot; hit/Am-off returns it
+    // fR3k demon voice word (v3). Default CUNT per operator instruction;
+    // the operator can change it from the SCEN settings page.
+    uint8_t voiceWord = 5;   // SFX::VOICE_CUNT
+    // When true, every playPersonality() fires the CUNT jingle instead
+    // of the configured word. Defaults to true - keeps the operator's
+    // chosen identity on by default without a separate settings row.
+    bool cuntJingle = true;
+    // Local spectrum-sky overlay (v3). Off = the sky gradient stays clean.
+    bool spectrumSky = true;
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

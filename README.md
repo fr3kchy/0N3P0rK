@@ -1,8 +1,23 @@
 # fR3k — Demon Farm + GNSS for M5Cardputer
 
-fR3k 2.0.0-fr3k is a safe game/GNSS firmware derived from lexilexiko's 0N3P0rK. It preserves the Tamagotchi farm, world artwork, movement, progression, weather, seasons, trees, collisions, wolf, props, cards, saves and animation timing while replacing the procedural pig with a procedural demon.
+fR3k 3.0.0-fr3k-lab is a fork of lexilexiko's 0N3P0rK. It preserves the
+Tamagotchi farm, world artwork, movement, progression, weather, seasons,
+trees, collisions, wolf, props, cards, saves and animation timing while
+replacing the procedural pig with a procedural demon.
 
-The distributable build does not expose active offensive radio launch paths.
+v3 ships two PlatformIO environments:
+
+- `m5cardputer` — default. The offensive radio code path is compiled in
+  but gated by the new runtime `Lab::unlock("666")` flag. Until the
+  operator unlocks, the menu refuses every attack tool and the boot
+  lifecycle skips `Cap::begin / EvilPigMode::init / PigpassMode::init`.
+- `m5cardputer-safe` — strict-safe distributable. Identical to v2.0.0-fr3k
+  in behaviour: no offensive labels, no hotkey launch, no initialised
+  radio subsystems, `FR3K_SAFE_BUILD=1`.
+
+The v3 default distributable **does not** expose offensive radio launch
+paths until the operator enters `666` via `SETTINGS > LAB UNLOCK`. The
+safe distributable never does.
 
 ## Target hardware
 
@@ -14,10 +29,12 @@ The distributable build does not expose active offensive radio launch paths.
 ## Build
 
 ```sh
-/home/parrot/.platformio/penv/bin/pio run -e m5cardputer
+/home/parrot/.platformio/penv/bin/pio run -e m5cardputer       # lab-gated v3
+/home/parrot/.platformio/penv/bin/pio run -e m5cardputer-safe  # strict-safe v3
 ```
 
-PlatformIO environment: `m5cardputer`
+PlatformIO environment: `m5cardputer` (default) and `m5cardputer-safe`
+(strict-safe).
 
 - Platform: `espressif32@6.12.0`
 - Board: `m5stack-stamps3`
@@ -28,6 +45,8 @@ See `BUILD_NOTES.md` for the verified toolchain, memory use, image size, SHA-256
 
 ## fR3k interface
 
+### Safe distributable (`m5cardputer-safe`)
+
 The safe root menu contains:
 
 1. DEMON — name, demon palette, season, sky, scene layers and life settings
@@ -36,6 +55,22 @@ The safe root menu contains:
 4. SYSTEM — brightness, sound and dimming
 5. FILES — SD/internal file manager inherited from the upstream architecture
 6. CONNECT — benign Wi-Fi configuration/scan surface
+
+### Lab-gated distributable (`m5cardputer`)
+
+Locked root menu (matches the safe shape plus one extra row):
+
+1. DEMON
+2. GPS
+3. STATUS
+4. SYSTEM
+5. FILES
+6. CONNECT
+7. **LAB UNLOCK** — opens `SETTINGS > LAB UNLOCK`. Enter the password
+   `666` (text input, hashes via SHA-1) to unlock the lab.
+
+After unlock the root menu switches to the upstream
+`ATTACK / LOOT / DEMON / SET` shape with all 10 hotkeys active.
 
 Press the normal back key to return to the farm.
 
@@ -109,15 +144,61 @@ The legacy `/0N3P0rK` root is intentional. It preserves existing SD/save compati
 
 ## Safe-build policy
 
-`FR3K_SAFE_BUILD=1` is set in `platformio.ini`.
+`FR3K_SAFE_BUILD=1` is set on the `m5cardputer-safe` env in
+`platformio.ini`.
 
 - attack/radio tools are absent from the safe root menu
 - legacy offensive hotkeys are disabled
 - legacy offensive action IDs are rejected
 - capture, portal and cracking modes are not initialised at boot
-- deauthentication, bidirectional kick, EAPOL TX, PMKID probe, CSA herd and authentication-flood settings are forced off
+- deauthentication, bidirectional kick, EAPOL TX, PMKID probe, CSA herd
+  and authentication-flood settings are forced off
 
-Dormant upstream implementation remains in source for provenance and compatibility but has no safe-build menu or hotkey launch path.
+Dormant upstream implementation remains in source for provenance and
+compatibility but has no safe-build menu or hotkey launch path.
+
+## v3 lab-gate policy (`m5cardputer` env)
+
+The default env compiles the offensive code path but wires it behind a
+runtime gate:
+
+- NVS namespace `fr3klab` stores a 0/1 unlock flag and an 8-bit tool
+  bitmask.
+- The unlock password is `666`. SHA-1 of the typed input must equal
+  `cd3f0c85b158c08a2b113464991810cf2cdfc387`. SHA-1 is implemented in
+  firmware (`src/lab/lab_unlock.cpp`) using the RFC 3174 / FIPS 180-4
+  reference algorithm; the verify script (`tools/lab_unlock_check.py`)
+  re-implements the same algorithm in Python and confirms the
+  constant matches.
+- The gate is honored at three layers: `Menu::doAction` guard,
+  `Menu::tryHotkey` guard, and `main.cpp` setup-time init of
+  `Cap::begin / EvilPigMode::init / PigpassMode::init`.
+- After unlock the operator can toggle each tool individually on
+  `SETTINGS > LAB UNLOCK > LIGHT / AGGRO / EVILPIG / PIGPASS / BLE /
+  IR / SPECTRUM / LOOT`.
+- `LOCK NOW` action clears the unlock flag and zeroes the mask.
+
+## v3 spectrum-sky
+
+A 13-bar 2.4 GHz RSSI histogram is drawn between the sky gradient and
+the cloud layer. When `Cap::RunMode::Light` is running the bars reflect
+the per-channel RSSI from the sniffer; otherwise a passive
+`WiFi.scanNetworks()` poll every 5 s drives them. Toggle via
+`SETTINGS > DEMON > SPECTRUM SKY`.
+
+## v3 Australian IR brand DB
+
+Press `V` in `IR PORT` to load the built-in Australian brand DB
+(`src/ir/aus_brand_db.h`): 75 entries across 4 protocols (NEC, NEC42,
+SAMSUNG, SONY). Carrier locked to 38 kHz / 940 nm, single-shot only.
+Generator: `tools/aus_ir_codes.py`. Self-test: `tools/aus_ir_codes_test.py`.
+
+## v3 demon voice
+
+The four `OINK_*` sequences are replaced by five 2-step pitch contours
+(`ACK / HEY / NAH / MUM / OOF`) plus a blunt `SFX::CUNT` jingle.
+Default voice word is `CUNT` per operator instruction. Switch via
+`SETTINGS > DEMON > SOUND WORD`. Toggle the jingle via `CUNT JINGLE`.
 
 ## SD/save compatibility
 
@@ -129,17 +210,19 @@ Run:
 
 ```sh
 python3 scripts/verify_fr3k.py
+python3 tools/aus_ir_codes_test.py
+python3 tools/lab_unlock_check.py
 ```
 
 Release packaging includes:
 
-- `fr3k-cardputer.bin`
-- `firmware.elf`
-- `firmware.map`
-- complete source ZIP
-- upstream patch
+- `fr3k-cardputer-v3.bin` — default env (lab-gated)
+- `fr3k-cardputer-v3-safe.bin` — strict-safe env
+- `fr3k-cardputer-v3.elf`, `fr3k-cardputer-v3-safe.elf`
+- `fr3k-cardputer-v3.map`, `fr3k-cardputer-v3-safe.map`
 - `BUILD_NOTES.md`
 - `CHANGELOG_fr3k.md`
+- `SHA256SUMS`
 
 ## Credits and licence
 

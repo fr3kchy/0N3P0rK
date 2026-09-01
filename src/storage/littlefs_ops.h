@@ -54,6 +54,7 @@ const char* const DIR_IR         = "/0N3P0rK/ir";
 const char* const DIR_WOLF       = "/0N3P0rK/wolf";
 const char* const DIR_TALK       = "/0N3P0rK/talk";
 const char* const DIR_GPS        = "/0N3P0rK/gps";
+const char* const DIR_TELEMETRY  = "/0N3P0rK/telemetry";
 const char* const FILE_GPS_TRACK = "/0N3P0rK/gps/track.csv";
 
 const char* const FILE_WPASEC_KEY        = "/0N3P0rK/wpa-sec/key.txt";
@@ -71,6 +72,13 @@ size_t fileSize(const char* path);
 bool formatStorage();
 // Append one bounded CSV record under the legacy-compatible project root.
 bool appendGpsCsv(const char* line);
+
+// Append raw bytes to /0N3P0rK/telemetry/<path> (no path - the caller
+// passes only the date-stamped basename). Returns false on SD error.
+// Telemetry.cpp calls SD directly for performance, but the API lives
+// here so other modules can append telemetry rows without re-implementing
+// the mutex dance.
+bool appendTelemetry(const char* pathTail, const uint8_t* data, size_t n);
 
 // Read first line of a key file into dest. Returns true if non-empty.
 bool loadKeyFile(const char* path, char* dest, size_t destLen);

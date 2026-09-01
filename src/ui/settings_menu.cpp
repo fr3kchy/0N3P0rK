@@ -5,6 +5,9 @@
 #include "../core/xp.h"
 #include "../piglet/props.h"
 #include "../core/app.h"
+#include "../lab/lab_unlock.h"
+#include "../piglet/spectrum_sky.h"
+#include "../telemetry/telemetry.h"
 #include "../piglet/scene_layers.h"
 #include "../piglet/wolf.h"
 #include "../piglet/mood.h"
@@ -58,6 +61,11 @@ static const Item SCENE[] = {
     {"TALK SEC",  Kind::VALUE,  17, 2, 10, 1},
     {"ANIM TEST", Kind::TOGGLE, 14, 0, 1, 1},
     {"CODE",      Kind::TEXT,   16, 0, 0, 0},
+    // v3 audio + overlay controls (ids 21..23 - kept out of the legacy
+    // 0..20 range so old NVS blobs still parse).
+    {"SOUND WORD",Kind::VALUE,  21, 0, SFX::VOICE_COUNT - 1, 1},
+    {"CUNT JINGLE",Kind::TOGGLE,22, 0, 1, 1},
+    {"SPECTRUM SKY",Kind::TOGGLE,23, 0, 1, 1},
 };
 static const uint8_t SCENE_N = sizeof(SCENE) / sizeof(SCENE[0]);
 
@@ -124,6 +132,26 @@ static const Item KEYS[] = {
     {"FILES",    Kind::BIND, 9, 0, 0, 0},
 };
 static const uint8_t KEYS_N = sizeof(KEYS) / sizeof(KEYS[0]);
+
+// LAB UNLOCK page (v3).  Item IDs are local to the LAB page only - none
+// of them collide with SCENE / SYSTEM / RADIO / BLE / KEYS IDs, so the
+// legacy pages keep their existing in-place id namespace.
+//   id 0   PASSWORD   TEXT  - type "666" then ENT to unlock
+//   id 1   LOCK NOW   ACTION - clears the lab flag and mask
+//   id 2..9  per-tool TOGGLE - only editable while unlocked
+static const Item LAB[] = {
+    {"PASSWORD", Kind::TEXT,   0,  0, 0, 0},
+    {"LOCK NOW", Kind::ACTION, 1,  0, 0, 0},
+    {"LIGHT",    Kind::TOGGLE, 2,  0, 1, 1},
+    {"AGGRO",    Kind::TOGGLE, 3,  0, 1, 1},
+    {"EVILPIG",  Kind::TOGGLE, 4,  0, 1, 1},
+    {"PIGPASS",  Kind::TOGGLE, 5,  0, 1, 1},
+    {"BLE",      Kind::TOGGLE, 6,  0, 1, 1},
+    {"IR",       Kind::TOGGLE, 7,  0, 1, 1},
+    {"SPECTRUM", Kind::TOGGLE, 8,  0, 1, 1},
+    {"LOOT",     Kind::TOGGLE, 9,  0, 1, 1},
+};
+static const uint8_t LAB_N = sizeof(LAB) / sizeof(LAB[0]);
 
 static const char* const H_SCENE[] = {
     "TYPE NAME. ENT SAVE.",
@@ -201,6 +229,18 @@ static const char* const H_KEYS[] = {
     "H = WPASEC / PWN.",
     "R = RADIO SETTINGS."
 };
+static const char* const H_LAB[] = {
+    "TYPE 666 THEN ENT TO UNLOCK.",
+    "ENT CLEARS THE LAB FLAG.",
+    "PASSIVE CHANNEL LISTEN.",
+    "AGGRO HUNT (KICK / HS).",
+    "EVILPIG LAB PORTAL.",
+    "PIGPASS OFFLINE WPA LAB.",
+    "BLE FRAME SPAM.",
+    "IR PORT (38 KHZ / 940 NM).",
+    "2.4 GHZ SPECTRUM VIEW.",
+    "LOOT / WPA-SEC / PWNCRACK."
+};
 
 struct NetRow {
     char ssid[33];
@@ -236,6 +276,7 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::RADIO) { *n = RADIO_N; return RADIO; }
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
+    if (s_page == SettingsPage::LAB)  { *n = LAB_N; return LAB; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
     *n = SCENE_N;
@@ -259,6 +300,19 @@ static const char* skinName(uint8_t s) {
         case PigSkin::CANDY:   return "CANDY";
         case PigSkin::GOLD:    return "GOLD";
         case PigSkin::DIRTY:   return "DUST";
+        default: return "?";
+    }
+}
+
+// Voice word name for the SOUND WORD settings row (id 21).
+static const char* voiceWordName(uint8_t v) {
+    switch (v) {
+        case SFX::VOICE_ACK:  return "ACK";
+        case SFX::VOICE_HEY:  return "HEY";
+        case SFX::VOICE_NAH:  return "NAH";
+        case SFX::VOICE_MUM:  return "MUM";
+        case SFX::VOICE_OOF:  return "OOF";
+        case SFX::VOICE_CUNT: return "CUNT";
         default: return "?";
     }
 }
@@ -347,6 +401,9 @@ static int getValue(const Item& it) {
             case 18: return p.propsEnabled ? 1 : 0;
             case 19: return p.friendEnabled ? 1 : 0;
             case 20: return p.cardsEnabled ? 1 : 0;
+            case 21: return p.voiceWord;
+            case 22: return p.cuntJingle ? 1 : 0;
+            case 23: return p.spectrumSky ? 1 : 0;
             default: return 0;
         }
     }
@@ -392,11 +449,43 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
+    if (s_page == SettingsPage::LAB) {
+        // Per-tool toggle row reflects the persisted mask. While locked
+        // every toggle reads as 0 (off) - the operator must unlock first
+        // via PASSWORD before they can pre-arm bits by toggling them off
+        // again. Mirrors Lab::isToolEnabled() so the UI matches the
+        // runtime gate.
+        switch (it.id) {
+            case 2: return Lab::isToolEnabled(Lab::TOOL_LIGHT) ? 1 : 0;
+            case 3: return Lab::isToolEnabled(Lab::TOOL_AGGRO) ? 1 : 0;
+            case 4: return Lab::isToolEnabled(Lab::TOOL_EVILPIG) ? 1 : 0;
+            case 5: return Lab::isToolEnabled(Lab::TOOL_PIGPASS) ? 1 : 0;
+            case 6: return Lab::isToolEnabled(Lab::TOOL_BLE) ? 1 : 0;
+            case 7: return Lab::isToolEnabled(Lab::TOOL_IR) ? 1 : 0;
+            case 8: return Lab::isToolEnabled(Lab::TOOL_SPECTRUM) ? 1 : 0;
+            case 9: return Lab::isToolEnabled(Lab::TOOL_LOOT) ? 1 : 0;
+            default: return 0;
+        }
+    }
     return it.id == 0 ? b.burstMs : b.advMs;
 }
 
 static void formatValue(const Item& it, char* out, size_t len, bool editing) {
     if (it.kind == Kind::TEXT) {
+        if (s_page == SettingsPage::LAB && it.id == 0) {
+            // PASSWORD - never echo the cleartext. While idle show
+            // "ENTER 666"; while editing show a dot per character + cursor.
+            if (s_text) {
+                size_t n = strlen(s_edit);
+                if (n + 2 > len) n = len - 2;
+                out[0] = '>';
+                for (size_t i = 0; i < n; i++) out[1 + i] = '*';
+                out[1 + n] = '\0';
+            } else {
+                snprintf(out, len, Lab::isUnlocked() ? "OPEN" : "ENTER 666");
+            }
+            return;
+        }
         if (it.id == 16) {
             if (s_text) snprintf(out, len, ">%s", s_edit);
             else snprintf(out, len, XP::allUnlocked() ? "OPEN" : "----");
@@ -434,6 +523,7 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         if (it.id == 1) strncpy(raw, skinName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 2) strncpy(raw, seasonName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else if (it.id == 3) strncpy(raw, skyName((uint8_t)getValue(it)), sizeof(raw) - 1);
+        else if (it.id == 21) strncpy(raw, voiceWordName((uint8_t)getValue(it)), sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%d", getValue(it));
     } else if (s_page == SettingsPage::SYSTEM && it.id == 2) {
         int v = getValue(it);
@@ -616,6 +706,25 @@ static bool setValue(const Item& it, int v) {
                 p.animTest = v != 0;
                 if (v != 0) Display::showToast("ANIM TEST: -/= ON FARM", 1800);
                 break;
+            case 21:
+                p.voiceWord = (uint8_t)v;
+                // Live preview - play the chosen word so the operator
+                // hears what they're picking without leaving the menu.
+                {
+                    PersonalityConfig pc = p;
+                    Config::setPersonality(pc);
+                    SFX::playPersonality();
+                }
+                break;
+            case 22:
+                p.cuntJingle = v != 0;
+                if (v) SFX::playCuntJingle();
+                break;
+            case 23:
+                p.spectrumSky = v != 0;
+                SpectrumSky::setEnabled(p.spectrumSky);
+                Display::showToast(v ? "SPECTRUM SKY ON" : "SPECTRUM SKY OFF", 900);
+                break;
             default: return false;
         }
         Config::save();
@@ -679,6 +788,26 @@ static bool setValue(const Item& it, int v) {
         // is excluded above — switching methods alone isn't "customising".
         Config::markRadioCustom();
         Config::save();
+        return true;
+    }
+    if (s_page == SettingsPage::LAB) {
+        // Per-tool toggle - only meaningful while unlocked. The locked
+        // case still falls through and reports false so the UI cursor
+        // doesn't pretend to have flipped anything.
+        Lab::Tool t;
+        switch (it.id) {
+            case 2: t = Lab::TOOL_LIGHT;    break;
+            case 3: t = Lab::TOOL_AGGRO;    break;
+            case 4: t = Lab::TOOL_EVILPIG;  break;
+            case 5: t = Lab::TOOL_PIGPASS;  break;
+            case 6: t = Lab::TOOL_BLE;      break;
+            case 7: t = Lab::TOOL_IR;       break;
+            case 8: t = Lab::TOOL_SPECTRUM; break;
+            case 9: t = Lab::TOOL_LOOT;     break;
+            default: return false;
+        }
+        if (!Lab::isUnlocked()) return false;
+        Lab::setTool(t, v != 0);
         return true;
     }
     if (it.id == 0) b.burstMs = (uint16_t)v;
@@ -763,23 +892,36 @@ SettingsPage page() { return s_page; }
 const char* bottomHint() {
     if (s_page == SettingsPage::CONNECT) {
         if (s_conn == ConnPhase::PASS) return "type pass  BS erase  ENT";
-        return ";/. pick  ENT  R rescan";
+        return ";/.. pick  ENT  R rescan";
     }
-    if (s_page == SettingsPage::STATUS) return ";/. scroll  ` back";
+    if (s_page == SettingsPage::STATUS) return ";/.. scroll  ` back";
     if (s_text) return "type  ENT save  BS erase";
     if (s_bind) return "press a key  ` cancel";
     if (s_page == SettingsPage::KEYS) return "ENT set  BS clear  ` back";
-    if (s_editing) return ";/. change  ENT done";
+    if (s_editing) return ";/.. change  ENT done";
     uint8_t n = 0;
     const Item* it = items(&n);
     if (it && s_idx < n) {
-        if (it[s_idx].kind == Kind::TOGGLE) return "ENT yes/no  ;/.  ` back";
-        if (it[s_idx].kind == Kind::TEXT)
+        if (it[s_idx].kind == Kind::TOGGLE) {
+            // Tool toggles refuse to flip while the lab is locked - tell
+            // the operator instead of pretending to have flipped.
+            if (s_page == SettingsPage::LAB && !Lab::isUnlocked())
+                return "locked: type 666 first";
+            return "ENT yes/no  ;/.  ` back";
+        }
+        if (it[s_idx].kind == Kind::TEXT) {
+            if (s_page == SettingsPage::LAB && it[s_idx].id == 0)
+                return "ENT type password";
             return it[s_idx].id == 16 ? "ENT type code" : "ENT type name";
-        if (it[s_idx].kind == Kind::ACTION) return "ENT reset radio to STOCK";
+        }
+        if (it[s_idx].kind == Kind::ACTION) {
+            if (s_page == SettingsPage::LAB && it[s_idx].id == 1)
+                return "ENT clear lab flag";
+            return "ENT reset radio to STOCK";
+        }
         return "ENT edit  ;/.  ` back";
     }
-    return ";/.  ENT  ` back";
+    return ";/..  ENT  ` back";
 }
 
 static void updateConnect() {
@@ -932,6 +1074,22 @@ void update() {
                 s_edit[0] = '\0';
                 return;
             }
+            // LAB page PASSWORD commit.  Compare against Lab::unlock(),
+            // which hashes the typed ASCII and matches the baked hash -
+            // never store or echo the cleartext.
+            if (s_page == SettingsPage::LAB && cur.id == 0) {
+                bool ok = Lab::unlock(s_edit);
+                s_text = false;
+                s_edit[0] = '\0';
+                if (ok) {
+                    SFX::play(SFX::LEVEL_UP);
+                    Display::showToast("LAB OPEN", 1400);
+                } else {
+                    SFX::play(SFX::ERROR);
+                    Display::showToast("LOCKED", 900);
+                }
+                return;
+            }
             PersonalityConfig& p = Config::personality();
             strncpy(p.name, s_edit, sizeof(p.name) - 1);
             p.name[sizeof(p.name) - 1] = '\0';
@@ -1054,6 +1212,13 @@ void update() {
             SFX::play(SFX::CONFIRM);
             Display::showToast("RADIO RESET", 1000);
         }
+        if (s_page == SettingsPage::LAB && cur.id == 1) {
+            // LOCK NOW: clear the lab flag + tool mask. NVS persists so
+            // the next boot also boots locked.
+            Lab::lock();
+            SFX::play(SFX::BACK_NAV);
+            Display::showToast("LAB LOCKED", 1000);
+        }
         return;
     }
 
@@ -1067,6 +1232,7 @@ void update() {
     }
     if (cur.kind == Kind::TEXT) {
         if (cur.id == 16) s_edit[0] = '\0';
+        else if (s_page == SettingsPage::LAB && cur.id == 0) s_edit[0] = '\0';
         else {
             strncpy(s_edit, Config::personality().name, sizeof(s_edit) - 1);
             s_edit[sizeof(s_edit) - 1] = '\0';
@@ -1168,6 +1334,7 @@ static void drawStatus(M5Canvas& canvas) {
     canvas.setTextDatum(top_left);
 
     char lvl[16], xp[16], batt[16], gpsFix[18], gpsLog[18], ver[20];
+    char lab[32], telem[32];
     snprintf(lvl, sizeof(lvl), "%u", (unsigned)XP::getLevel());
     snprintf(xp, sizeof(xp), "%lu/%lu",
              (unsigned long)XP::intoLevel(), (unsigned long)XP::needForNext());
@@ -1182,19 +1349,37 @@ static void drawStatus(M5Canvas& canvas) {
     else snprintf(gpsFix, sizeof(gpsFix), "FIX %lu SAT", (unsigned long)gs.satellites);
     snprintf(gpsLog, sizeof(gpsLog), "%s", Config::gps().logging ? "CSV ON" : "CSV OFF");
     snprintf(ver, sizeof(ver), "fR3k v%s", FR3K_VERSION);
+    // fR3k v3: lab row + telemetry row. The lab row shows the unlock
+    // state and the compact tool mask (LIGHT/AGG/EP/PP/...). The
+    // telemetry row is a text summary; the sparkline is drawn below the
+    // row list to keep the line layout uncluttered.
+    if (Lab::isUnlocked()) {
+        Lab::formatActiveMask(lab, sizeof(lab));
+    } else {
+        snprintf(lab, sizeof(lab), "LOCKED - SETTINGS > LAB");
+    }
+    Telemetry::Record tr;
+    if (Telemetry::getLast(0, tr)) {
+        snprintf(telem, sizeof(telem), "HEAP %u KB FREE",
+                 (unsigned)(tr.heap / 1024));
+    } else {
+        snprintf(telem, sizeof(telem), "BOOTING ...");
+    }
 
-    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "GPS", "GPS LOG", "SAFE", "VER" };
+    const char* k[] = { "LVL", "XP", "BOARD", "BATT", "SD", "GPS", "GPS LOG", "SAFE", "VER", "LAB", "TELEM" };
     const char* v[] = {
         lvl, xp, Board::modelLabel(), batt,
         Config::isSDAvailable() ? "YES" : "NO",
         gpsFix,
         gpsLog,
         "RADIO TX OFF",
-        ver
+        ver,
+        lab,
+        telem
     };
-    const uint8_t statN = 9;
+    const uint8_t statN = 11;
     if (s_statScroll > statN - STAT_VIS) {
-        s_statScroll = (statN > STAT_VIS) ? (uint8_t)(statN - STAT_VIS) : 0;
+        s_statScroll = (uint8_t)(statN - STAT_VIS);
     }
 
     int y = 24;
@@ -1217,6 +1402,37 @@ static void drawStatus(M5Canvas& canvas) {
         y += lh;
     }
 
+    // fR3k v3: telemetry sparkline at the bottom of the STATUS page. Draws
+    // up to 96 heap readings (5 min @ 5 s sample) as a single-pixel-high
+    // band; cheap enough to refresh every paint.
+    int sp_y = MAIN_H - 18;
+    int sp_x = 78;
+    int sp_w = 144;
+    canvas.setTextColor(UI_DIM);
+    canvas.drawString("HEAP 5M", 8, sp_y);
+    canvas.drawFastHLine(sp_x, sp_y + 6, sp_w, UI_DIM);
+    // Find min/max heap across the ring so the trace fills the band.
+    uint16_t lo = 0xFFFF, hi = 0;
+    int valid = 0;
+    for (uint8_t i = 0; i < Telemetry::RING_N; i++) {
+        Telemetry::Record r;
+        if (!Telemetry::getLast((uint8_t)(Telemetry::RING_N - 1 - i), r)) break;
+        valid++;
+        if (r.heap < lo) lo = r.heap;
+        if (r.heap > hi) hi = r.heap;
+    }
+    if (valid >= 2 && hi > lo) {
+        int bandH = 8;
+        int sx = sp_x;
+        for (uint8_t i = 0; i < Telemetry::RING_N && sx < sp_x + sp_w; i++) {
+            Telemetry::Record r;
+            if (!Telemetry::getLast((uint8_t)(Telemetry::RING_N - 1 - i), r)) break;
+            int yPos = sp_y + 6 - ((r.heap - lo) * bandH / (hi - lo));
+            canvas.drawPixel(sx, yPos, UI_TEXT);
+            sx++;
+        }
+    }
+
     canvas.setTextColor(UI_DIM);
     if (s_statScroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
     if (s_statScroll + STAT_VIS < statN)
@@ -1224,7 +1440,7 @@ static void drawStatus(M5Canvas& canvas) {
 
     canvas.setTextColor(UI_TITLE);
     canvas.setTextDatum(top_center);
-    canvas.drawString(";/.  ` BACK", DISPLAY_W / 2, MAIN_H - 10);
+    canvas.drawString(";/..  ` BACK", DISPLAY_W / 2, MAIN_H - 10);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font0);
 }
@@ -1248,12 +1464,42 @@ void draw(M5Canvas& canvas) {
     else if (s_page == SettingsPage::RADIO) title = "RADIO";
     else if (s_page == SettingsPage::BLE) title = "BLE";
     else if (s_page == SettingsPage::KEYS) title = "KEYS";
+    else if (s_page == SettingsPage::LAB) {
+        // Title swaps to reflect runtime state - "LOCKED" while closed,
+        // "OPEN" with the active mask once unlocked. One less row to scan.
+        if (Lab::isUnlocked()) {
+            char maskTag[40];
+            Lab::formatActiveMask(maskTag, sizeof(maskTag));
+            // Keep the title short; the full mask is rendered at the top.
+            title = "LAB OPEN";
+            (void)maskTag; // referenced by the banner below
+        } else {
+            title = "LAB LOCKED";
+        }
+    }
 
     canvas.setTextDatum(top_center);
     canvas.setTextSize(2);
     canvas.setTextColor(UI_TITLE);
     canvas.drawString(title, DISPLAY_W / 2, 2);
     canvas.drawLine(10, 20, DISPLAY_W - 10, 20, UI_TITLE);
+
+    // LAB page banner under the title: shows "ENTER 666" while locked,
+    // or the active tool mask while unlocked.
+    if (s_page == SettingsPage::LAB) {
+        canvas.setTextSize(1);
+        canvas.setTextColor(UI_DIM);
+        canvas.setTextDatum(top_center);
+        char banner[96];
+        if (Lab::isUnlocked()) {
+            Lab::formatActiveMask(banner, sizeof(banner));
+        } else {
+            snprintf(banner, sizeof(banner), "ENTER 666 TO UNLOCK");
+        }
+        canvas.drawString(banner, DISPLAY_W / 2, 23);
+        canvas.setTextSize(2);
+        canvas.setTextDatum(top_left);
+    }
 
     uint8_t n = 0;
     const Item* list = items(&n);
@@ -1291,6 +1537,7 @@ void draw(M5Canvas& canvas) {
     else if (s_page == SettingsPage::RADIO) hints = H_RADIO;
     else if (s_page == SettingsPage::BLE) hints = H_BLE;
     else if (s_page == SettingsPage::KEYS) hints = H_KEYS;
+    else if (s_page == SettingsPage::LAB) hints = H_LAB;
     if (s_idx < n) {
         canvas.setTextColor(UI_TITLE);
         canvas.setTextDatum(top_center);

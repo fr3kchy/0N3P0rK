@@ -14,6 +14,20 @@
 
 namespace SFX {
 
+// ===[ fR3K PERSONALITY VOICE WORDS ]==
+// Demon vocab (v3). Five 2-step pitch contours + one blunt jingle.
+// SOUND WORD settings row cycles ACK HEY NAH MUM OOF; CUNT JINGLE is the
+// user-facing default per the operator's direct instruction.
+enum VoiceWord : uint8_t {
+    VOICE_ACK = 0,
+    VOICE_HEY = 1,
+    VOICE_NAH = 2,
+    VOICE_MUM = 3,
+    VOICE_OOF = 4,
+    VOICE_CUNT = 5,
+    VOICE_COUNT = 6,
+};
+
 // ==[ EVENTS ]== safe to call from anywhere
 enum Event {
     NONE = 0,
@@ -62,10 +76,18 @@ enum Event {
     BACK_NAV,           // back/escape navigation
 
     // === PIG VOCALIZATIONS ===
-    OINK_HAPPY,         // nasal descending ~300-150Hz
-    OINK_GRUNT,         // low guttural burst ~120-100Hz
-    OINK_SQUEAL,        // high ascending ~800-1200Hz
-    OINK_CURIOUS,       // questioning upward ~400-600Hz
+    OINK_HAPPY,         // legacy alias kept for source compat (maps to ACK)
+    OINK_GRUNT,         // legacy alias kept for source compat (maps to HEY)
+    OINK_SQUEAL,        // legacy alias kept for source compat (maps to OOF)
+    OINK_CURIOUS,       // legacy alias kept for source compat (maps to NAH)
+
+    // === DEMON WORDS (v3) ===
+    ACK,                // quick bright double-tap
+    HEY,                // mid descending pair
+    NAH,                // questioning upward
+    MUM,                // soft murmur (low + warm)
+    OOF,                // short falling thud
+    CUNT,               // blunt descending jingle (~150 ms)
 
     // === AMBIENT SCANNING ===
     SONAR_PING,         // minimal single blip
@@ -119,6 +141,16 @@ uint8_t muteMask();
 
 // Direct tone access (for special cases)
 void tone(uint16_t freq, uint16_t duration);
+
+// Play the personality's chosen demon word (SOUND WORD settings row).
+// Picks ACK / HEY / NAH / MUM / OOF / CUNT from Config::personality().
+// Called from Mood / boot splash / etc instead of the legacy OINK_* events.
+void playPersonality();
+
+// One-shot fire of the CUNT jingle regardless of the configured word -
+// used by settings UI / unlock confirmation when the operator wants
+// to hear the jingle out of band.
+void playCuntJingle();
 
 }  // namespace SFX
 

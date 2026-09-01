@@ -93,5 +93,9 @@ void runBootSplash() {
 
     Avatar::setManualWalk(false);
     Avatar::setGrassMoving(false, true, true);
+    // Fire the personality voice on first paint so the operator hears
+    // which demon word is the active default. Honors the CUNT jingle
+    // when Config::personality().cuntJingle is on (default true).
+    SFX::playPersonality();
     restoreGfx();
 }

@@ -307,44 +307,63 @@ static const Note SND_BACK_NAV[] = {
 // ==[ PIG VOCALIZATIONS ]==
 // Stepped pitch descent creates nasal "oink" quality (bfxr-inspired)
 
-// OINK_HAPPY: Satisfied pig snuffle — nasal wobble with breathy descent
-static const Note SND_OINK_HAPPY[] = {
-    {320, 30, 0},     // nasal onset
-    {280, 25, 5},     // wobble down + breath gap
-    {310, 20, 0},     // pitch instability (pigs aren't pitch-perfect)
-    {240, 30, 0},     // settle lower
-    {200, 25, 0},     // snuffle tail
+// ===[ DEMON WORDS ]===
+// 2-step pitch contours in 280-1100 Hz range, ~80-120 ms total. Replaces
+// the v2 OINK_* sequences. Each word has its own vowel character so the
+// demon has a recognisable vocab, not just a tonal mood.
+
+// ACK: bright snap - quick ascending double-tap, "yes?"
+static const Note SND_ACK[] = {
+    {820, 30, 5},
+    {1080, 35, 0},
     {0, 0, 0}
 };
 
-// OINK_GRUNT: Deep guttural burst — low as the piezo can handle
-// Cardputer piezo rolls off hard below ~300Hz, so 300-450Hz is our "bass"
-static const Note SND_OINK_GRUNT[] = {
-    {420, 40, 0},     // guttural attack (low as audible)
-    {340, 35, 0},     // drop into rumble
-    {400, 20, 5},     // brief push up (vocal wobble)
-    {300, 40, 0},     // settle into chest tone
+// HEY: mid descending pair - casual call
+static const Note SND_HEY[] = {
+    {620, 35, 5},
+    {460, 40, 0},
     {0, 0, 0}
 };
 
-// OINK_SQUEAL: Alarmed pig — rapid ascending with vibrato
-static const Note SND_OINK_SQUEAL[] = {
-    {700, 25, 0},     // alarm onset
-    {900, 25, 0},     // rapid rise
-    {850, 20, 0},     // wobble back (vocal instability)
-    {1100, 30, 0},    // peak alarm
-    {1200, 35, 0},    // sustain high
+// NAH: questioning upward - rising terminal intonation
+static const Note SND_NAH[] = {
+    {380, 28, 8},
+    {520, 30, 5},
+    {640, 35, 0},
     {0, 0, 0}
 };
 
-// OINK_CURIOUS: Questioning sniff — upward with micro-pauses (sniffing air)
-static const Note SND_OINK_CURIOUS[] = {
-    {350, 25, 12},    // sniff
-    {380, 20, 10},    // sniff (slightly higher — interest building)
-    {500, 35, 5},     // question rise
-    {580, 40, 0},     // hold the question (rising intonation = curiosity)
+// MUM: soft murmur - low and warm, brief
+static const Note SND_MUM[] = {
+    {300, 35, 5},
+    {360, 30, 5},
+    {320, 30, 0},
     {0, 0, 0}
 };
+
+// OOF: short falling thud - mild disapproval
+static const Note SND_OOF[] = {
+    {560, 20, 0},
+    {380, 28, 0},
+    {260, 35, 0},
+    {0, 0, 0}
+};
+
+// CUNT: blunt descending pair, ~150 ms total. Intentional - this is the
+// default personality voice per the operator's direct instruction. Two
+// distinct pitches so it doesn't blur into a generic low thud.
+static const Note SND_CUNT[] = {
+    {700, 25, 0},
+    {420, 35, 0},
+    {280, 45, 0},
+    {0, 0, 0}
+};
+
+// Legacy OINK_* sequences kept as thin aliases - they still exist as
+// SFX events but dispatch to the demon-word playback below. Old call
+// sites (Mood::feed / Mood::eatWorld / Mood::pet) now use playPersonality
+// directly so the demon's mood matches the configured voice word.
 
 // ==[ AMBIENT SCANNING SOUNDS ]==
 
@@ -543,6 +562,8 @@ static bool isLowPriorityEvent(Event event) {
            event == JUMP || event == ATTACK_HOP || event == WOLF || event == WOLF_HIT ||
            event == MODE_ENTER || event == MODE_EXIT || event == BACK_NAV ||
            event == OINK_HAPPY || event == OINK_GRUNT || event == OINK_CURIOUS ||
+           event == ACK || event == HEY || event == NAH ||
+           event == MUM || event == OOF || event == CUNT ||
            event == THUNDER;
 }
 
@@ -771,18 +792,28 @@ bool update() {
             case BACK_NAV:
                 startSequence(SND_BACK_NAV);
                 break;
-            // Pig vocalizations
+            // Pig vocalizations (legacy aliases + demon words)
             case OINK_HAPPY:
-                startSequence(SND_OINK_HAPPY);
+            case ACK:
+                startSequence(SND_ACK);
                 break;
             case OINK_GRUNT:
-                startSequence(SND_OINK_GRUNT);
-                break;
-            case OINK_SQUEAL:
-                startSequence(SND_OINK_SQUEAL);
+            case HEY:
+                startSequence(SND_HEY);
                 break;
             case OINK_CURIOUS:
-                startSequence(SND_OINK_CURIOUS);
+            case NAH:
+                startSequence(SND_NAH);
+                break;
+            case MUM:
+                startSequence(SND_MUM);
+                break;
+            case OINK_SQUEAL:
+            case OOF:
+                startSequence(SND_OOF);
+                break;
+            case CUNT:
+                startSequence(SND_CUNT);
                 break;
             // Ambient scanning
             case SONAR_PING:
@@ -913,6 +944,29 @@ void tone(uint16_t freq, uint16_t duration) {
     if (currentSequence != nullptr) return;
     applyVolume();
     M5.Speaker.tone(freq, duration);
+}
+
+void playPersonality() {
+    // SOUND WORD settings row picks the demon word; if the operator
+    // switched CUNT JINGLE on (default), the CUNT jingle fires instead.
+    const PersonalityConfig& p = Config::personality();
+    if (p.cuntJingle && p.voiceWord != (uint8_t)VOICE_CUNT) {
+        play(CUNT);
+        return;
+    }
+    switch ((VoiceWord)p.voiceWord) {
+        case VOICE_HEY: play(HEY);  break;
+        case VOICE_NAH: play(NAH);  break;
+        case VOICE_MUM: play(MUM);  break;
+        case VOICE_OOF: play(OOF);  break;
+        case VOICE_CUNT: play(CUNT); break;
+        case VOICE_ACK:
+        default:         play(ACK);  break;
+    }
+}
+
+void playCuntJingle() {
+    play(CUNT);
 }
 
 }  // namespace SFX

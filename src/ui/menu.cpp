@@ -1,7 +1,10 @@
+// fR3k - demon Tamagotchi + GPS on M5Cardputer / Cardputer ADV
+
 #include "menu.h"
 #include "display.h"
 #include "../core/config.h"
 #include "../core/app.h"
+#include "../lab/lab_unlock.h"
 #include "../piglet/mood.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
@@ -86,6 +89,10 @@ static const char* const H_CONN[] = {
     "PICK A NET. TYPE ONLY PASS.",
     "HOME WIFI FOR S-SYNC."
 };
+static const char* const H_LAB[] = {
+    "ENTER 666 TO UNLOCK THE LAB.",
+    "LOCK NOW / PER-TOOL TOGGLES."
+};
 static const char* const H_USB[] = {
     "SD AS A DISK ON THE PC.",
     "PLUG USB. EJECT THEN `."
@@ -149,6 +156,7 @@ static const char* const H_TWEAK[] = {
 };
 
 #if FR3K_SAFE_BUILD
+// v2 strict-safe distributable - no offensive labels ever.
 static const RootItem ROOT[] = {
     {"^v", "DEMON",   H_DEMON,   2, RootType::DIRECT, GroupId::NONE,  7},
     {"@ ", "GPS",     H_GPS,     2, RootType::DIRECT, GroupId::NONE, 21},
@@ -158,14 +166,25 @@ static const RootItem ROOT[] = {
     {"))", "CONNECT", H_CONN,    2, RootType::DIRECT, GroupId::NONE,  6}
 };
 static const uint8_t ROOT_COUNT = 6;
-#else
-static const RootItem ROOT[] = {
-    {"/>", "ATTACK", H_ATTACK, 2, RootType::GROUP,  GroupId::ATTACK, 0},
-    {"[$", "LOOT",   H_LOOT,   2, RootType::DIRECT, GroupId::NONE,   4},
-    {"^v", "DEMON",  H_DEMON,  2, RootType::DIRECT, GroupId::NONE,   7},
-    {"::", "SET",    H_SET,    2, RootType::GROUP,  GroupId::SET,    0}
+#elif !FR3K_SAFE_BUILD
+// v3 default env - two root layouts selected at draw time by Lab::isUnlocked():
+//   locked   : same v2 safe shape plus a 7th row "LAB UNLOCK"
+//   unlocked : the original upstream ATTACK / LOOT / DEMON / SET root
+static const RootItem ROOT_LOCKED[] = {
+    {"^v", "DEMON",   H_DEMON,   2, RootType::DIRECT, GroupId::NONE,  7},
+    {"@ ", "GPS",     H_GPS,     2, RootType::DIRECT, GroupId::NONE, 21},
+    {"::", "STATUS",  H_STAT,    2, RootType::DIRECT, GroupId::NONE, 19},
+    {"[]", "SYSTEM",  H_SYS,     2, RootType::DIRECT, GroupId::NONE, 14},
+    {"[:", "FILES",   H_FILEMGR, 2, RootType::DIRECT, GroupId::NONE, 20},
+    {"))", "CONNECT", H_CONN,    2, RootType::DIRECT, GroupId::NONE,  6},
+    {"# ", "LAB UNLOCK", H_LAB,  2, RootType::DIRECT, GroupId::NONE, 22}
 };
-static const uint8_t ROOT_COUNT = 4;
+static const RootItem ROOT_OPEN[] = {
+    {"/>", "ATTACK",  H_ATTACK,  2, RootType::GROUP,  GroupId::ATTACK, 0},
+    {"[$", "LOOT",    H_LOOT,    2, RootType::DIRECT, GroupId::NONE,   4},
+    {"^v", "DEMON",   H_DEMON,   2, RootType::DIRECT, GroupId::NONE,   7},
+    {"::", "SET",     H_SET,     2, RootType::GROUP,  GroupId::SET,    0}
+};
 #endif
 
 static const Item G_ATTACK[] = {
@@ -200,6 +219,26 @@ static uint32_t s_openMs = 0;
 static const uint8_t VISIBLE = 4;
 static const uint8_t MODAL_VIS = 4;
 
+// Resolve the active root menu + count at draw time. Safe build returns
+// the single static ROOT[] / ROOT_COUNT. v3 default returns one of two
+// layouts based on the lab runtime gate.
+static const RootItem* activeRoot() {
+#if FR3K_SAFE_BUILD
+    return ROOT;
+#else
+    return Lab::isUnlocked() ? ROOT_OPEN : ROOT_LOCKED;
+#endif
+}
+static uint8_t activeRootCount() {
+#if FR3K_SAFE_BUILD
+    return ROOT_COUNT;
+#else
+    return Lab::isUnlocked()
+        ? (uint8_t)(sizeof(ROOT_OPEN) / sizeof(ROOT_OPEN[0]))
+        : (uint8_t)(sizeof(ROOT_LOCKED) / sizeof(ROOT_LOCKED[0]));
+#endif
+}
+
 // leftover screens (PIG tweak / WIFI)
 static int s_sel = 0;
 static int s_count = 0;
@@ -227,10 +266,25 @@ static const char* groupName(GroupId g) {
 
 static void doAction(uint8_t id) {
 #if FR3K_SAFE_BUILD
+    // Legacy v2 safe build - refuse every offensive ID regardless of unlock.
     if (id == 1 || id == 2 || id == 9 || id == 10 || id == 11 ||
         id == 12 || id == 13 || id == 15 || id == 16 || id == 18) {
         Display::showToast("DISABLED: SAFE BUILD", 1500);
         return;
+    }
+#else
+    // v3 default build - refuse the same offensive IDs until the operator
+    // unlocks the lab via SETTINGS > LAB UNLOCK. The SETTINGS / RADIO page
+    // (id 11) stays usable while locked so the user can change harmless
+    // radio knobs; the offensive ones stay muted.
+    static const uint8_t kOffensive[] = {1, 2, 9, 10, 11, 12, 13, 15, 16, 18};
+    if (!Lab::isUnlocked()) {
+        for (uint8_t i = 0; i < sizeof(kOffensive); i++) {
+            if (id == kOffensive[i]) {
+                Display::showToast("LOCKED: SETTINGS > LAB UNLOCK", 1500);
+                return;
+            }
+        }
     }
 #endif
     switch (id) {
@@ -321,6 +375,13 @@ static void doAction(uint8_t id) {
         case 21:
             App::setMode(AppMode::GPS);
             break;
+        case 22:
+            // Open the LAB settings page (added in P4). This action is the
+            // only way the user reaches the unlock prompt on a locked
+            // v3 build, so it stays reachable regardless of unlock state.
+            SettingsMenu::show(SettingsPage::LAB);
+            App::setMode(AppMode::TUNE);
+            break;
         case 8: {
             PersonalityConfig& p = Config::personality();
             p.freeLife = !p.freeLife;
@@ -349,6 +410,10 @@ void show() {
     s_modalScroll = 0;
     s_keyWas = true;
     s_openMs = millis();
+    // If the layout shrank while we were hidden (e.g. user just locked the
+    // lab from the LAB settings page), clamp the cursor back into range.
+    uint8_t n = activeRootCount();
+    if (s_rootIdx >= n) s_rootIdx = n ? (uint8_t)(n - 1) : 0;
 }
 
 void hide() {
@@ -393,8 +458,8 @@ const char* selectedHint() {
             return it[s_modalIdx].hints[0];
         return "";
     }
-    if (s_rootIdx < ROOT_COUNT && ROOT[s_rootIdx].hintCount)
-        return ROOT[s_rootIdx].hints[0];
+    if (s_rootIdx < activeRootCount() && activeRoot()[s_rootIdx].hintCount)
+        return activeRoot()[s_rootIdx].hints[0];
     return "";
 }
 
@@ -423,6 +488,7 @@ bool tryHotkey() {
 #if FR3K_SAFE_BUILD
     return false;
 #else
+    if (!Lab::isUnlocked()) return false;
     static const uint8_t ACT[HOTKEY_COUNT] = { 2, 1, 10, 9, 13, 15, 16, 4, 11, 20 };
     const HotkeyConfig& hk = Config::hotkeys();
     for (uint8_t i = 0; i < HOTKEY_COUNT; i++) {
@@ -488,7 +554,7 @@ void update() {
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
-        if (s_rootIdx + 1 < ROOT_COUNT) {
+        if (s_rootIdx + 1 < activeRootCount()) {
             s_rootIdx++;
             if (s_rootIdx >= s_rootScroll + VISIBLE)
                 s_rootScroll = (uint8_t)(s_rootIdx - VISIBLE + 1);
@@ -497,7 +563,7 @@ void update() {
     }
     if (keys.enter) {
         SFX::play(SFX::MENU_CLICK);
-        const RootItem& it = ROOT[s_rootIdx];
+        const RootItem& it = activeRoot()[s_rootIdx];
         if (it.type == RootType::GROUP) {
             s_group = it.groupId;
             s_modalIdx = 0;
@@ -526,10 +592,12 @@ static void drawRoot(M5Canvas& canvas) {
     canvas.setTextDatum(top_left);
     canvas.setTextSize(2);
     int y0 = 25, lh = 18;
-    for (uint8_t i = 0; i < VISIBLE && (s_rootScroll + i) < ROOT_COUNT; i++) {
+    const RootItem* root = activeRoot();
+    uint8_t rootN = activeRootCount();
+    for (uint8_t i = 0; i < VISIBLE && (s_rootScroll + i) < rootN; i++) {
         uint8_t idx = s_rootScroll + i;
         int y = y0 + i * lh;
-        const RootItem& item = ROOT[idx];
+        const RootItem& item = root[idx];
         uint16_t cat = CAT[idx % 4];
         bool sel = (idx == s_rootIdx) && (s_group == GroupId::NONE);
         if (sel) {
@@ -551,7 +619,7 @@ static void drawRoot(M5Canvas& canvas) {
     canvas.setTextSize(1);
     canvas.setTextColor(UI_DIM);
     if (s_rootScroll > 0) canvas.drawString("^", DISPLAY_W - 12, 22);
-    if (s_rootScroll + VISIBLE < ROOT_COUNT)
+    if (s_rootScroll + VISIBLE < rootN)
         canvas.drawString("v", DISPLAY_W - 12, y0 + (VISIBLE - 1) * lh);
 }
 

@@ -129,6 +129,7 @@ bool begin() {
     SD.mkdir(DIR_WOLF);
     SD.mkdir(DIR_TALK);
     SD.mkdir(DIR_GPS);
+    SD.mkdir(DIR_TELEMETRY);
     migrateLegacy();
     unlockSd();
     return true;
@@ -218,6 +219,20 @@ bool ensureDir(const char* path) {
     bool ok = f && f.isDirectory();
     if (f) f.close();
     return ok;
+}
+
+bool appendTelemetry(const char* pathTail, const uint8_t* data, size_t n) {
+    if (!s_mounted || !pathTail || !data || n == 0) return false;
+    SD.mkdir(DIR_TELEMETRY);
+    char full[64];
+    snprintf(full, sizeof(full), "%s/%s", DIR_TELEMETRY, pathTail);
+    lockSd();
+    File f = SD.open(full, FILE_APPEND);
+    if (!f) { unlockSd(); return false; }
+    size_t w = f.write(data, n);
+    f.close();
+    unlockSd();
+    return w == n;
 }
 
 bool removeFile(const char* path) {

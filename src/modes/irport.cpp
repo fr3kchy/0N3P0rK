@@ -1,5 +1,6 @@
 #include "irport.h"
 #include "ir_power/ir_power_tx.h"
+#include "../ir/aus_brand_db.h"
 #include "../ui/display.h"
 #include "../ui/keys.h"
 #include "../audio/sfx.h"
@@ -35,6 +36,39 @@ void IrPortMode::loadBuiltin() {
     blastTotal = IrPower::getCodeCount();
     snprintf(packName, sizeof(packName), "POWER %s",
              IrPower::getRegion() == IR_REGION_EU ? "EU" : "NA");
+}
+
+// fR3k v3: load the built-in Australian brand DB. Codes are 38 kHz /
+// 940 nm, single-shot, with a hard ceiling at the constant table size.
+// The pack name is "AU BRANDS" so the operator can tell at a glance
+// whether they're holding the AU DB or the v2 power-pack.
+void IrPortMode::loadAuBrands() {
+    pack = Pack::AU_BRANDS;
+    codeCount = 0;
+    size_t n = AuBrand::kBrandCount;
+    if (n > MAX_CODES) n = MAX_CODES;
+    for (size_t i = 0; i < n; i++) {
+        const auto& b = AuBrand::kBrands[i];
+        Code& c = codes[codeCount];
+        // Map AuBrand::Proto -> IrPortMode::Proto. NEC42 maps to NEC for
+        // now - the v3 default uses the v2 sendNEC() engine. NEC42 is
+        // reserved for a future extended frame in IrPower (the constant
+        // is already declared in irport.h so the entry compiles in).
+        switch (b.proto) {
+            case AuBrand::AUS_PROTO_NEC:     c.proto = Proto::NEC;     break;
+            case AuBrand::AUS_PROTO_NEC42:   c.proto = Proto::NEC42;   break;
+            case AuBrand::AUS_PROTO_SAMSUNG: c.proto = Proto::SAMSUNG; break;
+            case AuBrand::AUS_PROTO_SONY:    c.proto = Proto::SONY;    break;
+        }
+        c.addr = b.addr;
+        c.cmd  = b.cmd;
+        c.bits = b.bits;
+        snprintf(c.name, sizeof(c.name), "%s %s", b.brand, b.model);
+        codeCount++;
+    }
+    blastTotal = codeCount;
+    snprintf(packName, sizeof(packName), "AU BRANDS N:%u",
+             (unsigned)codeCount);
 }
 
 bool IrPortMode::loadFile(const char* path) {
@@ -302,6 +336,14 @@ void IrPortMode::handleInput() {
         phase = Phase::READY;
         strncpy(statusMsg, "POWER PACK", sizeof(statusMsg) - 1);
     }
+    if (M5Cardputer.Keyboard.isKeyPressed('v') ||
+        M5Cardputer.Keyboard.isKeyPressed('V')) {
+        // fR3k v3: switch to the built-in Australian brand DB. Single
+        // press = single-shot blast; no repeats, no burst mode.
+        loadAuBrands();
+        phase = Phase::READY;
+        strncpy(statusMsg, "AU BRANDS", sizeof(statusMsg) - 1);
+    }
 }
 
 void IrPortMode::update() {
@@ -330,9 +372,12 @@ void IrPortMode::update() {
         IrPower::sendCode(blastIndex);
         nextSendMs = millis() + 28;
     } else {
+        // Both CUSTOM and AU_BRANDS use the same Code table; the only
+        // difference is whether the operator can browse SD .ir files.
         const Code& c = codes[blastIndex];
         switch (c.proto) {
             case Proto::NEC:     IrPower::sendNEC(c.addr, (uint8_t)c.cmd, 1); break;
+            case Proto::NEC42:   IrPower::sendNEC(c.addr, (uint8_t)c.cmd, 1); break;
             case Proto::SAMSUNG: IrPower::sendSamsung(c.addr, c.cmd, 1); break;
             case Proto::SONY:    IrPower::sendSony(c.cmd ? c.cmd : c.addr,
                                                   c.bits ? c.bits : 12, 2); break;
@@ -355,6 +400,8 @@ void IrPortMode::getStatusLine(char* buf, size_t n) {
         snprintf(buf, n, "IR %s N:%u  SPC E R",
                  IrPower::getRegion() == IR_REGION_EU ? "EU" : "NA",
                  (unsigned)IrPower::getCodeCount());
+    else if (pack == Pack::AU_BRANDS)
+        snprintf(buf, n, "IR AU N:%u  SPC E V", (unsigned)codeCount);
     else
         snprintf(buf, n, "IR CUST N:%u  SPC E B", (unsigned)codeCount);
 }

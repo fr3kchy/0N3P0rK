@@ -36,6 +36,15 @@ uint8_t hsDepth();
 
 void loop();
 
+// Per-channel smoothed RSSI (dBm, -127..0). Index 0 unused (channels are
+// Filled opportunistically by the sniffer callback for the current channel
+// and by the scan path when the sniffer isn't running. Read by
+// SpectrumSky::feed() to drive the sky-side spectrum histogram without
+// coupling to sniffer.cpp internals.
+void getRssi13(int8_t out[14]);
+int8_t rssiForChannel(uint8_t ch);
+void noteRssi(uint8_t ch, int8_t rssi);
+
 struct Counters {
     uint32_t framesSeen;
     uint32_t framesEapol;

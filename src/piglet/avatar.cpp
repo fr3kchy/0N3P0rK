@@ -5,6 +5,7 @@
 #include "weather.h"
 #include "scene_layers.h"
 #include "seasonal_fx.h"
+#include "spectrum_sky.h"
 #include "trees.h"
 #include "ground.h"
 #include "sky.h"
@@ -1302,6 +1303,10 @@ void Avatar::drawFrame(M5Canvas& canvas, bool blink, bool faceRight, bool sniff)
     } else {
         canvas.fillSprite(getBGColor());
     }
+    // fR3k v3 spectrum-sky overlay sits between the sky gradient and the
+    // cloud layer. Drawn from the existing main canvas (no second M5Canvas)
+    // because the v2 image is already at 79% flash budget.
+    SpectrumSky::drawBackground(canvas);
     if (SceneLayers::weather) {
         Weather::drawClouds(canvas, getDrawColor());
     }

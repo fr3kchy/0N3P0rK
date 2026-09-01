@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Source-level release gates for the fR3k Cardputer build."""
+"""Source-level release gates for the fR3k Cardputer build.
+
+v3 lab-unlock gates run alongside the v2 carry-over gates. The script
+intentionally reads source only - no binary inspection - so a clean run
+confirms the source tree is shippable and the v3 features are present.
+
+Usage:
+  python3 scripts/verify_fr3k.py
+"""
 from pathlib import Path
 import re
 import sys
@@ -27,12 +35,29 @@ gps = text("src/gps/gps_service.cpp")
 gps_h = text("src/gps/gps_service.h")
 storage_h = text("src/storage/littlefs_ops.h")
 settings = text("src/ui/settings_menu.cpp")
+sfx_h = text("src/audio/sfx.h")
+sfx_cpp = text("src/audio/sfx.cpp")
+mood_cpp = text("src/piglet/mood.cpp")
+lab_h = text("src/lab/lab_unlock.h")
+lab_cpp = text("src/lab/lab_unlock.cpp")
+config_h = text("src/core/config.h")
+config_cpp = text("src/core/config.cpp")
+telem_h = text("src/telemetry/telemetry.h")
+telem_cpp = text("src/telemetry/telemetry.cpp")
+sky_h = text("src/piglet/spectrum_sky.h")
+sky_cpp = text("src/piglet/spectrum_sky.cpp")
+au_db = text("src/ir/aus_brand_db.h")
+irport_cpp = text("src/modes/irport.cpp")
 
+# ===[ v2 carry-over ] ===]
+require("m5cardputer-safe" in pio, "v2 safe env missing")
+require("m5cardputer" in pio, "default env missing")
+require("custom_version = 3.0.0-fr3k-lab" in pio, "fR3k v3 version missing")
 require("-DFR3K_SAFE_BUILD=1" in pio, "safe build flag missing")
-require('custom_version = 2.0.0-fr3k' in pio, "fR3k version missing")
+require("FR3K_SAFE_DEFAULT" in pio, "FR3K_SAFE_DEFAULT flag missing")
 require('drawTalk(farm, px, "fR3k")' in boot, "boot splash is not fR3k branded")
 require('drawString("fR3k", DISPLAY_W / 2, 2)' in menu, "menu title is not fR3k")
-require('FR3K_NAME, FR3K_VERSION, FR3K_BUILD' in main, "boot banner is not fR3k")
+require("FR3K_NAME, FR3K_VERSION, FR3K_BUILD" in main, "boot banner is not fR3k")
 require('const char* title = "DEMON"' in settings, "demon settings title missing")
 require('"SHOW DEMON"' in settings, "demon scene toggle missing")
 
@@ -50,14 +75,88 @@ require('FILE_GPS_TRACK = "/0N3P0rK/gps/track.csv"' in storage_h,
 require('DIR_ROOT       = "/0N3P0rK"' in storage_h,
         "legacy save root changed")
 
-safe_root = menu.split("#if FR3K_SAFE_BUILD", 1)[1].split("#else", 1)[0]
+# Find the v2 safe ROOT[] block. The block starts at the first
+# `#if FR3K_SAFE_BUILD` and ends at the matching `#elif !FR3K_SAFE_BUILD`
+# (which immediately precedes the v3 ROOT_LOCKED / ROOT_OPEN arrays).
+parts = menu.split("#if FR3K_SAFE_BUILD", 1)
+if len(parts) != 2:
+    require(False, "no #if FR3K_SAFE_BUILD block in menu.cpp")
+    safe_root = ""
+else:
+    safe_root = parts[1].split("#elif !FR3K_SAFE_BUILD", 1)[0]
 for forbidden in ("ATTACK", "AGGRO", "EVILPIG", "PIGPASS", "DEAUTH", "SPECTRUM"):
     require(forbidden not in safe_root, f"safe root exposes {forbidden}")
 require('"DISABLED: SAFE BUILD"' in menu, "unsafe action guard missing")
-require("return false;\n#else\n    static const uint8_t ACT" in menu,
-        "safe build hotkeys are not disabled")
+# Safe build still refuses every offensive hotkey via the compile-time
+# gate (FR3K_SAFE_BUILD). The default v3 build adds a runtime unlock
+# check on top of the existing ACT[] table; either way the safe path
+# can't be skipped.
+require(re.search(r"#if FR3K_SAFE_BUILD\s*\n\s*return false;\s*\n#else", menu)
+        is not None, "safe build hotkeys are not disabled")
 
-# User-facing surfaces may keep the legacy path, but not legacy character branding.
+# ===[ v3 lab gate ] ===]
+require("namespace Lab" in lab_h, "LabUnlock namespace missing")
+require("cd3f0c85b158c08a2b113464991810cf2cdfc387" in lab_cpp,
+        "sha-1(\"666\") hardcoded value mismatch")
+require("Preferences" in lab_cpp or "preferences" in lab_cpp.lower(),
+        "LabUnlock must use NVS/Preferences backend")
+require("LAB UNLOCK" in menu, "Lab action missing from menu")
+require("case 22:" in menu, "Lab action case missing")
+require("SettingsPage::LAB" in settings,
+        "SettingsPage::LAB enum missing")
+require("ENTER 666" in settings, "LAB page banner missing")
+
+# ===[ v3 SFX — demon words + CUNT ] ===]
+for word in ("ACK", "HEY", "NAH", "MUM", "OOF", "CUNT"):
+    require(word in sfx_cpp, f"SFX sequence {word} missing")
+# OINK_* must be GONE from sfx.cpp
+for forbidden_oink in ("SND_OINK_HAPPY", "SND_OINK_GRUNT", "SND_OINK_SQUEAL",
+                       "SND_OINK_OINK"):
+    require(forbidden_oink not in sfx_cpp,
+            f"OINK sequence {forbidden_oink} still present")
+require("playPersonality" in sfx_cpp,
+        "SFX::playPersonality() helper missing")
+require("playCuntJingle" in sfx_cpp,
+        "SFX::playCuntJingle() helper missing")
+require("voiceWord" in config_h and "voiceWord" in config_cpp,
+        "PersonalityConfig::voiceWord missing")
+require("cuntJingle" in config_h and "cuntJingle" in config_cpp,
+        "PersonalityConfig::cuntJingle missing")
+require("playPersonality" in mood_cpp,
+        "mood.cpp must dispatch personality voice")
+
+# ===[ v3 telemetry ] ===]
+require("namespace Telemetry" in telem_h, "Telemetry namespace missing")
+require("RING_N" in telem_h, "Telemetry RING_N constant missing")
+require("DIR_TELEMETRY" in storage_h, "Telemetry dir constant missing")
+require("/0N3P0rK/telemetry" in storage_h, "Telemetry path missing")
+
+# ===[ v3 spectrum-sky ] ===]
+require("namespace SpectrumSky" in sky_h, "SpectrumSky namespace missing")
+require("SpectrumSky::drawBackground" in avatar,
+        "avatar does not call SpectrumSky::drawBackground")
+
+# ===[ v3 IR AU ] ===]
+require("AUS_PROTO_NEC" in au_db, "AU NEC protocol missing")
+require("AUS_PROTO_NEC42" in au_db, "AU NEC42 protocol missing")
+require("AUS_PROTO_SAMSUNG" in au_db, "AU SAMSUNG protocol missing")
+require("AUS_PROTO_SONY" in au_db, "AU SONY protocol missing")
+require("kCarrierKHz = 38" in au_db, "AU carrier must be 38 kHz")
+require("kWavelengthNm = 940" in au_db, "AU wavelength must be 940 nm")
+require("kSingleShot = true" in au_db, "AU must be single-shot")
+brand_count = len(re.findall(r"^    \{ AUS_PROTO_", au_db, re.M))
+require(brand_count >= 40, f"AU brand DB has only {brand_count} entries (need >=40)")
+require("loadAuBrands" in irport_cpp, "irport loadAuBrands missing")
+require("Pack::AU_BRANDS" in irport_cpp, "irport AU_BRANDS pack missing")
+
+# ===[ v3 status page ] ===]
+require('"LAB"' in settings and '"TELEM"' in settings,
+        "STATUS page must include LAB + TELEM rows")
+require("SpectrumSky::setEnabled" in settings,
+        "settings must dispatch SpectrumSky enable")
+
+# User-facing surfaces may keep the legacy path, but not legacy character
+# branding.
 for rel in ("src/ui/boot_splash.cpp", "src/ui/settings_menu.cpp"):
     data = text(rel)
     for literal in re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', data):

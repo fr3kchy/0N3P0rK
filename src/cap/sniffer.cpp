@@ -487,6 +487,9 @@ static void IRAM_ATTR promiscuousRxCb(void* buf, wifi_promiscuous_pkt_type_t typ
 
     s_cnt.framesSeen++;
     const uint8_t* f = pkt->payload;
+    // Stash the per-channel RSSI for the spectrum-sky overlay. Cheap (one
+    // signed-byte write) and bounded - the histogram only reads from us.
+    noteRssi(s_cnt.currentChannel, (int8_t)pkt->rx_ctrl.rssi);
 
     if (type == WIFI_PKT_MGMT) {
         uint8_t fc = f[0] & 0xFC;
@@ -1227,6 +1230,53 @@ RunMode runMode() { return s_mode; }
 bool isLocked() { return s_running && s_lockUntil != 0 && millis() < s_lockUntil && !lockStreakExpired(); }
 
 const Counters& counters() { return s_cnt; }
+
+// ===[ PER-CHANNEL RSSI TABLE ]============================================
+// Filled by the promiscuous RX handler with the most-recent RSSI for the
+// current channel. SpectrumSky::feed() reads it via getRssi13() so the
+// sky overlay doesn't have to know anything about the sniffer internals.
+// Index 0 is unused (channels are 1..13). -127 is the sentinel "no
+// sample yet this session".
+
+static int8_t s_rssi13[14];
+static int8_t s_rssiIdx[14];  // last millis() in seconds for freshness
+
+void noteRssi(uint8_t ch, int8_t rssi) {
+    if (ch < 1 || ch > 13) return;
+    if (rssi < -127) rssi = -127;
+    if (rssi > 0) rssi = 0;
+    // 3-tap EMA for stability so the sky histogram doesn't twitch.
+    int prev = s_rssi13[ch];
+    if (prev == 0) {
+        s_rssi13[ch] = rssi;
+    } else {
+        // (2*prev + rssi) / 3 with integer math
+        int ema = (prev * 2 + rssi) / 3;
+        if (ema < -127) ema = -127;
+        s_rssi13[ch] = (int8_t)ema;
+    }
+    s_rssiIdx[ch] = (int8_t)(millis() / 1000);
+}
+
+void getRssi13(int8_t out[14]) {
+    memcpy(out, s_rssi13, sizeof(s_rssi13));
+}
+
+int8_t rssiForChannel(uint8_t ch) {
+    if (ch < 1 || ch > 13) return -127;
+    int8_t v = s_rssi13[ch];
+    int8_t idx = s_rssiIdx[ch];
+    if (v == 0 && idx == 0) return -127;
+    // Age out samples > 60 s old so the histogram decays during silent
+    // periods instead of freezing bright bars in memory.
+    int now = (int)(millis() / 1000);
+    if (idx > 0 && (now - idx) > 60) {
+        s_rssi13[ch] = (int8_t)((v + (-110)) / 2);
+        s_rssiIdx[ch] = (int8_t)now;
+        v = s_rssi13[ch];
+    }
+    return v;
+}
 
 bool isSkipped(const uint8_t* bssid) {
     return isSessionSkipped(bssid);

@@ -18,6 +18,9 @@
 #include "board/board.h"
 #include "net/ap_sta.h"
 #include "cap/sniffer.h"
+#include "lab/lab_unlock.h"
+#include "telemetry/telemetry.h"
+#include "piglet/spectrum_sky.h"
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
 
@@ -63,6 +66,7 @@ void setup() {
     Serial.printf("[BOOT] board=%s\n", Board::modelLabel());
 
     Config::init();
+    Lab::begin();
     XP::begin();
     M5.Display.setBrightness(Config::personality().brightness * 255 / 100);
 
@@ -70,6 +74,8 @@ void setup() {
     SFX::init();
     Avatar::init();
     GpsService::begin();
+    Telemetry::begin();
+    SpectrumSky::begin();
     Display::showBootSplash();
     Display::refreshBrightness();
     Mood::init();
@@ -78,17 +84,25 @@ void setup() {
     yield();
 
 #if !FR3K_SAFE_BUILD
-    Net::begin();
-    Storage::loadKeysIntoNet();
-    Cap::begin();
-    EvilPigMode::init();
-    PigpassMode::init();
+    // Offensive subsystems are gated at compile time in safe builds and at
+    // runtime in the default v3 build. The default env ships the code so
+    // the runtime gate can take over; we still skip the heavy init() while
+    // the lab is locked, so the menu refuses every offensive action.
+    if (Lab::isUnlocked()) {
+        Net::begin();
+        Storage::loadKeysIntoNet();
+        Cap::begin();
+        EvilPigMode::init();
+        PigpassMode::init();
+    }
 #endif
 
     Net::Status s = Net::status();
     Serial.printf("[BOOT] wifi mode ssid=%s ip=%s\n", s.ssid, s.ip);
-    Serial.printf("[BOOT] demon=%s ready safe=%u\n", Config::personality().name,
-                  (unsigned)FR3K_SAFE_BUILD);
+    Serial.printf("[BOOT] demon=%s ready safe=%u lab=%u\n",
+                  Config::personality().name,
+                  (unsigned)FR3K_SAFE_BUILD,
+                  (unsigned)Lab::isUnlocked());
 }
 
 static unsigned long s_lastHeapLog = 0;
@@ -100,6 +114,7 @@ void loop() {
     SFX::update();
     XP::tick();
     GpsService::loop();
+    Telemetry::sample();
 #if !FR3K_SAFE_BUILD
     Cap::loop();
 #endif

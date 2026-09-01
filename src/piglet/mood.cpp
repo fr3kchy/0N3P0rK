@@ -299,7 +299,7 @@ void Mood::feed() {
     lastActivityTime = millis();
     lastEffective = happiness;
     say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
-    SFX::play(SFX::OINK_HAPPY);
+    SFX::playPersonality();
     Avatar::sniff();
     XP::addXP(XPEvent::FEED);
     if (gained) {
@@ -322,7 +322,7 @@ void Mood::eatWorld() {
     if ((uint32_t)(now - lastFx) >= 280) {
         lastFx = now;
         say(pickMix(PH_FED, COUNT(PH_FED), TK_FED));
-        SFX::play(SFX::OINK_HAPPY);
+        SFX::playPersonality();
         Avatar::sniff();
     }
     if (gained) {
@@ -357,7 +357,7 @@ void Mood::pet() {
     lastActivityTime = millis();
     lastEffective = happiness;
     say(pickMix(PH_PET, COUNT(PH_PET), TK_PET));
-    SFX::play(SFX::OINK_CURIOUS);
+    SFX::playPersonality();
     Avatar::wiggleEars();
     Avatar::triggerTailWiggle();
     XP::addXP(XPEvent::PET);
