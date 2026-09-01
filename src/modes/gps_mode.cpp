@@ -6,6 +6,7 @@
 #include "../ui/keys.h"
 #include "../audio/sfx.h"
 #include <M5Cardputer.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,6 +14,10 @@ namespace GpsMode {
 
 static bool s_running = false;
 static bool s_keyWas = false;
+// fR3k v3.0.4: display mode (compact one-line vs verbose full panel).
+// 'M' hotkey toggles. Default = verbose (matches the restored v1 layout).
+enum class DispMode : uint8_t { COMPACT = 0, VERBOSE = 1 };
+static DispMode s_disp = DispMode::VERBOSE;
 
 void start() {
     s_running = true;
@@ -76,6 +81,14 @@ void update() {
     } else if (M5Cardputer.Keyboard.isKeyPressed('=') || M5Cardputer.Keyboard.isKeyPressed('+')) {
         if (cfg.timezoneQuarterHours < 56) cfg.timezoneQuarterHours++;
         Config::save();
+    } else if (M5Cardputer.Keyboard.isKeyPressed('m') || M5Cardputer.Keyboard.isKeyPressed('M')) {
+        // fR3k v3.0.4: toggle compact / verbose display.
+        s_disp = (s_disp == DispMode::VERBOSE) ? DispMode::COMPACT : DispMode::VERBOSE;
+        Display::showToast(s_disp == DispMode::VERBOSE ? "MODE VERBOSE" : "MODE COMPACT", 700);
+    } else if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R')) {
+        // fR3k v3.0.4: reset trip odometer.
+        GpsService::resetTrip();
+        Display::showToast("TRIP RESET", 700);
     }
     SFX::playNav();
 }
@@ -92,55 +105,145 @@ void getStatusLine(char* out, size_t len) {
 void draw(M5Canvas& c) {
     const uint16_t BG = 0x2145, TITLE = 0xFFE0, TEXT = 0xEF5D, DIM = 0x9CD3;
     const uint16_t GOOD = 0x07E0, BAD = 0xF800, ACCENT = 0xFDB6;
+    const uint16_t CHIP_BG = 0x2945, CHIP_BORDER = 0x5C9A;
     const GpsSnapshot s = GpsService::snapshot();
     const auto& cfg = Config::gps();
 
     c.fillSprite(BG);
     c.setFont(&fonts::Font0);
+
+    // Title + status badge (top-right: FIX / SEARCH / OFF).
     c.setTextDatum(top_center);
     c.setTextSize(2);
     c.setTextColor(TITLE);
     c.drawString("fR3k GPS", 120, 2);
     c.drawLine(10, 20, 230, 20, TITLE);
+
+    // Status pill in top-right corner.
+    const char* pill = s.fix ? "FIX" : (s.enabled ? "SEARCH" : "OFF");
+    const uint16_t pillColor = s.fix ? GOOD : (s.enabled ? ACCENT : BAD);
     c.setTextSize(1);
+    c.setTextDatum(top_right);
+    c.setTextColor(pillColor);
+    c.drawString(pill, 234, 6);
+
+    // MODE chip in top-left corner.
     c.setTextDatum(top_left);
-
-    char line[64];
-    c.setTextColor(s.fix ? GOOD : BAD);
-    char age[16];
-    if (s.fixAgeMs == UINT32_MAX) snprintf(age, sizeof(age), "--");
-    else snprintf(age, sizeof(age), "%lums", (unsigned long)s.fixAgeMs);
-    snprintf(line, sizeof(line), "%s  SAT %lu  HDOP %.1f  AGE %s",
-             s.fix ? "FIX" : (s.enabled ? "SEARCH" : "OFF"),
-             (unsigned long)s.satellites, s.hdop, age);
-    c.drawString(line, 6, 24);
-
-    c.setTextColor(TEXT);
-    snprintf(line, sizeof(line), "LAT  %.6f", s.latitude); c.drawString(line, 6, 36);
-    snprintf(line, sizeof(line), "LON  %.6f", s.longitude); c.drawString(line, 6, 48);
-    snprintf(line, sizeof(line), "ALT  %.1fm   SPD %.1fkm/h", s.altitudeM, s.speedKph); c.drawString(line, 6, 60);
-    snprintf(line, sizeof(line), "COURSE %.1f %s", s.courseDeg,
-             s.courseValid ? GpsService::cardinal(s.courseDeg) : "--"); c.drawString(line, 6, 72);
-
-    if (s.timeValid) {
-        int totalMinutes = (int)s.hour * 60 + s.minute + (int)cfg.timezoneQuarterHours * 15;
-        while (totalMinutes < 0) totalMinutes += 1440;
-        while (totalMinutes >= 1440) totalMinutes -= 1440;
-        snprintf(line, sizeof(line), "UTC %02u:%02u:%02u  LOCAL %02d:%02d",
-                 (unsigned)s.hour, (unsigned)s.minute, (unsigned)s.second,
-                 totalMinutes / 60, totalMinutes % 60);
-    } else {
-        snprintf(line, sizeof(line), "UTC --:--:--  LOCAL --:--");
-    }
-    c.drawString(line, 6, 84);
-
-    c.setTextColor(ACCENT);
-    snprintf(line, sizeof(line), "B %s  L %s  U %s  TZ %+0.2fh",
-             baudLabel(cfg.baudMode), cfg.logging ? "ON" : "OFF",
-             cfg.syncUtc ? "ON" : "OFF", (double)cfg.timezoneQuarterHours / 4.0);
-    c.drawString(line, 6, 96);
     c.setTextColor(DIM);
-    c.drawString("G GPS  B BAUD  L LOG  U UTC  -/+ TZ", 6, 108);
+    c.drawString(s_disp == DispMode::VERBOSE ? "VERB" : "CMPC", 4, 6);
+
+    // -- VERBOSE LAYOUT (restored v1 panel) --
+    if (s_disp == DispMode::VERBOSE) {
+        // Big LAT / LON at the top of the body.
+        c.setTextSize(2);
+        c.setTextColor(s.fix ? GOOD : DIM);
+        char coord[40];
+        snprintf(coord, sizeof(coord), "%.4f %s", fabs(s.latitude),
+                 s.latitude >= 0 ? "N" : "S");
+        c.setTextDatum(top_left);
+        c.drawString(coord, 6, 26);
+
+        snprintf(coord, sizeof(coord), "%.4f %s", fabs(s.longitude),
+                 s.longitude >= 0 ? "E" : "W");
+        c.setTextColor(s.fix ? GOOD : DIM);
+        c.drawString(coord, 6, 46);
+
+        // Secondary metrics row.
+        c.setTextSize(1);
+        c.setTextColor(TEXT);
+        char line[64];
+        char age[16];
+        if (s.fixAgeMs == UINT32_MAX) snprintf(age, sizeof(age), "--");
+        else snprintf(age, sizeof(age), "%lums", (unsigned long)s.fixAgeMs);
+        snprintf(line, sizeof(line), "ALT %.1fm  SPD %.1fkm/h  HDOP %.1f  AGE %s",
+                 s.altitudeM, s.speedKph, s.hdop, age);
+        c.drawString(line, 6, 68);
+
+        snprintf(line, sizeof(line), "CRS %.1f %s  TRIP %.2fkm",
+                 s.courseDeg, s.courseValid ? GpsService::cardinal(s.courseDeg) : "--",
+                 s.tripDistM / 1000.0);
+        c.drawString(line, 6, 80);
+
+        // Sat signal panel — three horizontal bars by SNR band.
+        c.setTextColor(DIM);
+        c.drawString("SATS", 6, 92);
+        const uint16_t COLOR_HI = 0x07FF;  // cyan-ish for high
+        const uint16_t COLOR_MID = 0xC618; // grey for mid
+        const uint16_t COLOR_LO = 0xF800;  // red for low
+        const int sbX = 30, sbY = 92, sbW = 200, sbH = 5;
+        c.drawRect(sbX, sbY, sbW, sbH, DIM);
+        if (s.satellites) {
+            const uint16_t tot = (uint16_t)(s.satellites > 31 ? 31 : s.satellites);
+            const uint16_t hiW = (uint16_t)((s.satHigh * sbW) / (tot ? tot : 1));
+            const uint16_t midW = (uint16_t)((s.satMid * sbW) / (tot ? tot : 1));
+            const uint16_t loW = (uint16_t)((s.satLow * sbW) / (tot ? tot : 1));
+            if (hiW) c.fillRect(sbX, sbY, hiW, sbH, COLOR_HI);
+            if (midW) c.fillRect(sbX + hiW, sbY, midW, sbH, COLOR_MID);
+            if (loW)  c.fillRect(sbX + hiW + midW, sbY, loW, sbH, COLOR_LO);
+        }
+        c.setTextColor(ACCENT);
+        snprintf(line, sizeof(line), "%lu", (unsigned long)s.satellites);
+        c.drawString(line, 234, 92);
+
+        // Local time big if valid.
+        if (s.timeValid) {
+            int totalMinutes = (int)s.hour * 60 + s.minute + (int)cfg.timezoneQuarterHours * 15;
+            while (totalMinutes < 0) totalMinutes += 1440;
+            while (totalMinutes >= 1440) totalMinutes -= 1440;
+            c.setTextSize(2);
+            c.setTextColor(TEXT);
+            snprintf(line, sizeof(line), "%02d:%02d:%02d", totalMinutes / 60,
+                     totalMinutes % 60, s.second);
+            c.setTextDatum(top_right);
+            c.drawString(line, 234, 26);
+            c.setTextSize(1);
+            c.setTextColor(DIM);
+            snprintf(line, sizeof(line), "%04u-%02u-%02u", (unsigned)s.year,
+                     (unsigned)s.month, (unsigned)s.day);
+            c.drawString(line, 234, 46);
+            c.setTextDatum(top_left);
+        }
+
+        // Mode chips row.
+        auto drawChip = [&](const char* label, const char* value, int x, int y, bool on) {
+            c.drawRect(x, y, 38, 11, CHIP_BORDER);
+            c.setTextColor(on ? GOOD : DIM);
+            c.setTextDatum(top_left);
+            c.drawString(label, x + 2, y + 1);
+            c.setTextDatum(top_right);
+            c.setTextColor(on ? ACCENT : DIM);
+            c.drawString(value, x + 36, y + 1);
+            c.setTextDatum(top_left);
+        };
+        drawChip("B", baudLabel(cfg.baudMode), 6, 104, true);
+        drawChip("L", cfg.logging ? "ON" : "OFF", 48, 104, cfg.logging);
+        drawChip("U", cfg.syncUtc ? "UTC" : "LOC", 90, 104, cfg.syncUtc);
+        char tzbuf[8];
+        snprintf(tzbuf, sizeof(tzbuf), "%+0.1fh", (double)cfg.timezoneQuarterHours / 4.0);
+        drawChip("TZ", tzbuf, 132, 104, true);
+        c.setTextColor(DIM);
+        c.drawString("G GPS  M MODE  R TRIP  -/+ TZ  ESC", 6, 120);
+    } else {
+        // -- COMPACT LAYOUT --
+        c.setTextSize(1);
+        c.setTextColor(TEXT);
+        char line[64];
+        char age[16];
+        if (s.fixAgeMs == UINT32_MAX) snprintf(age, sizeof(age), "--");
+        else snprintf(age, sizeof(age), "%lums", (unsigned long)s.fixAgeMs);
+        snprintf(line, sizeof(line), "LAT %.5f  LON %.5f", s.latitude, s.longitude);
+        c.drawString(line, 6, 30);
+        snprintf(line, sizeof(line), "ALT %.1fm  SPD %.1fkm/h  SAT %lu  AGE %s",
+                 s.altitudeM, s.speedKph, (unsigned long)s.satellites, age);
+        c.drawString(line, 6, 44);
+        snprintf(line, sizeof(line), "TRIP %.2fkm  B %s  L %s  U %s  TZ %+0.1fh",
+                 s.tripDistM / 1000.0, baudLabel(cfg.baudMode),
+                 cfg.logging ? "ON" : "OFF", cfg.syncUtc ? "UTC" : "LOC",
+                 (double)cfg.timezoneQuarterHours / 4.0);
+        c.drawString(line, 6, 58);
+        c.setTextColor(DIM);
+        c.drawString("G GPS  M MODE  R TRIP  -/+ TZ  B/L/U toggles  ESC", 6, 78);
+    }
 }
 
 }  // namespace GpsMode

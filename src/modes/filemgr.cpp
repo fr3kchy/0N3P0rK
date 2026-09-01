@@ -227,6 +227,16 @@ void FileMgrMode::handleBrowseInput() {
         if (entryCount && !entries[sel].isDir) phase = Phase::CONFIRM_DEL;
         return;
     }
+    // fR3k v3.0.4: G kicks GPX export of the active GPS track.
+    if (M5Cardputer.Keyboard.isKeyPressed('g') || M5Cardputer.Keyboard.isKeyPressed('G')) {
+        // Walk /0N3P0rK/gps-*.csv files; the most recent becomes
+        // the export source. Result is written to /0N3P0rK/gps.gpx.
+        extern int FileMgrMode_gpxExport();
+        int n = FileMgrMode_gpxExport();
+        SFX::play(n > 0 ? SFX::CONFIRM : SFX::ERROR);
+        Display::showToast(n > 0 ? "GPX EXPORTED" : "GPX: NO TRACK", 1100);
+        return;
+    }
 }
 
 void FileMgrMode::handleViewInput() {
@@ -441,4 +451,102 @@ void FileMgrMode::draw(M5Canvas& canvas) {
     }
     if (phase == Phase::BROWSE) drawBrowse(canvas);
     else drawViewEdit(canvas);
+}
+
+// fR3k v3.0.4: GPX export. Walks /0N3P0rK/gps-*.csv (sorted by
+// modification time, newest first), picks the most recent track,
+// converts every line to a <trkpt>, and writes the result to
+// /0N3P0rK/gps.gpx. Returns the number of track points exported,
+// or -1 on error. Operator kicks this from FileMgr with the G key.
+int FileMgrMode_gpxExport() {
+    if (!Storage::available()) return -1;
+    File dir = SD.open(Storage::DIR_GPS);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return -1;
+    }
+    // Find newest gps-*.csv by mtime.
+    char newest[64] = {0};
+    uint32_t newestMtime = 0;
+    File f = dir.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* name = f.name();
+            size_t nlen = strlen(name);
+            if (nlen > 4 && strcmp(name + nlen - 4, ".csv") == 0 &&
+                strncmp(name, "gps-", 4) == 0) {
+                uint32_t mt = f.getLastWrite();
+                if (mt >= newestMtime) {
+                    newestMtime = mt;
+                    strncpy(newest, name, sizeof(newest) - 1);
+                }
+            }
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    dir.close();
+    if (!newest[0]) return -1;
+    // Open newest + write gpx alongside.
+    char srcPath[96];
+    snprintf(srcPath, sizeof(srcPath), "%s/%s", Storage::DIR_GPS, newest);
+    File src = SD.open(srcPath, FILE_READ);
+    if (!src) return -1;
+    char outPath[96];
+    snprintf(outPath, sizeof(outPath), "%s/gps.gpx", Storage::DIR_GPS);
+    File out = SD.open(outPath, FILE_WRITE);
+    if (!out) { src.close(); return -1; }
+    // GPX 1.1 header.
+    out.println("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    out.println("<gpx version=\"1.1\" creator=\"fR3k v3.0.4\"");
+    out.println("     xmlns=\"http://www.topografix.com/GPX/1/1\">");
+    out.println("  <trk><name>fR3k</name><trkseg>");
+    int n = 0;
+    char line[256];
+    while (src.available()) {
+        size_t L = src.readBytesUntil('\n', line, sizeof(line) - 1);
+        line[L] = '\0';
+        // CSV columns: timestamp,lat,lon,alt,sats,spd,course,hdop
+        // (time-valid path) or uptime-ms,lat,lon,alt,sats,spd,course,hdop
+        // (time-invalid path). We only emit <trkpt> when we have a
+        // valid lat/lon pair.
+        char ts[32] = {0};
+        double lat = 0, lon = 0;
+        if (line[4] == '-' && line[7] == '-') {
+            // ISO 8601 timestamp starts the line.
+            char* p = line;
+            // copy first 19 chars (YYYY-MM-DDTHH:MM:SS)
+            size_t copy = (L < 19) ? L : 19;
+            memcpy(ts, p, copy); ts[copy] = '\0';
+            // Replace T with space, drop Z. Save as GPX <time>.
+            for (size_t i = 0; i < copy; i++) if (ts[i] == 'T') ts[i] = ' ';
+            if (copy > 0 && (ts[copy-1] == 'Z' || ts[copy-1] == 'z')) ts[copy-1] = '\0';
+            lat = strtod(p + 20, nullptr);
+            // find the second comma after lat
+            const char* p2 = strchr(p + 20, ',');
+            if (p2) lon = strtod(p2 + 1, nullptr);
+        } else {
+            lat = strtod(line, nullptr);
+            const char* p2 = strchr(line, ',');
+            if (p2) lon = strtod(p2 + 1, nullptr);
+        }
+        if (lat == 0.0 && lon == 0.0) continue;
+        out.print("    <trkpt lat=\"");
+        out.print(lat, 6);
+        out.print("\" lon=\"");
+        out.print(lon, 6);
+        out.print("\">");
+        if (ts[0]) {
+            out.print("<time>");
+            out.print(ts);
+            out.print("</time>");
+        }
+        out.println("</trkpt>");
+        n++;
+    }
+    out.println("  </trkseg></trk>");
+    out.println("</gpx>");
+    out.close();
+    src.close();
+    return n;
 }

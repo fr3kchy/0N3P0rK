@@ -6,6 +6,7 @@
 #include "../piglet/props.h"
 #include "../core/app.h"
 #include "../lab/lab_unlock.h"
+#include "../sync/wigle.h"
 #include "../piglet/spectrum_sky.h"
 #include "../telemetry/telemetry.h"
 #include "../piglet/scene_layers.h"
@@ -83,6 +84,19 @@ static const Item SYSTEM[] = {
     {"DIM LEVEL", Kind::VALUE, 3, 0, 50, 5},
 };
 static const uint8_t SYSTEM_N = sizeof(SYSTEM) / sizeof(SYSTEM[0]);
+
+// fR3k v3.0.4: Wigle page. WIGLE NAME + WIGLE TOKEN are stored in
+// the `wigle` NVS namespace via Wigle::setCredentials(). The TOKEN
+// field is shown masked in the UI (only last 4 chars). The CLEAR row
+// wipes the credentials and the submitted-cache. AUTO SYNC toggles
+// the debounced potfile pull that fires on LootMenu::show().
+static const Item WIGLE[] = {
+    {"WIGLE NAME",  Kind::TEXT,   0, 0, 0, 0},
+    {"WIGLE TOKEN", Kind::TEXT,   1, 0, 0, 0},
+    {"AUTO SYNC",   Kind::TOGGLE, 2, 0, 1, 1},
+    {"CLEAR WIGLE", Kind::ACTION, 3, 0, 0, 0},
+};
+static const uint8_t WIGLE_N = sizeof(WIGLE) / sizeof(WIGLE[0]);
 
 static const Item RADIO[] = {
     {"PACK",      Kind::VALUE,  18, 0, 0, 1}, // max resolved at runtime below
@@ -284,6 +298,7 @@ static const Item* items(uint8_t* n) {
     if (s_page == SettingsPage::BLE) { *n = BLE_N; return BLE; }
     if (s_page == SettingsPage::KEYS) { *n = KEYS_N; return KEYS; }
     if (s_page == SettingsPage::LAB)  { *n = LAB_N; return LAB; }
+    if (s_page == SettingsPage::WIGLE) { *n = WIGLE_N; return WIGLE; }
     if (s_page == SettingsPage::CONNECT) { *n = 0; return nullptr; }
     if (s_page == SettingsPage::STATUS) { *n = 0; return nullptr; }
     *n = SCENE_N;
@@ -425,6 +440,12 @@ static int getValue(const Item& it) {
             default: return 0;
         }
     }
+    if (s_page == SettingsPage::WIGLE) {
+        switch (it.id) {
+            case 2: return p.autoSync ? 1 : 0;  // fR3k v3.0.4
+            default: return 0;
+        }
+    }
     if (s_page == SettingsPage::RADIO) {
         switch (it.id) {
             case 0: return r.hopMs;
@@ -492,6 +513,30 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
                 out[1 + n] = '\0';
             } else {
                 snprintf(out, len, Lab::isUnlocked() ? "OPEN" : "ENTER 666");
+            }
+            return;
+        }
+        // fR3k v3.0.4: Wigle credentials. NAME shows the typed or
+        // stored name (echoed). TOKEN is masked in the display —
+        // only the last 4 characters are visible — and dot-filled
+        // while typing (never echo the token).
+        if (s_page == SettingsPage::WIGLE && it.id == 0) {
+            const char* name = Wigle::getApiName();
+            if (s_text) snprintf(out, len, ">%s", s_edit);
+            else snprintf(out, len, "%s", name[0] ? name : "----");
+            return;
+        }
+        if (s_page == SettingsPage::WIGLE && it.id == 1) {
+            if (s_text) {
+                size_t n = strlen(s_edit);
+                if (n > len - 1) n = len - 1;
+                for (size_t i = 0; i < n; i++) out[i] = '*';
+                out[n] = '\0';
+            } else {
+                // Show masked stored token (last 4 only). If no
+                // stored token, "----".
+                const char* m = Wigle::getMaskedToken();
+                snprintf(out, len, "%s", m ? m : "----");
             }
             return;
         }
@@ -773,6 +818,25 @@ static bool setValue(const Item& it, int v) {
                 p.dimLevel = (uint8_t)v;
                 Display::resetDimTimer();
                 break;
+            default: return false;
+        }
+        Config::save();
+        return true;
+    }
+    // fR3k v3.0.4: Wigle page. NAME + TOKEN are typed in via the
+    // existing TEXT row infrastructure. AUTO SYNC is a TOGGLE. CLEAR
+    // WIGLE is an ACTION that wipes the credentials and the
+    // submitted-cache.
+    if (s_page == SettingsPage::WIGLE) {
+        switch (it.id) {
+            case 2:
+                p.autoSync = v != 0;
+                Display::showToast(v ? "AUTO SYNC ON" : "AUTO SYNC OFF", 700);
+                break;
+            case 3:
+                Wigle::clearCredentials();
+                Display::showToast("WIGLE CLEARED", 900);
+                return true;
             default: return false;
         }
         Config::save();
@@ -1126,6 +1190,30 @@ void update() {
             SFX::play(SFX::CONFIRM);
             Display::showToast("NAME SAVED", 900);
             return;
+        }
+        // fR3k v3.0.4: Wigle credentials. NAME (id 0) and TOKEN
+        // (id 1) are committed together. Validation:
+        //   - NAME: non-empty, < 64 chars
+        //   - TOKEN: hex, 32+ chars
+        if (s_page == SettingsPage::WIGLE) {
+            const Item& w = WIGLE[s_idx];
+            if (w.id == 0) {
+                // WIGLE NAME typed
+                Wigle::setCredentials(s_edit, nullptr);
+                s_text = false;
+                SFX::play(SFX::CONFIRM);
+                Display::showToast("WIGLE NAME SAVED", 900);
+                return;
+            }
+            if (w.id == 1) {
+                // WIGLE TOKEN typed
+                const char* name = Wigle::getApiName();
+                Wigle::setCredentials(name, s_edit);
+                s_text = false;
+                SFX::play(SFX::CONFIRM);
+                Display::showToast(Wigle::hasCredentials() ? "WIGLE TOKEN SAVED" : "WIGLE TOKEN BAD", 900);
+                return;
+            }
         }
         if (erase) {
             size_t L = strlen(s_edit);

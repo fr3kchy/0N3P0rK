@@ -8,9 +8,11 @@ confirms the source tree is shippable and the v3 features are present.
 Usage:
   python3 scripts/verify_fr3k.py
 """
-from pathlib import Path
+
+import os
 import re
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 errors: list[str] = []
@@ -52,7 +54,7 @@ irport_cpp = text("src/modes/irport.cpp")
 # ===[ v2 carry-over ] ===]
 require("m5cardputer-safe" in pio, "v2 safe env missing")
 require("m5cardputer" in pio, "default env missing")
-require("custom_version = 3.0.3-fr3k-lab" in pio, "fR3k v3 version missing")
+require("custom_version = 3.0.4-fr3k-lab" in pio, "fR3k v3 version missing")
 require("-DFR3K_SAFE_BUILD=1" in pio, "safe build flag missing")
 require("FR3K_SAFE_DEFAULT" in pio, "FR3K_SAFE_DEFAULT flag missing")
 require('drawTalk(farm, px, "fR3k")' in boot, "boot splash is not fR3k branded")
@@ -254,6 +256,56 @@ for rel in ("src/ui/boot_splash.cpp", "src/ui/settings_menu.cpp"):
     for literal in re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', data):
         if re.search(r"\b(pig|oink|snout|hoof|bacon)\b", literal, re.I):
             errors.append(f"pig-facing UI literal remains in {rel}: {literal}")
+
+# ===[ v3.0.4: GPS restore, WPA-sec overhaul, Wigle, voice fix ] ===]
+gps_cpp = text("src/modes/gps_mode.cpp")
+gps_snap = text("src/gps/gps_service.h")
+gps_svc = text("src/gps/gps_service.cpp")
+require("DispMode" in gps_cpp, "GPS mode must have DispMode enum (v3.0.4)")
+require("'m'" in gps_cpp,
+        "GPS mode must accept M/m for display mode toggle (v3.0.4)")
+require("'r'" in gps_cpp,
+        "GPS mode must accept R/r for trip reset (v3.0.4)")
+require("tripDistM" in gps_snap,
+        "GpsSnapshot must carry tripDistM (v3.0.4)")
+require("resetTrip" in gps_svc,
+        "GpsService must expose resetTrip() (v3.0.4)")
+require("getTripDistM" in gps_svc,
+        "GpsService must expose getTripDistM() (v3.0.4)")
+# Voice fix
+require("cuntJingle ||" in text("src/audio/sfx.cpp"),
+        "playPersonality() must fire CUNT jingle when voiceWord == CUNT (v3.0.4)")
+# Wigle
+require_path = os.path.exists("src/sync/wigle.h") and os.path.exists("src/sync/wigle.cpp")
+require(require_path, "Wigle client must exist (src/sync/wigle.{h,cpp})")
+wigle_h = text("src/sync/wigle.h")
+require("uploadRecommended" in wigle_h, "Wigle::uploadRecommended must be declared (v3.0.4)")
+require("recommendCount" in wigle_h, "Wigle::recommendCount must be declared (v3.0.4)")
+require("getMaskedToken" in wigle_h, "Wigle::getMaskedToken must be declared (v3.0.4)")
+# Settings
+require("WIGLE = 8" in text("src/ui/settings_menu.h") or "WIGLE = 8" in text("src/ui/settings_menu.cpp"),
+        "SettingsPage::WIGLE = 8 must exist (v3.0.4)")
+require("WIGLE NAME" in text("src/ui/settings_menu.cpp"),
+        "WIGLE NAME row must exist (v3.0.4)")
+require("WIGLE TOKEN" in text("src/ui/settings_menu.cpp"),
+        "WIGLE TOKEN row must exist (v3.0.4)")
+require("AUTO SYNC" in text("src/ui/settings_menu.cpp"),
+        "AUTO SYNC row must exist (v3.0.4)")
+# LootMenu sort
+loot_cpp = text("src/ui/loot_menu.cpp")
+require("SortMode" in loot_cpp and "SortMode::DAY" in loot_cpp,
+        "LootMenu::SortMode::DAY must be defined (v3.0.4)")
+require("recommendUpload" in loot_cpp,
+        "LootMenu must compute recommendUpload per row (v3.0.4)")
+require("isKeyPressed('o')" in loot_cpp or "isKeyPressed('O')" in loot_cpp,
+        "LootMenu must accept O/o for sort cycle (v3.0.4)")
+require("isKeyPressed('w')" in loot_cpp or "isKeyPressed('W')" in loot_cpp,
+        "LootMenu must accept W/w for Wigle upload (v3.0.4)")
+require("pullPotfileIfStale" in text("src/sync/wpasec.cpp"),
+        "WPASec::pullPotfileIfStale must be defined (v3.0.4)")
+# GPX export
+require("FileMgrMode_gpxExport" in text("src/modes/filemgr.cpp"),
+        "GPX export function must be defined in filemgr.cpp (v3.0.4)")
 
 if errors:
     print("fR3k source verification FAILED")

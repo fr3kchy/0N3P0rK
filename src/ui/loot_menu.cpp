@@ -5,6 +5,8 @@
 #include "../storage/littlefs_ops.h"
 #include "../sync/wpasec.h"
 #include "../sync/pwncrack.h"
+#include "../sync/wigle.h"
+#include "../core/config.h"
 #include "../net/ap_sta.h"
 #include "../piglet/avatar.h"
 #include "../audio/sfx.h"
@@ -27,12 +29,69 @@ bool LootMenu::detailView = false;
 bool LootMenu::syncModal = false;
 bool LootMenu::diagModal = false;
 LootMenu::Tab LootMenu::tab = LootMenu::Tab::WPASEC;
+// fR3k v3.0.4: per-tab sort mode + dirty flag.
+LootMenu::SortMode LootMenu::sortMode = LootMenu::SortMode::DAY;
+bool LootMenu::sortDirty = false;
+uint8_t LootMenu::s_newBadgeBssid[8][13] = {};
+uint32_t LootMenu::s_newBadgeUntilMs[8] = {};
+bool LootMenu::s_newBadgeValid[8] = {};
 uint8_t LootMenu::selected = 0;
 uint8_t LootMenu::scroll = 0;
 uint8_t LootMenu::count = 0;
 uint8_t LootMenu::page = 0;
 bool LootMenu::hasMore = false;
 uint16_t LootMenu::totalItems = 0;
+
+// fR3k v3.0.4: sort mode label for the header chip.
+const char* LootMenu::sortModeName(SortMode m) {
+    switch (m) {
+        case SortMode::DAY:      return "DAY";
+        case SortMode::AMOUNT:   return "AMOUNT";
+        case SortMode::ALPHA:    return "ALPHA";
+        case SortMode::CAPTURED: return "CAPT";
+        case SortMode::CRACKED:  return "TODO";
+        default: return "?";
+    }
+}
+
+uint8_t LootMenu::getNewCrackCount() {
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < 8; i++) if (s_newBadgeValid[i]) n++;
+    return n;
+}
+
+void LootMenu::markAllSeen() {
+    for (uint8_t i = 0; i < 8; i++) s_newBadgeValid[i] = false;
+}
+
+bool LootMenu::isNewBssid(const char* bssid) {
+    if (!bssid || !bssid[0]) return false;
+    for (uint8_t i = 0; i < 8; i++) {
+        if (s_newBadgeValid[i] && strncmp((char*)s_newBadgeBssid[i], bssid, 12) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// fR3k v3.0.4: kick the debounced WPA-sec potfile pull on show().
+// Honours Config::personality().autoSync; silently skips if disabled,
+// WiFi is down, the API key isn't set, or a pull is already in flight.
+void LootMenu::maybeAutoPull() {
+    if (tab != Tab::WPASEC) return;
+    if (!Config::personality().autoSync) return;
+    WPASec::pullPotfileIfStale(30UL * 60UL * 1000UL);
+}
+
+bool LootMenu::isWigleBusy() {
+    return Wigle::isBusy();
+}
+uint16_t LootMenu::getRecommendUploadCount() {
+    return Wigle::recommendCount();
+}
+void LootMenu::startWigleUpload() {
+    Wigle::uploadRecommended();
+}
 
 enum class St : uint8_t { LOCAL, UPLOADED, CRACKED };
 
@@ -45,6 +104,13 @@ struct Row {
     bool isPMKID;
     St status;
     char password[64];
+    // fR3k v3.0.4: file modification time (epoch seconds, 0 if
+    // unknown). Used by the DAY and CAPTURED sort modes.
+    uint32_t mtimeSec;
+    // fR3k v3.0.4: per-row flag for the colour highlight + Wigle
+    // recommend-upload filter. True when this BSSID is not cracked,
+    // not uploaded, has a clean BSSID, and the file is < 1 MB.
+    bool recommendUpload;
 };
 
 static Row s_rows[48];
@@ -183,8 +249,12 @@ void LootMenu::scan() {
     if (!Storage::available()) return;
 
     const bool wpa = (tab == Tab::WPASEC);
-    if (wpa) WPASec::loadCache();
-    else Pwncrack::loadCache();
+    // fR3k v3.0.4: WPASec::preload() runs once in setup(), so the
+    // cracked+uploaded cache is already loaded by the time the user
+    // opens the loot menu. The previous "if (wpa) loadCache()"
+    // here re-ran loadCache on every scan() (cheap no-op when
+    // cacheLoaded, but the gated check is needless now).
+    (void)wpa;
 
     File root = SD.open(Storage::DIR_HS);
     if (!root || !root.isDirectory()) {
@@ -194,13 +264,19 @@ void LootMenu::scan() {
 
     // Skip past every page before this one - cheap name-only check, no
     // identity fill or wpasec/pwncrack cache lookups, so paging stays fast
-    // even with hundreds of captures on the card.
+    // even with hundreds of captures on the card. fR3k v3.0.4: the
+    // totalWalk counter also produces the directory total; we use it
+    // to skip the separate countTotal() re-walk that doubled cost.
     uint16_t toSkip = (uint16_t)page * PAGE_SIZE;
+    uint16_t totalWalk = 0;
     File f = root.openNextFile();
     while (f && toSkip > 0) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
-            if (matchesTab(wpa, name)) toSkip--;
+            if (matchesTab(wpa, name)) {
+                toSkip--;
+                totalWalk++;
+            }
         }
         f.close();
         f = root.openNextFile();
@@ -225,6 +301,7 @@ void LootMenu::scan() {
                         memset(&tmp, 0, sizeof(tmp));
                         strncpy(tmp.filename, name, sizeof(tmp.filename) - 1);
                         tmp.fileSize = (uint32_t)f.size();
+                        tmp.mtimeSec = (uint32_t)f.getLastWrite();  // fR3k v3.0.4
                         tmp.isPMKID = h220 && !endsWith(name, "_hs.22000");
                         fillIdentity(tmp, Storage::DIR_HS);
                         int same = -1;
@@ -304,12 +381,66 @@ void LootMenu::scan() {
         f = root.openNextFile();
     }
 
+    // fR3k v3.0.4: compute the per-row `recommendUpload` flag for
+    // the colour highlight and the Wigle filter. Cheap per-row work
+    // that doesn't touch the WPA-sec / Pwncrack cache (we already
+    // populated `status` in the fill loop).
+    for (uint8_t i = 0; i < count; i++) {
+        Row& r = s_rows[i];
+        r.recommendUpload = (r.status == St::LOCAL) &&
+                            r.hex[0] &&
+                            r.fileSize < 1024UL * 1024UL;
+        // fR3k v3.0.4: bumped the NEW badge map for any freshly
+        // cracked BSSID we haven't already flagged. The map is
+        // cleared via the K hotkey.
+        if (r.status == St::CRACKED && r.hex[0] && !isNewBssid(r.hex)) {
+            for (uint8_t j = 0; j < 8; j++) {
+                if (!s_newBadgeValid[j]) {
+                    memcpy(s_newBadgeBssid[j], r.hex, 12);
+                    s_newBadgeBssid[j][12] = '\0';
+                    s_newBadgeUntilMs[j] = millis() + 7UL * 24UL * 3600UL * 1000UL;  // 7 days
+                    s_newBadgeValid[j] = true;
+                    break;
+                }
+            }
+        }
+    }
+    // fR3k v3.0.4: in-page sort pass. We sort the rows on the
+    // current page only - the global ordering is best-effort.
+    // PAGE_SIZE = 48, so an insertion sort is fine.
+    if (count > 1) {
+        for (uint8_t i = 1; i < count; i++) {
+            Row key = s_rows[i];
+            int8_t j = (int8_t)(i - 1);
+            while (j >= 0) {
+                const Row& a = s_rows[j];
+                bool less = false;
+                switch (sortMode) {
+                    case SortMode::DAY:      less = a.mtimeSec < key.mtimeSec; break;
+                    case SortMode::CAPTURED: less = a.mtimeSec > key.mtimeSec; break;
+                    case SortMode::ALPHA:
+                        less = strcasecmp(a.ssid[0] ? a.ssid : a.filename,
+                                          key.ssid[0] ? key.ssid : key.filename) > 0;
+                        break;
+                    case SortMode::AMOUNT:   less = a.fileSize < key.fileSize; break;  // bigger capture = more EAPOL frames = more chance of crack
+                    case SortMode::CRACKED:  less = (a.status == St::CRACKED) && (key.status != St::CRACKED); break;
+                    default: break;
+                }
+                if (!less) break;
+                s_rows[j + 1] = s_rows[j];
+                j--;
+            }
+            s_rows[j + 1] = key;
+        }
+    }
+
     // One more matching name past this page? -> hasMore, without loading it.
     while (f) {
         if (!f.isDirectory()) {
             const char* name = Storage::baseName(f.name());
             if (matchesTab(wpa, name)) {
                 hasMore = true;
+                totalWalk++;  // fR3k v3.0.4: this is also part of the total
                 f.close();
                 break;
             }
@@ -318,7 +449,9 @@ void LootMenu::scan() {
         f = root.openNextFile();
     }
     root.close();
-    countTotal();
+    // fR3k v3.0.4: write the directory total computed during the
+    // single scan() walk. No second countTotal() pass needed.
+    totalItems = totalWalk;
 }
 
 // Cheap directory pass for the summary line's "N total" - just name checks,
@@ -362,7 +495,13 @@ void LootMenu::show() {
     diagModal = false;
     keyWasPressed = true;
     page = 0;
+    sortDirty = true;  // fR3k v3.0.4: re-apply sort on next scan
     scan();
+    // fR3k v3.0.4: kick the debounced WPA-sec potfile pull.
+    // Honours Config::personality().autoSync; silently skips if
+    // disabled, WiFi is down, the API key isn't set, or a pull is
+    // already in flight.
+    maybeAutoPull();
 }
 
 void LootMenu::openWpaSec() {
@@ -415,7 +554,7 @@ const char* LootMenu::getBottomHint() {
         case 3: return "D  delete this file";
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
-        case 6: return "[ / ]  prev / next page";
+        case 6: return "O  sort  W  wigle  K  mark seen";
         default: return ",/  wpasec / pwncrack";
     }
 }
@@ -811,6 +950,32 @@ void LootMenu::handleInput() {
     if (M5Cardputer.Keyboard.isKeyPressed('r') || M5Cardputer.Keyboard.isKeyPressed('R'))
         reloadList();
     if (M5Cardputer.Keyboard.isKeyPressed('t') || M5Cardputer.Keyboard.isKeyPressed('T')) runDiag();
+    // fR3k v3.0.4: O cycles sort modes. W kicks Wigle upload of all
+    // recommend-upload rows. K marks all NEW badges as seen.
+    if (M5Cardputer.Keyboard.isKeyPressed('o') || M5Cardputer.Keyboard.isKeyPressed('O')) {
+        sortMode = (SortMode)(((uint8_t)sortMode + 1) % (uint8_t)SortMode::COUNT);
+        sortDirty = true;
+        page = 0;
+        Display::showToast(sortModeName(sortMode), 700);
+        scan();
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed('w') || M5Cardputer.Keyboard.isKeyPressed('W')) {
+        if (Wigle::isBusy()) {
+            Display::showToast("WIGLE BUSY", 700);
+        } else if (!Wigle::hasCredentials()) {
+            Display::showToast("WIGLE: NO CREDS", 900);
+        } else {
+            Display::showToast("WIGLE: UPLOADING", 700);
+            Wigle::uploadRecommended();  // blocks; status toasts inline
+        }
+        return;
+    }
+    if (M5Cardputer.Keyboard.isKeyPressed('k') || M5Cardputer.Keyboard.isKeyPressed('K')) {
+        markAllSeen();
+        Display::showToast("MARKED SEEN", 600);
+        return;
+    }
 }
 
 void LootMenu::update() {
@@ -1053,6 +1218,13 @@ void LootMenu::draw(M5Canvas& canvas) {
     }
     canvas.setTextColor(UiStyle::GOLD);
     canvas.drawString(summary, 6, 18);
+    // fR3k v3.0.4: sort chip on the right side of the title bar.
+    canvas.setTextColor(UiStyle::PINK);
+    {
+        char sortChip[16];
+        snprintf(sortChip, sizeof(sortChip), "SRT:%s", sortModeName(sortMode));
+        canvas.drawString(sortChip, 180, 18);
+    }
 
     canvas.setTextColor(UiStyle::CYAN);
     canvas.drawString("SSID", 6, 28);
@@ -1065,10 +1237,20 @@ void LootMenu::draw(M5Canvas& canvas) {
         const Row& cap = s_rows[i];
         bool sel = (i == selected);
         uiListRow(canvas, y, 14, sel, UiStyle::PINK);
+        // fR3k v3.0.4: yellow left edge for recommend-upload rows.
+        if (cap.recommendUpload) {
+            canvas.fillRect(2, y + 1, 2, 12, UiStyle::GOLD);
+        }
         canvas.setTextColor(sel ? UiStyle::BG : UiStyle::TEXT);
-
+        // fR3k v3.0.4: prefix the SSID with [!] for recommend-upload
+        // rows so the operator sees the candidates at a glance.
         char ssidBuf[19];
         size_t pos = 0;
+        if (cap.recommendUpload) {
+            ssidBuf[pos++] = '[';
+            ssidBuf[pos++] = '!';
+            ssidBuf[pos++] = ']';
+        }
         const char* src = cap.ssid[0] ? cap.ssid : cap.filename;
         while (*src && pos < 17) {
             char ch = *src++;

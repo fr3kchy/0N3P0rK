@@ -177,6 +177,15 @@ bool WPASec::loadCache() {
     return true;
 }
 
+void WPASec::preload() {
+    // fR3k v3.0.4: fire and forget on boot. loadCache is the same
+    // path every getter goes through, so calling it once at startup
+    // means the first LootMenu::show() is a no-op for cache work.
+    if (cacheLoaded) return;
+    if (!Storage::available()) return;
+    loadCache();
+}
+
 const WPASec::CrackedEntry* WPASec::findCracked(const char* normalizedBssid) {
     for (const auto& e : crackedCache) {
         if (strcmp(e.bssid, normalizedBssid) == 0) return &e;
@@ -621,4 +630,86 @@ bool WPASec::pullPotfile(const char* apiKey, uint16_t& lines) {
         lines = getCrackedCount();
     }
     return ok;
+}
+
+// fR3k v3.0.4: debounced auto-pull for LootMenu::show().  The
+// operator can disable this via Config::personality().autoSync.
+// We do NOT block the caller - we kick the pull in the background
+// by spawning a detached task.  This keeps the menu open snappy.
+#include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <Preferences.h>
+
+// Forward decls for the NVS-backed API key helpers defined at the
+// bottom of this file.
+bool WPASec_loadApiKey(char* out, size_t outLen);
+void WPASec_saveApiKey(const char* key);
+void WPASec_clearApiKey();
+
+struct AutoPullArgs {
+    char apiKey[33];
+    uint32_t minIntervalMs;
+};
+static uint32_t s_lastAutoPullMs = 0;
+static Preferences s_wpasecPrefs;
+
+static void autoPullTask(void* arg) {
+    AutoPullArgs* a = (AutoPullArgs*)arg;
+    uint16_t lines = 0;
+    WPASec::pullPotfile(a->apiKey, lines);
+    delete a;
+    vTaskDelete(nullptr);
+}
+
+bool WPASec::pullPotfileIfStale(uint32_t minIntervalMs) {
+    if (busy) return false;  // a pull is already in flight
+    const uint32_t now = millis();
+    if (minIntervalMs > 0 &&
+        s_lastAutoPullMs != 0 &&
+        (now - s_lastAutoPullMs) < minIntervalMs) {
+        return false;
+    }
+    if (WiFi.status() != WL_CONNECTED) return false;
+    // Read the API key from NVS (preferences).
+    extern bool WPASec_loadApiKey(char* out, size_t outLen);
+    char key[33] = {0};
+    if (!WPASec_loadApiKey(key, sizeof(key))) return false;
+    if (!hasApiKey(key)) return false;
+    s_lastAutoPullMs = now;
+    AutoPullArgs* a = new AutoPullArgs;
+    if (!a) return false;
+    strncpy(a->apiKey, key, sizeof(a->apiKey) - 1);
+    a->apiKey[sizeof(a->apiKey) - 1] = '\0';
+    a->minIntervalMs = minIntervalMs;
+    // Pin to core 0 with low priority so the sniffer keeps its
+    // CPU budget. Stack 8K is enough for HTTPS + small JSON parse.
+    xTaskCreatePinnedToCore(autoPullTask, "fr3kAutopull",
+                            8192, a, 1, nullptr, 0);
+    return true;
+}
+
+// fR3k v3.0.4: NVS-backed API key read. The Preferences namespace
+// `wpasec` carries the operator's 32-char hex API key. The static
+// `s_wpasecPrefs` is declared at the top of this file so the
+// forward decls above resolve correctly.
+bool WPASec_loadApiKey(char* out, size_t outLen) {
+    if (!out || outLen < 33) return false;
+    s_wpasecPrefs.begin("wpasec", true);
+    String s = s_wpasecPrefs.getString("key", "");
+    s_wpasecPrefs.end();
+    if (s.length() != 32) return false;
+    strncpy(out, s.c_str(), outLen - 1);
+    out[outLen - 1] = '\0';
+    return true;
+}
+void WPASec_saveApiKey(const char* key) {
+    s_wpasecPrefs.begin("wpasec", false);
+    s_wpasecPrefs.putString("key", key ? key : "");
+    s_wpasecPrefs.end();
+}
+void WPASec_clearApiKey() {
+    s_wpasecPrefs.begin("wpasec", false);
+    s_wpasecPrefs.clear();
+    s_wpasecPrefs.end();
 }

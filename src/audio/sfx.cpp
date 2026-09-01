@@ -1071,7 +1071,15 @@ void playPersonality() {
     // it was a major source of the perceived UI lag.
     if (s_inMenu) return;
     const PersonalityConfig& p = Config::personality();
-    if (p.cuntJingle && p.voiceWord != (uint8_t)VOICE_CUNT) {
+    // fR3k v3.0.4: CUNT jingle branch fixed. The previous gate was
+    // `cuntJingle && voiceWord != CUNT`, but the default `voiceWord`
+    // IS CUNT, so the jingle never fired through playPersonality() -
+    // only through the explicit playCuntJingle() called by the
+    // CUNT JINGLE settings toggle. New gate: fire the jingle if
+    // EITHER the operator set the voice word to CUNT OR turned on
+    // the override. The NAV_CUNT blip on menu keys is unaffected.
+    if ((p.cuntJingle || p.voiceWord == (uint8_t)VOICE_CUNT)
+        && p.voiceWord != (uint8_t)VOICE_ACK) {
         // One-shot CUNT jingle: skip the queue and use the speaker
         // directly. 105 ms is short enough not to block UI.
         if (s_muteMask != 0) return;

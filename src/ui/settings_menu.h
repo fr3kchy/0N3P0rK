@@ -12,7 +12,8 @@ enum class SettingsPage : uint8_t {
     CONNECT = 4,
     KEYS = 5,
     STATUS = 6,
-    LAB = 7
+    LAB = 7,
+    WIGLE = 8
 };
 
 namespace SettingsMenu {

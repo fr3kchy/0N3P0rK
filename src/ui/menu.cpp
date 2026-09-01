@@ -615,6 +615,25 @@ static void drawRoot(M5Canvas& canvas) {
         else
             snprintf(buf, sizeof(buf), "%s %s", item.icon, item.label);
         canvas.drawString(buf, 10, y);
+        // fR3k v3.0.4: LOOT entry shows a "N new" badge if there
+        // are unviewed cracked BSSIDs. Operates on the cached count
+        // from LootMenu::getNewCrackCount(); refreshes on every draw
+        // frame so the badge is live.
+        if (strcmp(item.label, "LOOT") == 0) {
+            uint8_t newCount = LootMenu::getNewCrackCount();
+            if (newCount > 0) {
+                char badge[12];
+                snprintf(badge, sizeof(badge), "N%d", newCount);
+                int bx = DISPLAY_W - 32;
+                int by = y - 1;
+                canvas.setTextColor(UI_TITLE);
+                canvas.fillRoundRect(bx - 2, by, 28, 14, 3, 0xF800);
+                canvas.setTextDatum(top_center);
+                canvas.setTextColor(0x0000);
+                canvas.drawString(badge, bx + 12, by + 1);
+                canvas.setTextDatum(top_left);
+            }
+        }
     }
     canvas.setTextSize(1);
     canvas.setTextColor(UI_DIM);

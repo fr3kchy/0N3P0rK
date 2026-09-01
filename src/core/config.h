@@ -94,6 +94,10 @@ struct PersonalityConfig {
     // 30 ms piezo blip on every keypress as audible feedback. Off by
     // default - menu is fully silent unless the operator asks.
     bool menuMinimalTap = false;
+    // v3.0.4: when true, the LootMenu kicks a debounced WPA-sec
+    // potfile pull on every show(). Default ON; operator can disable
+    // if WiFi is patchy.
+    bool autoSync = true;
 };
 
 enum class HopSet : uint8_t { ALL = 0, PRIORITY = 1, CORE = 2 };

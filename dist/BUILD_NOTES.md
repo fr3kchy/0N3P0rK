@@ -1,11 +1,11 @@
-# fR3k Cardputer Build Notes (v3.0.3-fr3k-lab)
+# fR3k Cardputer Build Notes (v3.0.4-fr3k-lab)
 
 ## Provenance
 
 - Upstream: `https://github.com/lexilexiko/0N3P0rK`
 - Upstream branch: `Methodik`
 - Upstream base commit: `4985112`
-- fR3k version: `3.0.3-fr3k-lab` (default env), `3.0.3-fr3k-safe` (safe env)
+- fR3k version: `3.0.4-fr3k-lab` (default env), `3.0.4-fr3k-safe` (safe env)
 - Build profile: lab-gated distributable + safe-v2 fallback
 
 ## Toolchain

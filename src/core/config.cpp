@@ -73,6 +73,7 @@ bool Config::init() {
     // at false for v3.0.3.
     p.menuSound = s_prefs.getBool("menusnd", p.menuSound);
     p.menuMinimalTap = s_prefs.getBool("menutap", p.menuMinimalTap);
+    p.autoSync = s_prefs.getBool("autosync", p.autoSync);
 
     RadioConfig& r = radioConfig;
     r.hopMs = s_prefs.getUShort("hop", r.hopMs);
@@ -219,6 +220,7 @@ bool Config::save() {
     s_prefs.putBool("specsky", p.spectrumSky);
     s_prefs.putBool("menusnd", p.menuSound);
     s_prefs.putBool("menutap", p.menuMinimalTap);
+    s_prefs.putBool("autosync", p.autoSync);
 
     const RadioConfig& r = radioConfig;
     s_prefs.putUShort("hop", r.hopMs);

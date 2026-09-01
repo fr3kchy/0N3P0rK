@@ -20,6 +20,7 @@
 #include "cap/sniffer.h"
 #include "lab/lab_unlock.h"
 #include "telemetry/telemetry.h"
+#include "sync/wpasec.h"  // fR3k v3.0.4: preload() the cache at boot
 #include "piglet/spectrum_sky.h"
 #include "modes/evilpig.h"
 #include "modes/pigpass.h"
@@ -75,6 +76,10 @@ void setup() {
     Avatar::init();
     GpsService::begin();
     Telemetry::begin();
+    // fR3k v3.0.4: warm the WPA-sec cracked+uploaded cache so the
+    // first LootMenu open is instant. SD must be up; we just did
+    // Storage::begin() above. Safe to skip if SD is missing.
+    WPASec::preload();
     // fR3k v3.0.3: SpectrumSky::begin() removed. The spectrum overlay
     // is off by default; the source in src/piglet/spectrum_sky.cpp is
     // preserved for a future re-enable.

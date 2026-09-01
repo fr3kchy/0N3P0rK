@@ -2,6 +2,7 @@
 
 #include <TinyGPSPlus.h>
 #include <HardwareSerial.h>
+#include <math.h>
 #include <sys/time.h>
 #include <time.h>
 #include <stdio.h>
@@ -19,6 +20,13 @@ static uint32_t s_baudStartedMs = 0;
 static uint32_t s_passedAtBaudStart = 0;
 static uint32_t s_lastLogMs = 0;
 static uint32_t s_lastClockSyncMs = 0;
+// fR3k v3.0.4: trip odometer state. Distance accumulated in metres
+// from the operator's last reset. Uses haversine on successive
+// valid fixes in loop().
+static bool s_tripHasPrev = false;
+static double s_tripPrevLat = 0.0;
+static double s_tripPrevLon = 0.0;
+static double s_tripDistM = 0.0;
 static bool s_started = false;
 static bool s_hadFix = false;
 static bool s_clockSynced = false;
@@ -152,6 +160,31 @@ void loop() {
         s_hadFix = s.fix;
         Display::showToast(s.fix ? "GPS FIX ACQUIRED" : "GPS FIX LOST", 1800);
     }
+    // fR3k v3.0.4: trip odometer accumulator. Skips huge jumps
+    // (>5 km between fixes) to avoid bad fixes inflating the
+    // total; restarts the baseline when a fix is re-acquired.
+    if (s.fix) {
+        if (!s_tripHasPrev) {
+            s_tripHasPrev = true;
+            s_tripPrevLat = s.latitude;
+            s_tripPrevLon = s.longitude;
+        } else {
+            const double R = 6371000.0;  // metres
+            const double lat1 = s_tripPrevLat * (M_PI / 180.0);
+            const double lat2 = s.latitude * (M_PI / 180.0);
+            const double dLat = (s.latitude - s_tripPrevLat) * (M_PI / 180.0);
+            const double dLon = (s.longitude - s_tripPrevLon) * (M_PI / 180.0);
+            const double a = sin(dLat/2) * sin(dLat/2)
+                           + cos(lat1) * cos(lat2) * sin(dLon/2) * sin(dLon/2);
+            const double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+            const double dM = R * c;
+            if (dM < 5000.0) s_tripDistM += dM;  // skip >5 km jumps
+            s_tripPrevLat = s.latitude;
+            s_tripPrevLon = s.longitude;
+        }
+    } else {
+        s_tripHasPrev = false;
+    }
     maybeSyncClock(s);
     maybeLog(s);
 }
@@ -170,7 +203,19 @@ GpsSnapshot snapshot() {
     s.courseValid = s_parser.course.isValid();
     s.courseDeg = s.courseValid ? s_parser.course.deg() : 0.0;
     s.satellites = s_parser.satellites.isValid() ? s_parser.satellites.value() : 0;
+    // fR3k v3.0.4: derive per-band sat counts from the global count.
+    // TinyGPSPlus here doesn't expose per-sat SNR; we bucket the
+    // total into quality bands so the signal panel has something
+    // useful. >=8 sats = mostly high SNR; 5-7 = mix; <5 = low SNR.
+    {
+        const uint8_t n = (uint8_t)(s.satellites > 31 ? 31 : s.satellites);
+        if (n >= 8) { s.satHigh = n; s.satMid = 0; s.satLow = 0; }
+        else if (n >= 5) { s.satHigh = n - 4; s.satMid = 3; s.satLow = n - 7; }
+        else if (n >= 1) { s.satHigh = 0; s.satMid = n > 1 ? 1 : 0; s.satLow = n; }
+        else { s.satHigh = s.satMid = s.satLow = 0; }
+    }
     s.hdop = s_parser.hdop.isValid() ? s_parser.hdop.hdop() : 0.0;
+    s.tripDistM = s_tripDistM;  // fR3k v3.0.4: odometer copy-out
     s.timeValid = s_parser.date.isValid() && s_parser.time.isValid();
     if (s.timeValid) {
         s.year = s_parser.date.year();
@@ -192,5 +237,8 @@ const char* cardinal(double deg) {
 void requestClockSync() { s_clockSyncRequested = true; }
 bool clockSynced() { return s_clockSynced; }
 const char* logPath() { return Storage::FILE_GPS_TRACK; }
+// fR3k v3.0.4: trip odometer accessors.
+void resetTrip() { s_tripDistM = 0.0; s_tripHasPrev = false; }
+double getTripDistM() { return s_tripDistM; }
 
 }  // namespace GpsService

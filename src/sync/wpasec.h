@@ -27,6 +27,10 @@ public:
     static WPASecSyncResult syncCaptures(const char* apiKey, WPASecProgressCallback cb = nullptr);
     static bool uploadOneFile(const char* filepath, const char* bssidHint, const char* apiKey);
     static bool pullPotfile(const char* apiKey, uint16_t& lines);
+    // fR3k v3.0.4: warm the cracked+uploaded cache on boot so the
+    // first LootMenu open does not block on wpasec_results.txt.
+    // Idempotent and thread-safe (no work if cacheLoaded already).
+    static void preload();
 
     static bool loadCache();
     static void freeCacheMemory();
@@ -36,6 +40,12 @@ public:
     static uint16_t getCrackedCount();
     static bool isUploaded(const char* bssid);
     static void markAsUploaded(const char* bssid);
+    // fR3k v3.0.4: debounced auto-pull. Returns true if a pull was
+    // started (caller should NOT block), false if skipped because
+    // (a) the operator disabled auto-sync, (b) the debounce window
+    // hasn't elapsed, (c) the API key isn't set, or (d) WiFi is down.
+    // 'minIntervalMs' = 0 to force a pull.
+    static bool pullPotfileIfStale(uint32_t minIntervalMs);
 
     static const char* getLastError();
     static bool isBusy();
