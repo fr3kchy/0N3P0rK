@@ -369,11 +369,21 @@ static const Note SND_CUNT[] = {
 // every existing SFX::play(SFX::CLICK) call site gets the new behaviour
 // automatically.
 static const Note NAV_ACK[]  = { { 880, 18, 0}, {1180, 22, 0}, {0,0,0} };
+// fR3k v3.0.4: NAV_CUNT is the real 3-note descending CUNT jingle
+// (700/420/280 Hz, 25/35/45 ms). Previously NAV_CUNT was a 2-note
+// "blip" (760/420) that didn't sound like the demon's voice at
+// all. Operators highlighted the SOUND WORD row to hear what the
+// demon would say and got a generic piezo chirp instead. Now
+// every UI tap sounds like the configured personality, including
+// the CUNT personality. The jingle runs through playNav()'s
+// queue-pumped path so the audio task handles the second and
+// third notes in subsequent update() ticks - no synchronous
+// speaker blocking.
+static const Note NAV_CUNT[] = { { 700, 25, 0}, { 420, 35, 0}, { 280, 45, 0}, {0,0,0} };
 static const Note NAV_HEY[]  = { { 660, 22, 0}, { 460, 26, 0}, {0,0,0} };
 static const Note NAV_NAH[]  = { { 420, 18, 0}, { 640, 22, 0}, {0,0,0} };
 static const Note NAV_MUM[]  = { { 320, 24, 0}, { 380, 24, 0}, {0,0,0} };
 static const Note NAV_OOF[]  = { { 600, 16, 0}, { 380, 22, 0}, {0,0,0} };
-static const Note NAV_CUNT[] = { { 760, 18, 0}, { 420, 24, 0}, {0,0,0} };
 
 // Resolved nav tap for the configured personality. Returns the static
 // const table - caller must NOT modify.
@@ -731,25 +741,43 @@ static void startSequence(const Note* seq) {
 // screen update is never trailed by an audio tail.
 struct NavTap {
     bool     active;
+    uint8_t  stage;        // fR3k v3.0.4: 0 = playing note0, 1 = note1, 2 = note2
     uint16_t freq0;
     uint16_t dur0_ms;
     uint16_t freq1;
     uint16_t dur1_ms;
-    uint32_t note0EndMs;
+    uint16_t freq2;        // fR3k v3.0.4: third note (used by NAV_CUNT jingle)
+    uint16_t dur2_ms;
+    uint32_t noteEndMs;    // current note's end timestamp
 };
-static NavTap s_nav = { false, 0, 0, 0, 0, 0 };
+static NavTap s_nav = { false, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 static bool pumpNav() {
     if (!s_nav.active) return false;
     uint32_t now = millis();
-    if (now < s_nav.note0EndMs) return true;  // first note still playing
-    if (s_nav.freq1) {
-        // Second note: fire-and-clear. Called from the audio task so
-        // the piezo can finish it cleanly before the next tick.
-        M5.Speaker.tone(s_nav.freq1, s_nav.dur1_ms);
+    if (now < s_nav.noteEndMs) return true;  // current note still playing
+    // Advance to the next note. Each transition fires the next
+    // tone or clears the state if no further note is configured.
+    s_nav.stage++;
+    switch (s_nav.stage) {
+        case 1:
+            if (s_nav.freq1) {
+                s_nav.noteEndMs = millis() + s_nav.dur1_ms;
+                M5.Speaker.tone(s_nav.freq1, s_nav.dur1_ms);
+                return true;
+            }
+            // fallthrough
+        case 2:
+            if (s_nav.freq2) {
+                s_nav.noteEndMs = millis() + s_nav.dur2_ms;
+                M5.Speaker.tone(s_nav.freq2, s_nav.dur2_ms);
+                return true;
+            }
+            // fallthrough
+        default:
+            s_nav.active = false;
+            return true;
     }
-    s_nav.active = false;
-    return true;
 }
 
 bool update() {
@@ -1080,14 +1108,14 @@ void playPersonality() {
     // the override. The NAV_CUNT blip on menu keys is unaffected.
     if ((p.cuntJingle || p.voiceWord == (uint8_t)VOICE_CUNT)
         && p.voiceWord != (uint8_t)VOICE_ACK) {
-        // One-shot CUNT jingle: skip the queue and use the speaker
-        // directly. 105 ms is short enough not to block UI.
-        if (s_muteMask != 0) return;
-        if (Config::personality().soundLevel == 0) return;
-        applyVolume();
-        M5.Speaker.tone(700, 25);
-        M5.Speaker.tone(420, 35);
-        M5.Speaker.tone(280, 45);
+        // fR3k v3.0.4: route the CUNT jingle through playNav() so the
+        // audio task pumps each note in subsequent update() ticks.
+        // The old direct M5.Speaker.tone() calls blocked the caller
+        // for 105 ms (25+35+45) which the operator perceived as a UI
+        // "restart" when the CUNT row was highlighted in the demon
+        // settings page. playNav() returns immediately; the audio
+        // task handles the second and third notes on the next tick.
+        playNav();
         return;
     }
     playNav();
@@ -1118,11 +1146,15 @@ void playNav() {
     if (!seq || !seq[0].freq) return;
     applyVolume();
     s_nav.active = true;
+    s_nav.stage = 0;
     s_nav.freq0 = seq[0].freq;
     s_nav.dur0_ms = seq[0].duration;
     s_nav.freq1 = seq[1].freq;
     s_nav.dur1_ms = seq[1].duration;
-    s_nav.note0EndMs = millis() + seq[0].duration;
+    // fR3k v3.0.4: optional third note (NAV_CUNT jingle is 3 tones).
+    s_nav.freq2 = seq[2].freq;
+    s_nav.dur2_ms = seq[2].duration;
+    s_nav.noteEndMs = millis() + seq[0].duration;
     M5.Speaker.tone(seq[0].freq, seq[0].duration);
 }
 

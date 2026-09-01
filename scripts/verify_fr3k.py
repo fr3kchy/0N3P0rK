@@ -333,6 +333,25 @@ require("buildWigleBody" in text("src/sync/wigle.cpp"),
         "Wigle body builder must be a single shared function (v3.0.4 refactor)")
 require("pullPotfileIfStale" in text("src/sync/wpasec.cpp"),
         "WPASec::pullPotfileIfStale must be defined (v3.0.4)")
+# fR3k v3.0.4: CUNT jingle must play through the queue-pumped
+# playNav() path. The old code called M5.Speaker.tone() directly
+# three times in a row, which blocked the caller for ~105 ms and
+# the operator perceived it as a UI "restart" when the CUNT row
+# was highlighted in the demon settings page.
+sfx_cpp = text("src/audio/sfx.cpp")
+require("NAV_CUNT" in sfx_cpp,
+        "NAV_CUNT sequence must be defined (v3.0.4)")
+require("700, 25" in sfx_cpp and "420, 35" in sfx_cpp and "280, 45" in sfx_cpp,
+        "CUNT jingle must use the real 3-note 700/420/280 sequence (v3.0.4)")
+# The playPersonality CUNT branch must NOT call M5.Speaker.tone
+# directly; it must route through playNav() so the audio task
+# pumps each note in subsequent update() ticks.
+pp_cunt = sfx_cpp[sfx_cpp.find("playPersonality"):sfx_cpp.find("playNav()", sfx_cpp.find("playPersonality"))]
+if "M5.Speaker.tone(700" in pp_cunt or "M5.Speaker.tone(420" in pp_cunt or "M5.Speaker.tone(280" in pp_cunt:
+    errors.append("playPersonality CUNT branch must NOT call M5.Speaker.tone directly (v3.0.4)")
+# NavTap must support a third note.
+require("freq2" in sfx_cpp and "dur2_ms" in sfx_cpp,
+        "NavTap must support a third note (v3.0.4 CUNT jingle)")
 # GPX export
 require("FileMgrMode_gpxExport" in text("src/modes/filemgr.cpp"),
         "GPX export function must be defined in filemgr.cpp (v3.0.4)")
