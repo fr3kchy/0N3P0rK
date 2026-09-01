@@ -94,6 +94,7 @@ static const Item WIGLE[] = {
     {"WIGLE NAME",  Kind::TEXT,   0, 0, 0, 0},
     {"WIGLE TOKEN", Kind::TEXT,   1, 0, 0, 0},
     {"AUTO SYNC",   Kind::TOGGLE, 2, 0, 1, 1},
+    {"UPLOADED",    Kind::VALUE,  4, 0, 0, 0},  // fR3k v3.0.4: read-only count
     {"CLEAR WIGLE", Kind::ACTION, 3, 0, 0, 0},
 };
 static const uint8_t WIGLE_N = sizeof(WIGLE) / sizeof(WIGLE[0]);
@@ -601,6 +602,9 @@ static void formatValue(const Item& it, char* out, size_t len, bool editing) {
         int v = getValue(it);
         if (v <= 0) strncpy(raw, "OFF", sizeof(raw) - 1);
         else snprintf(raw, sizeof(raw), "%dS", v);
+    } else if (s_page == SettingsPage::WIGLE && it.id == 4) {
+        // fR3k v3.0.4: read-only lifetime upload count.
+        snprintf(raw, sizeof(raw), "%lu", (unsigned long)Wigle::submittedCount());
     } else {
         snprintf(raw, sizeof(raw), "%d", getValue(it));
     }

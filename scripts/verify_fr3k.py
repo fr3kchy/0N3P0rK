@@ -295,6 +295,12 @@ require("channelToFrequency" in wigle_cpp,
 # header must NOT be present anywhere in the encoder.
 require("BSSID,SSID,Latitude,Longitude,Time,Channel" not in wigle_cpp,
         "Wigle upload must not use the legacy v3.0.4-pre CSV header")
+# fR3k v3.0.4: a lifetime submitted-count accessor must exist for the
+# WIGLE settings page to render.
+require("Wigle::submittedCount" in wigle_cpp,
+        "Wigle::submittedCount must be defined (v3.0.4 settings UI)")
+require("UPLOADED" in text("src/ui/settings_menu.cpp"),
+        "WIGLE settings page must show a UPLOADED count row (v3.0.4)")
 # Settings
 require("WIGLE = 8" in text("src/ui/settings_menu.h") or "WIGLE = 8" in text("src/ui/settings_menu.cpp"),
         "SettingsPage::WIGLE = 8 must exist (v3.0.4)")

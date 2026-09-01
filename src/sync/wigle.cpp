@@ -236,6 +236,15 @@ uint16_t Wigle::recommendCount() {
     return (uint16_t)r.size();
 }
 
+uint32_t Wigle::submittedCount() {
+    // fR3k v3.0.4: the submitted cache is a packed array of 12-hex
+    // BSSIDs (no separators, no terminator). Divide by 12 for the
+    // count. The cache is loaded lazily; this is the first call
+    // site on boot, after which it stays in RAM.
+    loadSubmittedCache();
+    return (uint32_t)(s_submittedCache.size() / 12);
+}
+
 static bool csvEscapeAndAppend(const char* field, String& out) {
     if (!field) return false;
     bool needQuote = false;

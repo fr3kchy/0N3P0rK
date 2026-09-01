@@ -50,6 +50,12 @@ public:
     // Computed on demand (re-walks the SD card).
     static uint16_t recommendCount();
 
+    // Total BSSIDs already submitted to Wigle in this device's
+    // lifetime (read from the persistent NVS cache, no SD walk).
+    // fR3k v3.0.4: surfaces the running total in the WIGLE
+    // settings page so the operator can see uploads are landing.
+    static uint32_t submittedCount();
+
     // True while a call is in flight.
     static bool isBusy();
     static const char* getLastError();
