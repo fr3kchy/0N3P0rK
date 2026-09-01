@@ -123,7 +123,7 @@ static void cycleHuntDepth() {
     char msg[20];
     snprintf(msg, sizeof(msg), "HS %s", huntDepthName(s_huntDepth));
     Display::showToast(msg, 900);
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 static int8_t s_cliSel = 0;
@@ -993,21 +993,21 @@ static void handleSweep() {
         int n = nextSel(-1);
         if (n >= 0) {
             setSel(n);
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
         int n = nextSel(+1);
         if (n >= 0) {
             setSel(n);
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('f') || M5Cardputer.Keyboard.isKeyPressed('F')) {
         s_filt = (Filt)((s_filt + 1) & 3);
         if (s_sel < 0 || s_sel >= s_nNet || !passFilt(s_net[s_sel]))
             setSel(nextSel(+1));
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
     if (M5Cardputer.Keyboard.isKeyPressed('a') || M5Cardputer.Keyboard.isKeyPressed('A')) {
         enterHunt();
@@ -1025,11 +1025,11 @@ static void handleLock() {
     uint8_t nc = (idx >= 0) ? s_net[idx].nCli : 0;
     if (M5Cardputer.Keyboard.isKeyPressed(';') && nc) {
         if (s_cliSel > 0) s_cliSel--;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.') && nc) {
         if (s_cliSel + 1 < nc) s_cliSel++;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
     if (M5Cardputer.Keyboard.isKeyPressed('w') || M5Cardputer.Keyboard.isKeyPressed('W')) {
         if (idx >= 0 && s_net[idx].pmf) {

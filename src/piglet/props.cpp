@@ -317,7 +317,7 @@ static void maybeAnnounce() {
     }
     if (msg) {
         Display::showToast(msg, 1200);
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
 }
 
@@ -541,7 +541,7 @@ void forceDemo(uint8_t which) {
         "HIVE", "SNOWMAN", "FOX", "FIRE", "CAT", "SKULL"
     };
     Display::showToast(names[which], 1000);
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 }  // namespace Props

@@ -1,11 +1,11 @@
-# fR3k Cardputer Build Notes (v3.0.0-fr3k-lab)
+# fR3k Cardputer Build Notes (v3.0.1-fr3k-lab)
 
 ## Provenance
 
 - Upstream: `https://github.com/lexilexiko/0N3P0rK`
 - Upstream branch: `Methodik`
 - Upstream base commit: `4985112`
-- fR3k version: `3.0.0-fr3k-lab` (default env), `3.0.0-fr3k-safe` (safe env)
+- fR3k version: `3.0.1-fr3k-lab` (default env), `3.0.1-fr3k-safe` (safe env)
 - Build profile: lab-gated distributable + safe-v2 fallback
 
 ## Toolchain
@@ -45,8 +45,8 @@ Result: **both SUCCESS**
 
 | Build          | Image bytes  | % of app partition | SHA-256 |
 |----------------|-------------:|-------------------:|---------|
-| `m5cardputer`      | 2,090,816 | 79.8 % | `d275c1a7a1ea88db63f3e3d0a0c36032f5b9c72baa23812d55e10a8ef60baea8` |
-| `m5cardputer-safe` | 2,089,424 | 79.7 % | `2f456db9cebd07d4f89fedee8e5f4b9f023db590c468148f9271d831993c9134` |
+| `m5cardputer`      | 2,091,088 | 79.8 % | `5a2715b24e9dd5768465c06df4750aa7fb2883bbd5d93f72ad70e5e887ae6ef6` |
+| `m5cardputer-safe` | 2,089,728 | 79.7 % | `1cca820d75b7128fd01527eef135d20c0d925d58b6e10294925117c7609c480d` |
 
 App partition size: 2,621,440 bytes. ~530 KB headroom in both builds.
 
@@ -128,3 +128,37 @@ App partition size: 2,621,440 bytes. ~530 KB headroom in both builds.
 - ESP32-S3 image checksum and validation hash: PASS
 - Physical GNSS fix, SD append, IR blast, lab unlock on-device:
   : not hardware-tested in this build session
+
+## v3.0.1 follow-up (UI responsiveness + click sound + demon words)
+
+- New `SFX::playNav()` — queue-bypassing nav tap (50-60 ms two-note
+  pair) fired directly via `M5.Speaker.tone()`. The audio task pumps
+  the second note in the next `update()` tick. Fixes the perceived
+  lag where a visual UI update was trailed by an audible click.
+- All 39 `SFX::play(SFX::CLICK)` and `SFX::play(SFX::MENU_CLICK)` call
+  sites migrated to `SFX::playNav()`. Dispatcher arms in `sfx.cpp`
+  demoted to no-ops for backwards source compat only.
+- `applyMuteMask()` no longer calls `stop()`. The IR blast path
+  silenced the active sequence only — pending personality events
+  fire after the mute clears.
+- `SFX::update()`: keep personality events queued through a mute
+  window. The previous code drained the audio queue on
+  `setMuted(true)`, which dropped any personality event that was
+  queued just before the mute toggle.
+- New nav-tap variant table `NAV_ACK / NAV_HEY / NAV_NAH / NAV_MUM /
+  NAV_OOF / NAV_CUNT` keyed off `Config::personality().voiceWord`.
+  Default `voiceWord == VOICE_CUNT` produces the NAV_CUNT tap on
+  every UI keypress.
+- `scripts/verify_fr3k.py` extended: walks every .cpp/.h in `src/`
+  (except `sfx.cpp/.h`) and fails on any lingering
+  `SFX::play(SFX::CLICK)` or `SFX::play(SFX::MENU_CLICK)`.
+
+## Build verification (v3.0.1)
+
+- `pio run -e m5cardputer`        : PASS
+- `pio run -e m5cardputer-safe`   : PASS
+- `python3 scripts/verify_fr3k.py`: PASS (incl. new click-call-site
+  migration gate)
+- `python3 tools/aus_ir_codes_test.py` : PASS
+- `python3 tools/lab_unlock_check.py`  : PASS
+- `git diff --check`             : PASS

@@ -250,7 +250,7 @@ void IrPortMode::handleInput() {
         if (M5Cardputer.Keyboard.isKeyPressed(';') ||
             M5Cardputer.Keyboard.isKeyPressed('.')) {
             regionSel = regionSel ? 0 : 1;
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
             return;
         }
         if (M5Cardputer.Keyboard.keysState().enter ||
@@ -327,7 +327,7 @@ void IrPortMode::handleInput() {
         snprintf(statusMsg, sizeof(statusMsg), "REGION %s  N=%u",
                  IrPower::getRegion() == IR_REGION_EU ? "EU" : "NA",
                  (unsigned)IrPower::getCodeCount());
-        SFX::play(SFX::CLICK);
+        SFX::playNav();
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('b') ||

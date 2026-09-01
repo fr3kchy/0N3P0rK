@@ -278,7 +278,7 @@ void loop() {
         if (keyNewPress(s_minLatch)) {
             if (keyMin()) {
                 s_winHid = !s_winHid;
-                SFX::play(SFX::MENU_CLICK);
+                SFX::playNav();
                 Display::showToast(s_winHid ? "MIN" : "WIN", 500);
             } else if (s_winHid && keyEsc()) {
                 setMode(AppMode::MENU);

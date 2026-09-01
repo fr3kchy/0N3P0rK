@@ -54,7 +54,7 @@ void update() {
         s_cool = millis() + 5000;
         // Stub until card game ships
         Mood::say("CARDS NOT READY");
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         Avatar::setState(AvatarState::SAD);
     }
 }

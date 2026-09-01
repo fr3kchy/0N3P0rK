@@ -77,7 +77,7 @@ void update() {
         if (cfg.timezoneQuarterHours < 56) cfg.timezoneQuarterHours++;
         Config::save();
     }
-    SFX::play(SFX::CLICK);
+    SFX::playNav();
 }
 
 void getStatusLine(char* out, size_t len) {

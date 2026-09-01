@@ -118,6 +118,31 @@ require("playPersonality" in sfx_cpp,
         "SFX::playPersonality() helper missing")
 require("playCuntJingle" in sfx_cpp,
         "SFX::playCuntJingle() helper missing")
+require("playNav" in sfx_cpp,
+        "SFX::playNav() helper missing (v3.0.1 queue-bypassing nav tap)")
+# v3.0.1: CLICK/MENU_CLICK dispatcher arms must be no-ops so legacy
+# SFX::play(SFX::CLICK) callers don't double-strike the speaker.
+# playNav() is the new entry point and is wired at every call site.
+require("startSequence(SND_CLICK)" not in sfx_cpp,
+        "SND_CLICK sequence still dispatched - migrate to SFX::playNav()")
+require("startSequence(SND_MENU_CLICK)" not in sfx_cpp,
+        "SND_MENU_CLICK sequence still dispatched - migrate to SFX::playNav()")
+# No remaining SFX::play(SFX::CLICK) / SFX::play(SFX::MENU_CLICK) call
+# sites - the replacement is comprehensive.
+import os as _os
+for _root, _dirs, _files in _os.walk("src"):
+    for _fn in _files:
+        if not (_fn.endswith(".cpp") or _fn.endswith(".h")):
+            continue
+        if _fn == "sfx.cpp" or _fn == "sfx.h":
+            continue
+        _data = (_root + "/" + _fn) if _root != "src" else ("src/" + _fn)
+        with open(_data) as _f:
+            _src = _f.read()
+        if "SFX::play(SFX::CLICK)" in _src:
+            errors.append(f"{_data}: SFX::play(SFX::CLICK) still present")
+        if "SFX::play(SFX::MENU_CLICK)" in _src:
+            errors.append(f"{_data}: SFX::play(SFX::MENU_CLICK) still present")
 require("voiceWord" in config_h and "voiceWord" in config_cpp,
         "PersonalityConfig::voiceWord missing")
 require("cuntJingle" in config_h and "cuntJingle" in config_cpp,

@@ -352,7 +352,7 @@ void LootMenu::gotoPage(uint8_t newPage, bool landOnLast) {
         selected = (uint8_t)(count - 1);
         scroll = (selected + 1 > VISIBLE) ? (uint8_t)(selected - VISIBLE + 1) : 0;
     }
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 void LootMenu::show() {
@@ -700,7 +700,7 @@ void LootMenu::reloadList() {
     char msg[24];
     snprintf(msg, sizeof(msg), "RELOAD %u", (unsigned)count);
     Display::showToast(msg, 800);
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 void LootMenu::handleInput() {
@@ -759,7 +759,7 @@ void LootMenu::handleInput() {
     if (M5Cardputer.Keyboard.isKeyPressed(',') || M5Cardputer.Keyboard.isKeyPressed('/')) {
         tab = (tab == Tab::WPASEC) ? Tab::PWNCRACK : Tab::WPASEC;
         page = 0;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         scan();
         return;
     }
@@ -785,7 +785,7 @@ void LootMenu::handleInput() {
             gotoPage((uint8_t)(page - 1), true);
             return;
         }
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
         if (count && selected + 1 < count) {
@@ -797,7 +797,7 @@ void LootMenu::handleInput() {
             gotoPage((uint8_t)(page + 1), false);
             return;
         }
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
     }
     if (M5Cardputer.Keyboard.keysState().enter && count) detailView = true;
     if (M5Cardputer.Keyboard.isKeyPressed('s') || M5Cardputer.Keyboard.isKeyPressed('S'))

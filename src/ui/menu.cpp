@@ -525,7 +525,7 @@ void update() {
             if (s_modalIdx > 0) {
                 s_modalIdx--;
                 if (s_modalIdx < s_modalScroll) s_modalScroll = s_modalIdx;
-                SFX::play(SFX::MENU_CLICK);
+                SFX::playNav();
             }
         }
         if (M5Cardputer.Keyboard.isKeyPressed('.')) {
@@ -533,11 +533,11 @@ void update() {
                 s_modalIdx++;
                 if (s_modalIdx >= s_modalScroll + MODAL_VIS)
                     s_modalScroll = (uint8_t)(s_modalIdx - MODAL_VIS + 1);
-                SFX::play(SFX::MENU_CLICK);
+                SFX::playNav();
             }
         }
         if (keys.enter) {
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
             const Item* it = groupItems(s_group);
             uint8_t id = (it && s_modalIdx < n) ? it[s_modalIdx].actionId : 0;
             closeModal();
@@ -550,7 +550,7 @@ void update() {
         if (s_rootIdx > 0) {
             s_rootIdx--;
             if (s_rootIdx < s_rootScroll) s_rootScroll = s_rootIdx;
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         }
     }
     if (M5Cardputer.Keyboard.isKeyPressed('.')) {
@@ -558,11 +558,11 @@ void update() {
             s_rootIdx++;
             if (s_rootIdx >= s_rootScroll + VISIBLE)
                 s_rootScroll = (uint8_t)(s_rootIdx - VISIBLE + 1);
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         }
     }
     if (keys.enter) {
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         const RootItem& it = activeRoot()[s_rootIdx];
         if (it.type == RootType::GROUP) {
             s_group = it.groupId;

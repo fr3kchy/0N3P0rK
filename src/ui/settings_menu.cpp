@@ -975,19 +975,19 @@ static void updateConnect() {
     if (rescan) {
         Display::showToast("SCAN...", 500);
         scanWifi();
-        SFX::play(SFX::CLICK);
+        SFX::playNav();
         return;
     }
     if (up && s_netIdx > 0) {
         s_netIdx--;
         if (s_netIdx < s_netScroll) s_netScroll = s_netIdx;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
     if (down && s_netIdx + 1 < s_netN) {
         s_netIdx++;
         if (s_netIdx >= s_netScroll + VIS) s_netScroll = (uint8_t)(s_netIdx - VIS + 1);
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
     if (!keys.enter || s_netN == 0) return;
@@ -1002,7 +1002,7 @@ static void updateConnect() {
     s_edit[0] = '\0';
     s_conn = ConnPhase::PASS;
     s_text = true;
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 void update() {
@@ -1025,10 +1025,10 @@ void update() {
         const uint8_t statN = 9;
         if (up && s_statScroll > 0) {
             s_statScroll--;
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         } else if (down && s_statScroll + STAT_VIS < statN) {
             s_statScroll++;
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
         }
         (void)keys;
         return;
@@ -1178,14 +1178,14 @@ void update() {
     if (up || down) {
         if (s_editing && cur.kind == Kind::VALUE) {
             int next = getValue(cur) + (up ? cur.step : -cur.step);
-            if (setValue(cur, next)) SFX::play(SFX::CLICK);
+            if (setValue(cur, next)) SFX::playNav();
             return;
         }
         s_editing = false;
         if (up && s_idx > 0) s_idx--;
         else if (down && s_idx + 1 < n) s_idx++;
         keepVisible(n);
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
 
@@ -1201,7 +1201,7 @@ void update() {
 
     if (cur.kind == Kind::BIND) {
         s_bind = true;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         Display::showToast("PRESS KEY", 700);
         return;
     }
@@ -1238,11 +1238,11 @@ void update() {
             s_edit[sizeof(s_edit) - 1] = '\0';
         }
         s_text = true;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
     s_editing = !s_editing;
-    SFX::play(SFX::MENU_CLICK);
+    SFX::playNav();
 }
 
 static void drawConnect(M5Canvas& canvas) {

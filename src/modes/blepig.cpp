@@ -246,7 +246,7 @@ void BlePigMode::update() {
             else
                 f = (uint8_t)((f + 1) % 4);
             family = (Family)f;
-            SFX::play(SFX::MENU_CLICK);
+            SFX::playNav();
             lastBurstMs = 0;
         }
     }

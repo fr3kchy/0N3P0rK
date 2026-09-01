@@ -195,7 +195,7 @@ void FileMgrMode::handleBrowseInput() {
     if (M5Cardputer.Keyboard.keysState().enter ||
         M5Cardputer.Keyboard.isKeyPressed('/')) {  // enter/right = open
         if (openSelected()) SFX::play(SFX::CONFIRM);
-        else SFX::play(SFX::MENU_CLICK);
+        else SFX::playNav();
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('v') || M5Cardputer.Keyboard.isKeyPressed('V')) {
@@ -205,7 +205,7 @@ void FileMgrMode::handleBrowseInput() {
         strncpy(statusMsg, "SD", sizeof(statusMsg) - 1);
         refreshList();
         Display::showToast("SD CARD ONLY", 800);
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
     if (M5Cardputer.Keyboard.isKeyPressed('n') || M5Cardputer.Keyboard.isKeyPressed('N')) {
@@ -237,7 +237,7 @@ void FileMgrMode::handleViewInput() {
     if (M5Cardputer.Keyboard.isKeyPressed('e') || M5Cardputer.Keyboard.isKeyPressed('E')) {
         cursor = bufLen;
         phase = Phase::EDIT;
-        SFX::play(SFX::MENU_CLICK);
+        SFX::playNav();
         return;
     }
 }

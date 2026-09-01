@@ -110,3 +110,39 @@ RAM usage unchanged at 57.1%.
 - The distributable `fr3k-cardputer-v3.bin` ships with the gate locked.
   Operators enter it once via `SETTINGS > LAB UNLOCK > PASSWORD > 666`.
 - No firmware was flashed and no physical hardware test was claimed.
+
+## v3.0.1-lab follow-up
+
+- New `SFX::playNav()` — queue-bypassing nav tap that fires two short
+  notes (50-60 ms total) directly via `M5.Speaker.tone()` instead of
+  routing through the audio queue. The audio task pumps the second
+  note in the next `update()` tick. Fixes the perceived lag where a
+  visual UI update was trailed by an audible click.
+- All `SFX::play(SFX::CLICK)` and `SFX::play(SFX::MENU_CLICK)` call
+  sites (39 of them) migrated to `SFX::playNav()`. The dispatcher
+  arms for `CLICK` and `MENU_CLICK` in `sfx.cpp` are no-ops for
+  backwards source compat only.
+- Mute-mask leak in `update()` fixed. The old code drained the audio
+  queue when `setMuted(true)` was called (used by `IrPortMode::startBlast`
+  and the spectrum hunt path). This dropped any personality event that
+  was queued just before the mute toggle. v3.0.1 keeps the queue intact
+  and only silences the active sequence — personality events fire
+  after the mute clears, so the operator hears CUNT / HEY / etc even
+  after pressing an attack hotkey.
+- `applyMuteMask()` no longer calls `stop()`. The IR blast path is
+  unaffected because `currentSequence = nullptr` was already wired into
+  the update path.
+- Personality variant table added: NAV_ACK / NAV_HEY / NAV_NAH / NAV_MUM
+  / NAV_OOF / NAV_CUNT. The `SOUND WORD` setting now drives both the
+  demon word events (mood / boot) AND the nav tap (UI). Default
+  `voiceWord == VOICE_CUNT` produces the NAV_CUNT tap on every UI keypress.
+- Verify script extended: walks every .cpp/.h in `src/` (except
+  `sfx.cpp/.h`) and fails on any lingering `SFX::play(SFX::CLICK)` or
+  `SFX::play(SFX::MENU_CLICK)`. Locks down the migration.
+
+## Compatibility (v3.0.1)
+
+- All v3.0.0 user state preserved (NVS, SD, lab unlock flag).
+- `voiceWord == VOICE_CUNT` is still the shipped default. To hear the
+  old "annoying click" again, set `SOUND WORD` to `ACK` and the nav tap
+  reverts to NAV_ACK (~30 ms, higher pitch).

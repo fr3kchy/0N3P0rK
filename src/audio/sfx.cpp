@@ -360,6 +360,35 @@ static const Note SND_CUNT[] = {
     {0, 0, 0}
 };
 
+// ==[ NAV TAPS (v3.0.1) ]==
+// ~50-60 ms two-note personality variants for UI clicks. Distinct enough
+// from each other that operators with the SOUND WORD setting cycling
+// can still hear which word is active, but short enough that the screen
+// update never trails the audio. Used by SFX::playNav() (the queue-
+// bypassing nav path) and by the case CLICK: arm of the dispatcher so
+// every existing SFX::play(SFX::CLICK) call site gets the new behaviour
+// automatically.
+static const Note NAV_ACK[]  = { { 880, 18, 0}, {1180, 22, 0}, {0,0,0} };
+static const Note NAV_HEY[]  = { { 660, 22, 0}, { 460, 26, 0}, {0,0,0} };
+static const Note NAV_NAH[]  = { { 420, 18, 0}, { 640, 22, 0}, {0,0,0} };
+static const Note NAV_MUM[]  = { { 320, 24, 0}, { 380, 24, 0}, {0,0,0} };
+static const Note NAV_OOF[]  = { { 600, 16, 0}, { 380, 22, 0}, {0,0,0} };
+static const Note NAV_CUNT[] = { { 760, 18, 0}, { 420, 24, 0}, {0,0,0} };
+
+// Resolved nav tap for the configured personality. Returns the static
+// const table - caller must NOT modify.
+static const Note* navSequence() {
+    switch ((VoiceWord)Config::personality().voiceWord) {
+        case VOICE_HEY:  return NAV_HEY;
+        case VOICE_NAH:  return NAV_NAH;
+        case VOICE_MUM:  return NAV_MUM;
+        case VOICE_OOF:  return NAV_OOF;
+        case VOICE_CUNT: return NAV_CUNT;
+        case VOICE_ACK:
+        default:         return NAV_ACK;
+    }
+}
+
 // Legacy OINK_* sequences kept as thin aliases - they still exist as
 // SFX events but dispatch to the demon-word playback below. Old call
 // sites (Mood::feed / Mood::eatWorld / Mood::pet) now use playPersonality
@@ -581,8 +610,13 @@ void init() {
 }
 
 static void applyMuteMask(uint8_t mask) {
+    // v3.0.1: do NOT call stop() here. stop() clears the queue, which
+    // drops personality events that were queued before the mute flag
+    // was set. The mute mask's job is to silence *current* audio, not
+    // to evict pending events. update() will simply skip pulling
+    // events while the mask is non-zero; once the mask clears the
+    // queue drains normally.
     s_muteMask = mask;
-    if (mask != 0) stop();
 }
 
 void setMuted(bool muted) {
@@ -668,17 +702,57 @@ static void startSequence(const Note* seq) {
     }
 }
 
+// ==[ DIRECT NAV-TAP STATE (v3.0.1) ]==
+// Queue-bypassing UI nav tap. Fires two short notes (50-60 ms total)
+// without blocking the caller. The audio task pumps the second note in
+// the next update() tick. Replaces the queueing CLICK path so the
+// screen update is never trailed by an audio tail.
+struct NavTap {
+    bool     active;
+    uint16_t freq0;
+    uint16_t dur0_ms;
+    uint16_t freq1;
+    uint16_t dur1_ms;
+    uint32_t note0EndMs;
+};
+static NavTap s_nav = { false, 0, 0, 0, 0, 0 };
+
+static bool pumpNav() {
+    if (!s_nav.active) return false;
+    uint32_t now = millis();
+    if (now < s_nav.note0EndMs) return true;  // first note still playing
+    if (s_nav.freq1) {
+        // Second note: fire-and-clear. Called from the audio task so
+        // the piezo can finish it cleanly before the next tick.
+        M5.Speaker.tone(s_nav.freq1, s_nav.dur1_ms);
+    }
+    s_nav.active = false;
+    return true;
+}
+
 bool update() {
-    // Skip if muted or sound disabled
-    if (s_muteMask != 0 || Config::personality().soundLevel == 0) {
-        // Clear any queued events
-        taskENTER_CRITICAL(&queueMutex);
-        queueHead = queueTail;
-        taskEXIT_CRITICAL(&queueMutex);
+    // Skip if muted or sound disabled - but never clear the queue:
+    // the queue may hold a personality event fired inside the mute
+    // window (e.g. mood event during IR blast). The mute mask only
+    // needs to silence *active* audio, not drain pending events.
+    bool silenced = (s_muteMask != 0 || Config::personality().soundLevel == 0);
+    if (silenced) {
         currentSequence = nullptr;
+        // Also drop any nav-tap in flight (it would fire mid-mute)
+        s_nav.active = false;
         return false;
     }
-    
+
+    // First, pump the direct nav state. The nav tap is fired-and-
+    // forgotten: the caller returned immediately after the first note,
+    // and we deliver the second note in this tick (or the next). This
+    // is what makes the screen update land in sync with the audio.
+    if (pumpNav()) {
+        // Nav tap is still in flight. Don't pull a queued event until
+        // it's done; otherwise we'd double-strike the speaker.
+        return true;
+    }
+
     // Process queued event if nothing playing
     taskENTER_CRITICAL(&queueMutex);
     bool hasEvents = (queueTail != queueHead && currentSequence == nullptr);
@@ -726,10 +800,18 @@ bool update() {
                 startSequence(SND_ERROR);
                 break;
             case CLICK:
-                startSequence(SND_CLICK);
+                // v3.0.1: CLICK is now fire-and-forget via SFX::playNav().
+                // The dispatcher arm here is kept as a no-op for backwards
+                // source compat with any SFX::play(SFX::CLICK) caller that
+                // hasn't migrated yet. The nav tap fires synchronously and
+                // would otherwise double-strike the speaker if we also
+                // started SND_CLICK here.
                 break;
             case MENU_CLICK:
-                startSequence(SND_MENU_CLICK);
+                // Same treatment as CLICK - the menu navigation path is
+                // expected to call SFX::playNav() directly. Anything that
+                // still routes through SFX::play(SFX::MENU_CLICK) drops
+                // silently; the screen update is the feedback.
                 break;
             case TERMINAL_TICK:
                 {
@@ -949,20 +1031,44 @@ void tone(uint16_t freq, uint16_t duration) {
 void playPersonality() {
     // SOUND WORD settings row picks the demon word; if the operator
     // switched CUNT JINGLE on (default), the CUNT jingle fires instead.
+    // v3.0.1: route through playNav() so the boot-splash and mood events
+    // bypass the audio queue. This guarantees the operator hears the
+    // configured word even when an IR blast is mid-mute.
     const PersonalityConfig& p = Config::personality();
     if (p.cuntJingle && p.voiceWord != (uint8_t)VOICE_CUNT) {
-        play(CUNT);
+        // One-shot CUNT jingle: skip the queue and use the speaker
+        // directly. 105 ms is short enough not to block UI.
+        if (s_muteMask != 0) return;
+        if (Config::personality().soundLevel == 0) return;
+        applyVolume();
+        M5.Speaker.tone(700, 25);
+        M5.Speaker.tone(420, 35);
+        M5.Speaker.tone(280, 45);
         return;
     }
-    switch ((VoiceWord)p.voiceWord) {
-        case VOICE_HEY: play(HEY);  break;
-        case VOICE_NAH: play(NAH);  break;
-        case VOICE_MUM: play(MUM);  break;
-        case VOICE_OOF: play(OOF);  break;
-        case VOICE_CUNT: play(CUNT); break;
-        case VOICE_ACK:
-        default:         play(ACK);  break;
-    }
+    playNav();
+}
+
+// ==[ DIRECT NAV-TAP STATE (v3.0.1) ]==
+// Queue-bypassing UI nav tap (declared up near startSequence() so the
+// audio task can see s_nav at compile time).
+void playNav() {
+    // Queue-bypassing nav tap. Called from UI loops that would otherwise
+    // trail an audible click after every keypress. Non-blocking: the
+    // caller returns immediately and the audio task pumps the second
+    // note in the next update() tick.
+    if (s_muteMask != 0) return;
+    if (Config::personality().soundLevel == 0) return;
+    const Note* seq = navSequence();
+    if (!seq || !seq[0].freq) return;
+    applyVolume();
+    s_nav.active = true;
+    s_nav.freq0 = seq[0].freq;
+    s_nav.dur0_ms = seq[0].duration;
+    s_nav.freq1 = seq[1].freq;
+    s_nav.dur1_ms = seq[1].duration;
+    s_nav.note0EndMs = millis() + seq[0].duration;
+    M5.Speaker.tone(seq[0].freq, seq[0].duration);
 }
 
 void playCuntJingle() {

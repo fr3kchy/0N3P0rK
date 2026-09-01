@@ -145,7 +145,20 @@ void tone(uint16_t freq, uint16_t duration);
 // Play the personality's chosen demon word (SOUND WORD settings row).
 // Picks ACK / HEY / NAH / MUM / OOF / CUNT from Config::personality().
 // Called from Mood / boot splash / etc instead of the legacy OINK_* events.
+// Honours the mute mask (when set, the personality event is skipped) but
+// does NOT touch the audio queue or the active sequence, so a queued
+// mood event that fires inside an IR blast window is preserved across
+// the mute toggle.
 void playPersonality();
+
+// Short personality- aware UI nav tap (~50-60 ms total). Bypasses the
+// audio queue and the sequence state machine - fires M5.Speaker.tone()
+// directly so the screen update is never trailed by an audio tail.
+// Honours soundLevel == 0 and the mute mask but does NOT clear the
+// active sequence or drop queued events. Callers in tight loops (menu
+// navigation, settings value cycling) should use this instead of
+// SFX::play(SFX::CLICK).
+void playNav();
 
 // One-shot fire of the CUNT jingle regardless of the configured word -
 // used by settings UI / unlock confirmation when the operator wants
