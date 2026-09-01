@@ -2,9 +2,11 @@
 // fR3k v3.0.4: Wigle.net upload implementation.
 
 #include "wigle.h"
+#include "../build_info.h"
 
 #include "../storage/littlefs_ops.h"
 #include "../cap/capture_name.h"
+#include "../cap/sniffer.h"   // fR3k v3.0.4: rssiForChannel()
 #include "../gps/gps_service.h"
 #include "../sync/wpasec.h"
 
@@ -159,6 +161,8 @@ struct BssidRow {
     double lat;
     double lon;
     uint8_t channel;
+    int8_t rssi;        // fR3k v3.0.4: from sniffer rssiForChannel()
+    double altitudeM;   // fR3k v3.0.4: from GPS snapshot
 };
 
 // Walk /0N3P0rK/handshakes and pull the BSSID + filename-mtime + a
@@ -205,7 +209,14 @@ static std::vector<BssidRow> collectRecommend() {
                                 }
                                 r.lat = haveGps ? g.latitude : 0.0;
                                 r.lon = haveGps ? g.longitude : 0.0;
+                                r.altitudeM = haveGps ? g.altitudeM : 0.0;
                                 r.channel = 0;
+                                // fR3k v3.0.4: pull the most recent RSSI the
+                                // sniffer saw on this BSSID's channel. Best-
+                                // effort (may be 0 if the sniffer has not
+                                // recorded anything yet); WiGLE accepts empty
+                                // RSSI as a blank field.
+                                r.rssi = Cap::rssiForChannel(0);
                                 out.push_back(r);
                             }
                         }
@@ -242,6 +253,30 @@ static bool csvEscapeAndAppend(const char* field, String& out) {
     return true;
 }
 
+// fR3k v3.0.4: WiGLE Frequency column wants the center frequency in
+// MHz, not the channel. Returns 0 for channels we don't recognise so
+// the caller can leave the column blank. 2.4 GHz channels 1-14 and
+// the 5 GHz UNII bands the M5's radio hops to.
+static uint16_t channelToFrequency(uint8_t ch) {
+    if (ch >= 1 && ch <= 13) return (uint16_t)(2412 + (ch - 1) * 5);
+    if (ch == 14) return 2484;
+    switch (ch) {
+        case 36: return 5180;  case 40: return 5200;
+        case 44: return 5220;  case 48: return 5240;
+        case 52: return 5260;  case 56: return 5280;
+        case 60: return 5300;  case 64: return 5320;
+        case 100: return 5500; case 104: return 5520;
+        case 108: return 5540; case 112: return 5560;
+        case 116: return 5580; case 120: return 5600;
+        case 124: return 5620; case 128: return 5640;
+        case 132: return 5660; case 136: return 5680;
+        case 140: return 5700; case 149: return 5745;
+        case 153: return 5765; case 157: return 5785;
+        case 161: return 5805; case 165: return 5825;
+    }
+    return 0;
+}
+
 WigleResult Wigle::uploadRecommended() {
     WigleResult r{};
     r.success = false;
@@ -270,10 +305,20 @@ WigleResult Wigle::uploadRecommended() {
         return r;
     }
 
-    // Build the CSV body.
+    // fR3k v3.0.4: real WiGLE v1.6 format (https://api.wigle.net/csvFormat.html).
+    // The pre-header is REQUIRED and identifies the device / app. The
+    // header is a fixed 14-column order; rows must match exactly.
     String body;
-    body.reserve(rows.size() * 64 + 96);
-    body += "BSSID,SSID,Latitude,Longitude,Time,Channel,Encryption,Accuracy\n";
+    body.reserve(rows.size() * 96 + 256);
+    body += "WigleWifi-1.6,appRelease=fR3k ";
+    body += FR3K_VERSION;
+    body += ",model=M5Cardputer-ADV,release=espressif32@6.12.0,";
+    body += "device=fR3k,display=ST7789v2-1.14,board=esp32s3,";
+    body += "brand=Blackwave,star=Sol,body=4,subBody=0\n";
+    body += "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,";
+    body += "CurrentLatitude,CurrentLongitude,AltitudeMeters,";
+    body += "AccuracyMeters,RCOIs,MfgrId,Type\n";
+
     char tbuf[24];
     time_t now = time(nullptr);
     if (now < 1000000) now = 0;  // epoch not set; Wigle will reject if non-zero
@@ -281,17 +326,27 @@ WigleResult Wigle::uploadRecommended() {
     if (tm) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tm);
     else tbuf[0] = '\0';
     for (const auto& row : rows) {
-        body += row.bssid;
+        // [BSSID] - 14-char colon form preferred. We have 12-hex; convert.
+        char bssidColon[18];
+        bssidColon[0] = row.bssid[0]; bssidColon[1] = row.bssid[1];
+        bssidColon[2] = ':';
+        bssidColon[3] = row.bssid[2]; bssidColon[4] = row.bssid[3];
+        bssidColon[5] = ':';
+        bssidColon[6] = row.bssid[4]; bssidColon[7] = row.bssid[5];
+        bssidColon[8] = ':';
+        bssidColon[9] = row.bssid[6]; bssidColon[10] = row.bssid[7];
+        bssidColon[11] = ':';
+        bssidColon[12] = row.bssid[8]; bssidColon[13] = row.bssid[9];
+        bssidColon[14] = ':';
+        bssidColon[15] = row.bssid[10]; bssidColon[16] = row.bssid[11];
+        bssidColon[17] = '\0';
+        body += bssidColon;
         body += ',';
         csvEscapeAndAppend(row.ssid, body);
         body += ',';
-        if (row.lat != 0.0 || row.lon != 0.0) {
-            char num[24];
-            snprintf(num, sizeof(num), "%.6f,%.6f", row.lat, row.lon);
-            body += num;
-        } else {
-            body += ",";  // empty lat/lon
-        }
+        // Capabilities: handshakes are always WPA-class. Use the
+        // Android-style capability string WiGLE expects.
+        body += "[WPA2-PSK-CCMP][ESS]";
         body += ',';
         if (tbuf[0]) body += tbuf;
         body += ',';
@@ -300,8 +355,37 @@ WigleResult Wigle::uploadRecommended() {
             snprintf(cbuf, sizeof(cbuf), "%u", row.channel);
             body += cbuf;
         }
-        body += ",WPA,";
-        body += "10\n";
+        body += ',';
+        uint16_t freq = channelToFrequency(row.channel);
+        if (freq) {
+            char fbuf[8];
+            snprintf(fbuf, sizeof(fbuf), "%u", (unsigned)freq);
+            body += fbuf;
+        }
+        body += ',';
+        if (row.rssi != 0) {
+            char rbuf[8];
+            snprintf(rbuf, sizeof(rbuf), "%d", (int)row.rssi);
+            body += rbuf;
+        }
+        body += ',';
+        if (row.lat != 0.0 || row.lon != 0.0) {
+            char num[48];
+            snprintf(num, sizeof(num), "%.6f,%.6f", row.lat, row.lon);
+            body += num;
+        } else {
+            body += ",";  // empty lat
+        }
+        body += ',';
+        if (row.altitudeM > 0.0) {
+            char abuf[16];
+            snprintf(abuf, sizeof(abuf), "%.0f", row.altitudeM);
+            body += abuf;
+        }
+        body += ',';  // empty AccuracyMeters (we don't have HDOP-derived M)
+        body += ',';  // empty RCOIs
+        body += ',';  // empty MfgrId
+        body += "WIFI\n";
     }
 
     // Wigle Basic auth: base64(name:token).

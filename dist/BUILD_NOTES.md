@@ -45,10 +45,10 @@ Result: **both SUCCESS**
 
 | Build          | Image bytes  | % of app partition | SHA-256 |
 |----------------|-------------:|-------------------:|---------|
-| `m5cardputer`      | 2,090,528 | 79.8 % | `6fcf418fd095046c3b1c3f3fb827c82aea8a1ac4fa5934ca6c3c468a60ceee04` |
-| `m5cardputer-safe` | 2,089,168 | 79.7 % | `9c5fff4b4ee82378febb38e75e54bf231b231feac41a71a1398f81f52183df04` |
+| `m5cardputer`      | 2,134,160 | 81.4 % | `3e811b1dd953d1c017b5490f559960317e8fbfe9d65d66108d2a0d1666fbe85b` |
+| `m5cardputer-safe` | 2,132,880 | 81.4 % | `e8e5737f41320a7907068205bfe00cfac04250e5034945395190ed71c0a546ad` |
 
-App partition size: 2,621,440 bytes. ~530 KB headroom in both builds.
+App partition size: 2,621,440 bytes. ~487 KB headroom in both builds.
 
 ## Safe-build controls (m5cardputer-safe)
 

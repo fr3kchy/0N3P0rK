@@ -282,6 +282,19 @@ wigle_h = text("src/sync/wigle.h")
 require("uploadRecommended" in wigle_h, "Wigle::uploadRecommended must be declared (v3.0.4)")
 require("recommendCount" in wigle_h, "Wigle::recommendCount must be declared (v3.0.4)")
 require("getMaskedToken" in wigle_h, "Wigle::getMaskedToken must be declared (v3.0.4)")
+wigle_cpp = text("src/sync/wigle.cpp")
+# fR3k v3.0.4: must use the real WiGLE v1.6 CSV format, not the
+# v3.0.4-pre made-up variant. The spec is at api.wigle.net/csvFormat.html.
+require("WigleWifi-1.6" in wigle_cpp,
+        "Wigle upload must emit WiGLE v1.6 pre-header (api.wigle.net/csvFormat.html)")
+require("MAC,SSID,AuthMode,FirstSeen" in wigle_cpp,
+        "Wigle upload must emit the 14-column WiGLE v1.6 header")
+require("channelToFrequency" in wigle_cpp,
+        "Wigle upload must map channel -> MHz (Frequency column)")
+# The old made-up "BSSID,SSID,Latitude,Longitude,Time,Channel,Encryption,Accuracy"
+# header must NOT be present anywhere in the encoder.
+require("BSSID,SSID,Latitude,Longitude,Time,Channel" not in wigle_cpp,
+        "Wigle upload must not use the legacy v3.0.4-pre CSV header")
 # Settings
 require("WIGLE = 8" in text("src/ui/settings_menu.h") or "WIGLE = 8" in text("src/ui/settings_menu.cpp"),
         "SettingsPage::WIGLE = 8 must exist (v3.0.4)")
