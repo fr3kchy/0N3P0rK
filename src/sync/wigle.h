@@ -50,6 +50,13 @@ public:
     // Computed on demand (re-walks the SD card).
     static uint16_t recommendCount();
 
+    // fR3k v3.0.4: upload a specific set of BSSIDs (12-hex each, no
+    // separator). Caller passes a count + array. The set must be a
+    // subset of what recommendCount() would surface; the implementation
+    // re-filters against the on-disk pcaps to honour the size cap.
+    // Returns the same WigleResult shape as uploadRecommended().
+    static WigleResult uploadBssids(const char* const* hex12, uint16_t n);
+
     // Total BSSIDs already submitted to Wigle in this device's
     // lifetime (read from the persistent NVS cache, no SD walk).
     // fR3k v3.0.4: surfaces the running total in the WIGLE

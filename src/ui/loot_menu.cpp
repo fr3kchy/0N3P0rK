@@ -12,6 +12,7 @@
 #include "../audio/sfx.h"
 #include "../cap/sniffer.h"
 #include "../cap/capture_name.h"
+#include "../cap/hc22000.h"  // fR3k v3.0.4: C hotkey triggers on-device convert
 #include "../sync/net_io.h"
 #include "../sync/tls.h"
 #include <M5Cardputer.h>
@@ -124,6 +125,45 @@ static const uint8_t DIAG_VIS = 7;
 enum class SyncGo : uint8_t { Off, Wifi, Work };
 static SyncGo s_syncGo = SyncGo::Off;
 static uint8_t s_oneIdx = 0xFF;  // 0xFF = all pending, 0xFE = potfile only
+
+// fR3k v3.0.4: per-file Wigle upload picker. Pressing M on a row
+// toggles its 12-hex BSSID in this set; pressing W then uploads only
+// the marked BSSIDs. The set is bounded to 32 entries (Wigle's
+// free-tier daily allowance) and survives scan() so the user can
+// page through and mark several before uploading.
+static const uint8_t MARKED_MAX = 32;
+static char s_marked[MARKED_MAX][13];
+static uint8_t s_markedN = 0;
+
+static bool isMarked(const char* hex12) {
+    if (!hex12 || !hex12[0]) return false;
+    for (uint8_t i = 0; i < s_markedN; i++) {
+        if (memcmp(s_marked[i], hex12, 12) == 0) return true;
+    }
+    return false;
+}
+static void toggleMarked(const char* hex12) {
+    if (!hex12 || !hex12[0]) return;
+    for (uint8_t i = 0; i < s_markedN; i++) {
+        if (memcmp(s_marked[i], hex12, 12) == 0) {
+            // Unmark: shift down.
+            for (uint8_t j = i; j + 1 < s_markedN; j++) {
+                memcpy(s_marked[j], s_marked[j + 1], 13);
+            }
+            s_markedN--;
+            return;
+        }
+    }
+    if (s_markedN >= MARKED_MAX) return;
+    memcpy(s_marked[s_markedN], hex12, 12);
+    s_marked[s_markedN][12] = '\0';
+    s_markedN++;
+}
+static void clearMarked() {
+    s_markedN = 0;
+    memset(s_marked, 0, sizeof(s_marked));
+}
+static uint8_t markedCount() { return s_markedN; }
 
 static void paintSyncLive() {
     const IoXfer& x = ioXfer();
@@ -554,7 +594,7 @@ const char* LootMenu::getBottomHint() {
         case 3: return "D  delete this file";
         case 4: return "R  reload list";
         case 5: return "T  test wifi / api";
-        case 6: return "O  sort  W  wigle  K  mark seen";
+        case 6: return "O  sort  W  wigle  M  mark  C  convert  K  seen";
         default: return ",/  wpasec / pwncrack";
     }
 }
@@ -965,6 +1005,26 @@ void LootMenu::handleInput() {
             Display::showToast("WIGLE BUSY", 700);
         } else if (!Wigle::hasCredentials()) {
             Display::showToast("WIGLE: NO CREDS", 900);
+        } else if (markedCount() > 0) {
+            // fR3k v3.0.4: per-file picker path. Upload only the
+            // BSSIDs the user M-marked.
+            const char* set[32];
+            uint8_t setN = markedCount();
+            if (setN > 32) setN = 32;
+            for (uint8_t i = 0; i < setN; i++) set[i] = s_marked[i];
+            char t[24];
+            snprintf(t, sizeof(t), "WIGLE: %u MARKED", (unsigned)setN);
+            Display::showToast(t, 700);
+            WigleResult r = Wigle::uploadBssids(set, setN);
+            if (r.success) {
+                clearMarked();
+                char ok[24];
+                snprintf(ok, sizeof(ok), "WIGLE OK %u", (unsigned)r.uploaded);
+                Display::showToast(ok, 1000);
+            } else {
+                Display::showToast(r.error[0] ? r.error : "WIGLE FAIL", 1000);
+            }
+            scan();
         } else {
             Display::showToast("WIGLE: UPLOADING", 700);
             Wigle::uploadRecommended();  // blocks; status toasts inline
@@ -974,6 +1034,46 @@ void LootMenu::handleInput() {
     if (M5Cardputer.Keyboard.isKeyPressed('k') || M5Cardputer.Keyboard.isKeyPressed('K')) {
         markAllSeen();
         Display::showToast("MARKED SEEN", 600);
+        return;
+    }
+    // fR3k v3.0.4: M toggles the per-file Wigle upload picker. W
+    // then uploads only the marked BSSIDs; if none are marked, W
+    // falls back to the original "upload recommended" behaviour.
+    if (M5Cardputer.Keyboard.isKeyPressed('m') || M5Cardputer.Keyboard.isKeyPressed('M')) {
+        if (count == 0) { Display::showToast("NO ROW", 600); return; }
+        const char* hex = s_rows[selected].hex;
+        if (!hex[0]) { Display::showToast("NO BSSID", 600); return; }
+        toggleMarked(hex);
+        char t[24];
+        snprintf(t, sizeof(t), isMarked(hex) ? "MARKED %u/%u" : "UNMARKED",
+                 (unsigned)markedCount(), (unsigned)MARKED_MAX);
+        Display::showToast(t, 600);
+        return;
+    }
+    // fR3k v3.0.4: C converts the selected .pcap to .22000 on-device.
+    // The converter walks the pcap, finds a usable M1+M2 pair, and
+    // writes the .22000 sidecar. WPA-sec / hashcat pipelines expect
+    // the .22000 format, not raw .pcap.
+    if (M5Cardputer.Keyboard.isKeyPressed('c') || M5Cardputer.Keyboard.isKeyPressed('C')) {
+        if (count == 0) {
+            Display::showToast("NO ROW", 600);
+            return;
+        }
+        const char* name = s_rows[selected].filename;
+        if (!name[0]) return;
+        // Build absolute path under /0N3P0rK/handshakes/.
+        char path[80];
+        snprintf(path, sizeof(path), "/0N3P0rK/handshakes/%s", name);
+        Display::showToast("CONVERTING...", 800);
+        uint16_t got = Hc22000::convertPcap(path);
+        if (got > 0) {
+            char t[24];
+            snprintf(t, sizeof(t), "CONVERTED %u", (unsigned)got);
+            Display::showToast(t, 900);
+        } else {
+            Display::showToast("NO HANDSHAKE", 900);
+        }
+        scan();
         return;
     }
 }

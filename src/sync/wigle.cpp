@@ -7,6 +7,7 @@
 #include "../storage/littlefs_ops.h"
 #include "../cap/capture_name.h"
 #include "../cap/sniffer.h"   // fR3k v3.0.4: rssiForChannel()
+#include "../cap/hc22000.h"   // fR3k v3.0.4: opportunistic convert on upload
 #include "../gps/gps_service.h"
 #include "../sync/wpasec.h"
 
@@ -236,6 +237,94 @@ uint16_t Wigle::recommendCount() {
     return (uint16_t)r.size();
 }
 
+// fR3k v3.0.4: forward declarations for buildWigleBody() helpers
+// defined later in the file.
+static bool csvEscapeAndAppend(const char* field, String& out);
+static uint16_t channelToFrequency(uint8_t ch);
+
+// fR3k v3.0.4: build a WiGLE v1.6 CSV body from a pre-collected
+// BssidRow vector. Shared by uploadRecommended() and uploadBssids()
+// so the format stays in one place. Caller must guarantee rows.size()
+// <= WIGLE_MAX_ROWS_PER_CALL.
+static String buildWigleBody(const std::vector<BssidRow>& rows) {
+    String body;
+    body.reserve(rows.size() * 96 + 256);
+    body += "WigleWifi-1.6,appRelease=fR3k ";
+    body += FR3K_VERSION;
+    body += ",model=M5Cardputer-ADV,release=espressif32@6.12.0,";
+    body += "device=fR3k,display=ST7789v2-1.14,board=esp32s3,";
+    body += "brand=Blackwave,star=Sol,body=4,subBody=0\n";
+    body += "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,";
+    body += "CurrentLatitude,CurrentLongitude,AltitudeMeters,";
+    body += "AccuracyMeters,RCOIs,MfgrId,Type\n";
+    char tbuf[24];
+    time_t now = time(nullptr);
+    if (now < 1000000) now = 0;
+    struct tm* tm = (now > 0) ? gmtime(&now) : nullptr;
+    if (tm) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tm);
+    else tbuf[0] = '\0';
+    for (const auto& row : rows) {
+        char bssidColon[18];
+        bssidColon[0] = row.bssid[0]; bssidColon[1] = row.bssid[1];
+        bssidColon[2] = ':';
+        bssidColon[3] = row.bssid[2]; bssidColon[4] = row.bssid[3];
+        bssidColon[5] = ':';
+        bssidColon[6] = row.bssid[4]; bssidColon[7] = row.bssid[5];
+        bssidColon[8] = ':';
+        bssidColon[9] = row.bssid[6]; bssidColon[10] = row.bssid[7];
+        bssidColon[11] = ':';
+        bssidColon[12] = row.bssid[8]; bssidColon[13] = row.bssid[9];
+        bssidColon[14] = ':';
+        bssidColon[15] = row.bssid[10]; bssidColon[16] = row.bssid[11];
+        bssidColon[17] = '\0';
+        body += bssidColon;
+        body += ',';
+        csvEscapeAndAppend(row.ssid, body);
+        body += ',';
+        body += "[WPA2-PSK-CCMP][ESS]";
+        body += ',';
+        if (tbuf[0]) body += tbuf;
+        body += ',';
+        if (row.channel) {
+            char cbuf[8];
+            snprintf(cbuf, sizeof(cbuf), "%u", row.channel);
+            body += cbuf;
+        }
+        body += ',';
+        uint16_t freq = channelToFrequency(row.channel);
+        if (freq) {
+            char fbuf[8];
+            snprintf(fbuf, sizeof(fbuf), "%u", (unsigned)freq);
+            body += fbuf;
+        }
+        body += ',';
+        if (row.rssi != 0) {
+            char rbuf[8];
+            snprintf(rbuf, sizeof(rbuf), "%d", (int)row.rssi);
+            body += rbuf;
+        }
+        body += ',';
+        if (row.lat != 0.0 || row.lon != 0.0) {
+            char num[48];
+            snprintf(num, sizeof(num), "%.6f,%.6f", row.lat, row.lon);
+            body += num;
+        } else {
+            body += ",";
+        }
+        body += ',';
+        if (row.altitudeM > 0.0) {
+            char abuf[16];
+            snprintf(abuf, sizeof(abuf), "%.0f", row.altitudeM);
+            body += abuf;
+        }
+        body += ',';
+        body += ',';
+        body += ',';
+        body += "WIFI\n";
+    }
+    return body;
+}
+
 uint32_t Wigle::submittedCount() {
     // fR3k v3.0.4: the submitted cache is a packed array of 12-hex
     // BSSIDs (no separators, no terminator). Divide by 12 for the
@@ -305,6 +394,17 @@ WigleResult Wigle::uploadRecommended() {
     }
     s_busy = true;
     std::vector<BssidRow> rows = collectRecommend();
+    // fR3k v3.0.4: opportunistic on-device convert of the .pcap files
+    // backing these candidates, so the Wigle upload also feeds the
+    // .22000 sidecar path used by hashcat. The .22000 file is written
+    // next to the .pcap if a usable M1+M2 is present; we don't gate the
+    // upload on it (Wigle only needs the WiFi rows).
+    for (const auto& row : rows) {
+        char pcapPath[96];
+        snprintf(pcapPath, sizeof(pcapPath), "/0N3P0rK/handshakes/%s.pcap",
+                 row.bssid);
+        Hc22000::convertPcap(pcapPath);
+    }
     if (rows.empty()) {
         r.success = true;
         r.uploaded = 0;
@@ -315,87 +415,9 @@ WigleResult Wigle::uploadRecommended() {
     }
 
     // fR3k v3.0.4: real WiGLE v1.6 format (https://api.wigle.net/csvFormat.html).
-    // The pre-header is REQUIRED and identifies the device / app. The
-    // header is a fixed 14-column order; rows must match exactly.
-    String body;
-    body.reserve(rows.size() * 96 + 256);
-    body += "WigleWifi-1.6,appRelease=fR3k ";
-    body += FR3K_VERSION;
-    body += ",model=M5Cardputer-ADV,release=espressif32@6.12.0,";
-    body += "device=fR3k,display=ST7789v2-1.14,board=esp32s3,";
-    body += "brand=Blackwave,star=Sol,body=4,subBody=0\n";
-    body += "MAC,SSID,AuthMode,FirstSeen,Channel,Frequency,RSSI,";
-    body += "CurrentLatitude,CurrentLongitude,AltitudeMeters,";
-    body += "AccuracyMeters,RCOIs,MfgrId,Type\n";
-
-    char tbuf[24];
-    time_t now = time(nullptr);
-    if (now < 1000000) now = 0;  // epoch not set; Wigle will reject if non-zero
-    struct tm* tm = (now > 0) ? gmtime(&now) : nullptr;
-    if (tm) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tm);
-    else tbuf[0] = '\0';
-    for (const auto& row : rows) {
-        // [BSSID] - 14-char colon form preferred. We have 12-hex; convert.
-        char bssidColon[18];
-        bssidColon[0] = row.bssid[0]; bssidColon[1] = row.bssid[1];
-        bssidColon[2] = ':';
-        bssidColon[3] = row.bssid[2]; bssidColon[4] = row.bssid[3];
-        bssidColon[5] = ':';
-        bssidColon[6] = row.bssid[4]; bssidColon[7] = row.bssid[5];
-        bssidColon[8] = ':';
-        bssidColon[9] = row.bssid[6]; bssidColon[10] = row.bssid[7];
-        bssidColon[11] = ':';
-        bssidColon[12] = row.bssid[8]; bssidColon[13] = row.bssid[9];
-        bssidColon[14] = ':';
-        bssidColon[15] = row.bssid[10]; bssidColon[16] = row.bssid[11];
-        bssidColon[17] = '\0';
-        body += bssidColon;
-        body += ',';
-        csvEscapeAndAppend(row.ssid, body);
-        body += ',';
-        // Capabilities: handshakes are always WPA-class. Use the
-        // Android-style capability string WiGLE expects.
-        body += "[WPA2-PSK-CCMP][ESS]";
-        body += ',';
-        if (tbuf[0]) body += tbuf;
-        body += ',';
-        if (row.channel) {
-            char cbuf[8];
-            snprintf(cbuf, sizeof(cbuf), "%u", row.channel);
-            body += cbuf;
-        }
-        body += ',';
-        uint16_t freq = channelToFrequency(row.channel);
-        if (freq) {
-            char fbuf[8];
-            snprintf(fbuf, sizeof(fbuf), "%u", (unsigned)freq);
-            body += fbuf;
-        }
-        body += ',';
-        if (row.rssi != 0) {
-            char rbuf[8];
-            snprintf(rbuf, sizeof(rbuf), "%d", (int)row.rssi);
-            body += rbuf;
-        }
-        body += ',';
-        if (row.lat != 0.0 || row.lon != 0.0) {
-            char num[48];
-            snprintf(num, sizeof(num), "%.6f,%.6f", row.lat, row.lon);
-            body += num;
-        } else {
-            body += ",";  // empty lat
-        }
-        body += ',';
-        if (row.altitudeM > 0.0) {
-            char abuf[16];
-            snprintf(abuf, sizeof(abuf), "%.0f", row.altitudeM);
-            body += abuf;
-        }
-        body += ',';  // empty AccuracyMeters (we don't have HDOP-derived M)
-        body += ',';  // empty RCOIs
-        body += ',';  // empty MfgrId
-        body += "WIFI\n";
-    }
+    // The body is built by buildWigleBody() so the format stays in
+    // one place; uploadBssids() reuses the same encoder.
+    String body = buildWigleBody(rows);
 
     // Wigle Basic auth: base64(name:token).
     s_wiglePrefs.begin("wigle", true);
@@ -408,7 +430,9 @@ WigleResult Wigle::uploadRecommended() {
     WiFiClientSecure client;
     client.setInsecure();  // skip cert validation; Wigle's cert is
                            // pinned elsewhere - this is a small device.
+    client.setTimeout(15);  // fR3k v3.0.4: POSEIDON stability pattern
     HTTPClient http;
+    http.setTimeout(15000);
     if (!http.begin(client, WIGLE_HOST, WIGLE_PORT, WIGLE_UPLOAD_PATH, true)) {
         strncpy(r.error, "http begin", sizeof(r.error) - 1);
         strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
@@ -458,6 +482,202 @@ WigleResult Wigle::uploadRecommended() {
         r.failed = (uint16_t)rows.size();
         snprintf(r.message, sizeof(r.message), "fail: %.40s",
                  resp.c_str());
+    }
+    return r;
+}
+
+WigleResult Wigle::uploadBssids(const char* const* hex12, uint16_t n) {
+    // fR3k v3.0.4: per-file upload picker. Walks the SD card, picks
+    // the .pcap rows whose BSSID is in the caller's set, and POSTs
+    // only those. Bounded at WIGLE_MAX_ROWS_PER_CALL.
+    WigleResult r{};
+    r.success = false;
+    if (s_busy) {
+        strncpy(r.error, "busy", sizeof(r.error) - 1);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        return r;
+    }
+    if (!hasCredentials()) {
+        strncpy(r.error, "no credentials", sizeof(r.error) - 1);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        return r;
+    }
+    if (n == 0 || !hex12) {
+        strncpy(r.error, "no bssids", sizeof(r.error) - 1);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        return r;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        strncpy(r.error, "wifi down", sizeof(r.error) - 1);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        return r;
+    }
+
+    // Build a 12-hex quick-lookup set so each file's BSSID check is O(1).
+    static const uint8_t SET_MAX = 64;
+    if (n > SET_MAX) n = SET_MAX;
+    char set[SET_MAX][13];
+    for (uint16_t i = 0; i < n; i++) {
+        if (!hex12[i]) continue;
+        size_t k = 0;
+        size_t j = 0;
+        while (hex12[i][k] && j < 12) {
+            char c = hex12[i][k];
+            if (c != ':' && c != '-') {
+                set[i][j++] = (char)toupper((unsigned char)c);
+            }
+            k++;
+        }
+        set[i][j] = '\0';
+        if (j != 12) {
+            strncpy(r.error, "bad bssid", sizeof(r.error) - 1);
+            strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+            return r;
+        }
+    }
+
+    // Walk /0N3P0rK/handshakes and collect matching rows.
+    // fR3k v3.0.4: POSEIDON stability pattern. Cap the whole
+    // operation at 25s. Anything past that means the SD walk or
+    // the Wigle POST is hung; we'd rather report a clean error
+    // than wedge the menu forever.
+    const uint32_t t0 = millis();
+    const uint32_t DEADLINE_MS = 25000;
+
+    s_busy = true;
+    std::vector<BssidRow> rows;
+    File root = SD.open("/0N3P0rK/handshakes");
+    if (root && root.isDirectory()) {
+        const GpsSnapshot g = GpsService::snapshot();
+        const bool haveGps = g.fix;
+        File f = root.openNextFile();
+        while (f && rows.size() < WIGLE_MAX_ROWS_PER_CALL) {
+            if (millis() - t0 > DEADLINE_MS) {
+                f.close();
+                root.close();
+                s_busy = false;
+                strncpy(r.error, "timeout", sizeof(r.error) - 1);
+                strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+                return r;
+            }
+            if (!f.isDirectory()) {
+                const char* name = f.name();
+                size_t nlen = strlen(name);
+                bool isPcap = false;
+                if (nlen > 5 && strcasecmp(name + nlen - 5, ".pcap") == 0) isPcap = true;
+                else if (nlen > 4 && strcasecmp(name + nlen - 4, ".cap") == 0) isPcap = true;
+                else if (nlen > 7 && strcasecmp(name + nlen - 7, ".pcapng") == 0) isPcap = true;
+                if (isPcap && f.size() <= 1024UL * 1024UL) {
+                    char hex[13] = {0};
+                    if (CapName::extractBssidHex(name, hex)) {
+                        char bssid[13];
+                        normalizeBssid(hex, bssid);
+                        if (isHex12(bssid) && !isInSubmittedCache(bssid)) {
+                            // In caller's set?
+                            bool inSet = false;
+                            for (uint16_t i = 0; i < n; i++) {
+                                if (memcmp(set[i], bssid, 12) == 0) { inSet = true; break; }
+                            }
+                            if (inSet) {
+                                const char* pw = WPASec::getPassword(bssid);
+                                if (!pw[0]) {
+                                    BssidRow row{};
+                                    memcpy(row.bssid, bssid, 13);
+                                    const char* ssid = WPASec::getSSID(bssid);
+                                    if (ssid && ssid[0]) {
+                                        strncpy(row.ssid, ssid, sizeof(row.ssid) - 1);
+                                    } else {
+                                        size_t copyLen = nlen > 32 ? 32 : nlen;
+                                        memcpy(row.ssid, name, copyLen);
+                                        row.ssid[copyLen] = '\0';
+                                    }
+                                    row.lat = haveGps ? g.latitude : 0.0;
+                                    row.lon = haveGps ? g.longitude : 0.0;
+                                    row.altitudeM = haveGps ? g.altitudeM : 0.0;
+                                    row.rssi = Cap::rssiForChannel(0);
+                                    row.channel = 0;
+                                    // Opportunistic .22000 convert.
+                                    char pcapPath[96];
+                                    snprintf(pcapPath, sizeof(pcapPath),
+                                             "/0N3P0rK/handshakes/%s", name);
+                                    Hc22000::convertPcap(pcapPath);
+                                    rows.push_back(row);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            f.close();
+            f = root.openNextFile();
+        }
+        root.close();
+    }
+
+    if (rows.empty()) {
+        r.success = true;
+        r.uploaded = 0;
+        strncpy(r.message, "no matches", sizeof(r.message) - 1);
+        s_busy = false;
+        return r;
+    }
+
+    String body = buildWigleBody(rows);
+
+    s_wiglePrefs.begin("wigle", true);
+    String n_ = s_wiglePrefs.getString("name", "");
+    String t = s_wiglePrefs.getString("token", "");
+    s_wiglePrefs.end();
+    String cred = n_ + ":" + t;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(15);  // fR3k v3.0.4: POSEIDON stability pattern - cap
+                            // socket idle at 15s so a hung TLS handshake
+                            // can't wedge the main loop past one Wigle
+                            // call.
+    HTTPClient http;
+    http.setTimeout(15000);  // hard cap on the whole transaction
+    if (!http.begin(client, WIGLE_HOST, WIGLE_PORT, WIGLE_UPLOAD_PATH, true)) {
+        strncpy(r.error, "http begin", sizeof(r.error) - 1);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        s_busy = false;
+        return r;
+    }
+    const char* b64alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    String b64;
+    b64.reserve(((cred.length() + 2) / 3) * 4);
+    for (size_t i = 0; i < cred.length(); i += 3) {
+        uint32_t v = (uint8_t)cred[i] << 16;
+        int rem = 3;
+        if (i + 1 < cred.length()) { v |= (uint8_t)cred[i+1] << 8; rem = 2; }
+        if (i + 2 < cred.length()) { v |= (uint8_t)cred[i+2];      rem = 1; }
+        b64 += b64alpha[(v >> 18) & 0x3F];
+        b64 += b64alpha[(v >> 12) & 0x3F];
+        b64 += (rem >= 2) ? b64alpha[(v >> 6) & 0x3F] : '=';
+        b64 += (rem >= 1) ? b64alpha[v & 0x3F] : '=';
+    }
+    http.addHeader("Authorization", "Basic " + b64);
+    http.addHeader("Content-Type", "text/csv");
+    http.addHeader("Accept", "application/json");
+    int code = http.POST((uint8_t*)body.c_str(), body.length());
+    String resp = http.getString();
+    http.end();
+    s_busy = false;
+
+    if (code >= 200 && code < 300) {
+        r.success = true;
+        r.uploaded = (uint16_t)rows.size();
+        for (const auto& row : rows) {
+            appendSubmittedCache(row.bssid);
+            WPASec::markAsUploaded(row.bssid);
+        }
+        snprintf(r.message, sizeof(r.message), "OK %d (%u marked)", code, r.uploaded);
+    } else {
+        snprintf(r.error, sizeof(r.error), "HTTP %d", code);
+        strncpy(s_lastError, r.error, sizeof(s_lastError) - 1);
+        r.failed = (uint16_t)rows.size();
+        snprintf(r.message, sizeof(r.message), "fail: %.40s", resp.c_str());
     }
     return r;
 }

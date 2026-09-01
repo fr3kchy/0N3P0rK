@@ -320,6 +320,17 @@ require("isKeyPressed('o')" in loot_cpp or "isKeyPressed('O')" in loot_cpp,
         "LootMenu must accept O/o for sort cycle (v3.0.4)")
 require("isKeyPressed('w')" in loot_cpp or "isKeyPressed('W')" in loot_cpp,
         "LootMenu must accept W/w for Wigle upload (v3.0.4)")
+require("isKeyPressed('m')" in loot_cpp or "isKeyPressed('M')" in loot_cpp,
+        "LootMenu must accept M/m for Wigle mark picker (v3.0.4)")
+require("isKeyPressed('c')" in loot_cpp or "isKeyPressed('C')" in loot_cpp,
+        "LootMenu must accept C/c for on-device .pcap->.22000 convert (v3.0.4)")
+require("Wigle::uploadBssids" in text("src/sync/wigle.h")
+        or "    static WigleResult uploadBssids" in text("src/sync/wigle.h"),
+        "Wigle::uploadBssids must be declared (v3.0.4 per-file picker)")
+require("Hc22000::convertPcap" in loot_cpp,
+        "LootMenu C hotkey must call Hc22000::convertPcap (v3.0.4)")
+require("buildWigleBody" in text("src/sync/wigle.cpp"),
+        "Wigle body builder must be a single shared function (v3.0.4 refactor)")
 require("pullPotfileIfStale" in text("src/sync/wpasec.cpp"),
         "WPASec::pullPotfileIfStale must be defined (v3.0.4)")
 # GPX export
